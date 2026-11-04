@@ -1,0 +1,34 @@
+/* Corner pops (top-right of the 3D stage, 4s) and the NEXT BIG DECISION countdown chip (lower-right, persistent). */
+#pops { position: fixed; right: 1.6vw; top: 9.6vh; width: 27vw; z-index: 22; pointer-events: none; }
+.pop { --ac: var(--cyan); --ag: rgba(0,240,255,.5); position: relative; display: flex; flex-direction: column; gap: .6vh; padding: 1.2vh 1.1vw 1.1vh;
+  background: linear-gradient(160deg, rgba(26,8,66,.92), rgba(7,2,26,.94)) padding-box, linear-gradient(130deg, var(--ac), rgba(255,43,214,.6) 60%, var(--ac)) border-box;
+  border: 2px solid transparent; box-shadow: 0 0 1.6vw var(--ag); pointer-events: auto; cursor: pointer;
+  animation: pop-life var(--dur, 4s) cubic-bezier(.2,.9,.2,1) both; }
+.pop-still { --ac: var(--amber); --ag: rgba(255,177,59,.55); }
+.pop-listed { --ac: var(--violet); --ag: rgba(167,139,255,.55); }
+.pop-money { --ac: var(--up); --ag: rgba(61,255,176,.5); }
+@keyframes pop-life { 0% { opacity: 0; transform: translateX(6vw) skewX(-8deg); } 10% { opacity: 1; transform: none; } 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateX(3vw); } }
+.pop-k { align-self: flex-start; font: 900 max(var(--min), min(1.05vw, 2.3vh)) var(--font-display); letter-spacing: .2em; color: #07021a; background: var(--ac);
+  padding: .3vh .7vw; box-shadow: 0 0 .8vw var(--ag); white-space: nowrap; animation: pop-blink .5s steps(2) .3s 3; }
+@keyframes pop-blink { 50% { filter: brightness(1.5); } }
+.pop-t { max-height: 9vh; overflow: hidden; font: 700 max(var(--min), min(1.35vw, 2.9vh))/1.18 var(--font-ui); color: #fff; overflow-wrap: break-word; }
+.pop-amt { font: max(var(--min), min(1.6vw, 3.4vh)) var(--font-mono); color: var(--ac); text-shadow: 0 0 .8vw var(--ag); font-weight: 400; }
+.pop-row { display: flex; align-items: baseline; gap: .9vw; min-width: 0; }
+.pop-big { flex: 0 0 auto; font: max(var(--min), min(2.6vw, 5.4vh))/1 var(--font-mono); color: #fff; text-shadow: 0 0 .9vw var(--ac); }
+.pop-mv { flex: 1 1 auto; min-width: 0; font: 700 max(var(--min), min(1.15vw, 2.5vh)) var(--font-display); color: var(--soft); white-space: nowrap; overflow: hidden; }
+.pop-mv.up { color: var(--up); } .pop-mv.down { color: var(--down); }
+.pop-s { font: max(var(--min), .78vw) var(--font-mono); color: var(--soft); white-space: nowrap; overflow: hidden; }
+body.alerting #pops, body.flashing #pops { opacity: 0; visibility: hidden; }
+
+/* Countdown chip: state.countdown[0], mm:ss in its last hour. */
+#chip { position: fixed; right: 1.6vw; bottom: 22.4vh; z-index: 15; max-width: 30vw; pointer-events: none; }
+.chip { display: flex; align-items: center; gap: .8vw; padding: .7vh .9vw; background: rgba(7,2,26,.86); border: 1px solid var(--amber); box-shadow: 0 0 1vw rgba(255,177,59,.4); }
+.chip-k { flex: 0 0 auto; display: flex; flex-direction: column; line-height: 1.05; }
+.chip-k b { font: 900 max(var(--min), .72vw) var(--font-display); letter-spacing: .14em; color: var(--amber); white-space: nowrap; }
+.chip-k span { font: max(var(--min), min(1.5vw, 3.2vh)) var(--font-mono); color: #fff; text-shadow: 0 0 .6vw var(--amber); white-space: nowrap; }
+.chip.soon .chip-k span { color: var(--amber); animation: blink 1s steps(2) infinite; }
+.chip-b { min-width: 0; display: flex; flex-direction: column; gap: .2vh; }
+.chip-t { font: 700 max(var(--min), .9vw) var(--font-ui); color: #fff; white-space: nowrap; overflow: hidden; }
+.chip-o { font: 600 max(var(--min), .8vw) var(--font-ui); color: var(--soft); white-space: nowrap; overflow: hidden; }
+.chip-o b { font-family: var(--font-mono); font-weight: 400; color: var(--cyan); }
+body.alerting #chip, body.flashing #chip, body[data-segment="countdown"] #chip, body[data-segment="sotd"] #chip, body[data-segment="standby"] #chip { opacity: 0; visibility: hidden; }

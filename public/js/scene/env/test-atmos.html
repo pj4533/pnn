@@ -1,0 +1,55 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>atmos test</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden;font:12px monospace;color:#9fe}#hud{position:fixed;left:8px;top:6px;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"../../../vendor/three/three.module.js"}}</script>
+</head><body><canvas id="c" style="width:100vw;height:100vh;display:block"></canvas><div id="hud"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { createAtmos } from './atmos.js';
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight, false);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x06020f);
+const cam = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 1, 6000);
+cam.position.set(0, 30, 160); cam.lookAt(0, 8, -100);
+// neutral backdrop: dim horizon gradient sphere so fog/haze are visible
+const sky = new THREE.Mesh(new THREE.SphereGeometry(3000, 24, 16), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false,
+  vertexShader: 'varying vec3 p;void main(){p=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+  fragmentShader: 'varying vec3 p;void main(){float h=normalize(p).y;gl_FragColor=vec4(mix(vec3(.25,.05,.2),vec3(.01,0.,.04),smoothstep(0.,.5,h)),1.);}' }));
+sky.renderOrder = -10; scene.add(sky);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), new THREE.MeshBasicMaterial({ color: 0x0a0418 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const holo = new THREE.Mesh(new THREE.IcosahedronGeometry(30, 1), new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true })); holo.position.y = 30; scene.add(holo);
+// ctx (try real common.js, else local)
+let ctx;
+try { const m = await import('./common.js'); ctx = m.createEnvCtx(THREE, { time: { value: 0 }, alert: { value: 0 }, accent: { value: new THREE.Color() }, accent2: { value: new THREE.Color() } }); } catch (e) {}
+if (!ctx) {
+  const N = 256, d = new Uint8Array(N * N * 4); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 255;
+  const tex = new THREE.DataTexture(d, N, N, THREE.RGBAFormat); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true; tex.needsUpdate = true;
+  ctx = { THREE, alert: { value: 0 }, flash: { value: 0 }, fogCol: { value: new THREE.Color() }, sunDir: { value: new THREE.Vector3(-0.2, 0.1, -1).normalize() },
+    res: { value: new THREE.Vector2() }, guardRect: { value: new THREE.Vector4(.3, .3, .985, .93) }, guardAmt: { value: .45 }, noiseTex: tex, quality: 2 };
+}
+ctx.res.value.set(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio());
+const C = (h) => new THREE.Color(h).convertSRGBToLinear();
+const moods = [
+  { name: 'classic', fogCol: C('#2a0430'), fogDensity: .5, fogLayers: .3, hazeAmt: .3, hazeCol: C('#ff2a8a'), boltCol: C('#c0d0ff'), lightningRate: 0 },
+  { name: 'neonRain', fogCol: C('#1a0a30'), fogDensity: .9, fogLayers: .8, hazeAmt: .5, hazeCol: C('#5a1a6a'), boltCol: C('#b0c0ff'), lightningRate: .3 },
+  { name: 'desert', fogCol: C('#3a140a'), fogDensity: .7, fogLayers: .4, hazeAmt: .7, hazeCol: C('#ff8a2a'), boltCol: C('#ffe0b0'), lightningRate: 0 },
+  { name: 'dataStorm', fogCol: C('#0a0a2a'), fogDensity: .8, fogLayers: .5, hazeAmt: .4, hazeCol: C('#3a1aff'), boltCol: C('#a0b0ff'), lightningRate: 1.2 },
+];
+const atmos = createAtmos(scene, ctx);
+let mi = +(q.get('m') || 1); atmos.setParams(moods[mi]);
+addEventListener('keydown', (e) => { if (e.key === ']') { mi = (mi + 1) % moods.length; atmos.setParams(moods[mi]); } if (e.key === '[') { mi = (mi + moods.length - 1) % moods.length; atmos.setParams(moods[mi]); } if (e.key === 'e') atmos.strike(); if (e.key === 'q') atmos.setQuality((ctx.quality = (ctx.quality + 2) % 3)); });
+window.__atmos = atmos; window.__ctx = ctx;
+if (q.get('strike')) setTimeout(() => atmos.strike({ x: 100, z: -1600, hold: 60 }), 500);
+let last = performance.now(), fr = 0, acc = 0, fps = 0;
+const hud = document.getElementById('hud');
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now; fr++; acc += dt; if (acc > 1) { fps = fr / acc; fr = acc = 0; }
+  atmos.update(dt * (q.get('fast') ? 30 : 1), now / 1000, cam);
+  holo.rotation.y += dt * .3;
+  renderer.render(scene, cam);
+  hud.textContent = `${moods[mi].name} q${ctx.quality} fps ${fps.toFixed(0)} flash ${ctx.flash.value.toFixed(2)}  [ ] mood, e strike, q quality`;
+});
+</script></body></html>

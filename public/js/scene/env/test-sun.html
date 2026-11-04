@@ -1,0 +1,33 @@
+<!doctype html><meta charset="utf-8"><title>test-sun</title>
+<style>html,body{margin:0;background:#07021a;overflow:hidden;font:12px monospace;color:#fff}#ui{position:fixed;left:8px;top:8px;z-index:2}</style>
+<div id="ui"><span id="lbl"></span> [ ] variant, a=alert, s=shafts</div>
+<script type="importmap">{"imports":{"three":"../../../vendor/three/three.module.js"}}</script>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { createSun } from './sun.js';
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(innerWidth, innerHeight); r.setClearColor(0x07021a);
+document.body.appendChild(r.domElement);
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 1, 6000); cam.position.set(0, 30, 160); cam.lookAt(0, 8, -100);
+const alert = { value: 0 };
+const ctx = { alert, res: { value: new THREE.Vector2(innerWidth, innerHeight) }, sunDir: { value: new THREE.Vector3() } };
+const sun = createSun(scene, ctx);
+const C = (h) => new THREE.Color(h);
+const V = [
+  { n: 'stripe', stripe: 1, colA: C('#ff2fb0'), colB: C('#ffd35a'), coronaCol: C('#ff1a99') },
+  { n: 'eclipse', stripe: 0, eclipse: 1, eclipseOffset: 0.12, corona: 1.4, colA: C('#ff2a1a'), colB: C('#ffb04a'), coronaCol: C('#ff3a2a') },
+  { n: 'ring', stripe: 0, ring: 1, size: 1.2, colA: C('#ffb0d0'), colB: C('#8a6aff'), coronaCol: C('#ffb0d0') },
+  { n: 'twin', stripe: 0, twin: 1, colA: C('#ffcf4a'), colB: C('#00e0ff'), coronaCol: C('#ffaa40') },
+  { n: 'moon', stripe: 0, moon: 1, size: 0.8, bright: 0.8, colA: C('#cfe8ff'), colB: C('#6aa8ff'), coronaCol: C('#6aa8ff') },
+  { n: 'blend stripe+moon', stripe: 0.5, moon: 0.5, colA: C('#ff6a9a'), colB: C('#ffe0a0'), coronaCol: C('#ff6a9a') },
+];
+const base = { stripe: 0, eclipse: 0, ring: 0, twin: 0, moon: 0, size: 1, bright: 1, eclipseOffset: 0, corona: 1 };
+let i = +(new URLSearchParams(location.search).get('v') || 0), shafts = 1;
+function apply() { sun.setParams({ ...base, ...V[i], shafts }); lbl.textContent = V[i].n + ' shafts=' + shafts; }
+apply();
+addEventListener('keydown', (e) => { if (e.key === ']') i = (i + 1) % V.length; if (e.key === '[') i = (i + V.length - 1) % V.length; if (e.key === 'a') alert.value = 1 - alert.value; if (e.key === 's') shafts = 1 - shafts; apply(); });
+let last = performance.now();
+function loop(n) { const dt = Math.min((n - last) / 1000, 0.1); last = n; sun.update(dt, n / 1000, cam); r.render(scene, cam); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+window.__sun = { sun, set: (k) => { i = k; apply(); }, ctx };
+</script>

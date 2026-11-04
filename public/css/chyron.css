@@ -1,0 +1,65 @@
+/* Chyron 79–100vh: lower third (9.4vh) · movers ticker (6vh) · data/disclaimer strip (3.6vh). vh fonts are floored at .7vw. */
+#chyron { display: flex; flex-direction: column; justify-content: flex-end; gap: .5vh; padding-bottom: .4vh; overflow: hidden;
+  background: linear-gradient(to top, rgba(7,2,26,.92) 60%, rgba(7,2,26,0)); }
+.cy-t1 { position: relative; flex: 0 0 9.4vh; margin: 0 .8vw; display: flex; align-items: stretch; overflow: hidden;
+  background: linear-gradient(90deg, rgba(30,8,80,.85), rgba(14,4,44,.78)); border: 1px solid var(--edge);
+  box-shadow: 0 0 1.4vh rgba(0,240,255,.3), inset 0 0 2vh rgba(255,43,214,.2); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 1.4vw 100%, 0 calc(100% - 1.4vw)); }
+.cy-tag { position: relative; flex: 0 0 12vw; display: flex; align-items: center; justify-content: center; padding: 0 1.6vw 0 .6vw;
+  font: 900 max(var(--min), min(1.15vw, 2.4vh)) var(--font-display); letter-spacing: .14em; color: #fff; background: var(--magenta); white-space: nowrap;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 1.4vw) 100%, 0 100%); text-shadow: 0 0 1vh rgba(0,0,0,.5); }
+.cy-tag span { display: block; animation: cy-tagin .45s cubic-bezier(.2,.9,.2,1); }
+.cy-tag.movers { background: linear-gradient(90deg, #00b8d4, var(--cyan)); color: #1a0533; text-shadow: none; }
+.cy-tag.week { background: var(--amber); color: #1a0533; text-shadow: none; }
+.cy-tag.focus { background: linear-gradient(90deg, var(--violet), var(--magenta)); }
+@keyframes cy-tagin { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
+.cy-head { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: .3vh; padding: .5vh 1.4vw .5vh 1.2vw; }
+.cy-line { flex: 0 1 auto; max-height: 6.2vh; overflow: hidden; font: 700 max(var(--min), min(1.55vw, 2.85vh))/1.08 var(--font-ui); letter-spacing: .02em; text-transform: uppercase; color: #fff;
+  text-shadow: 0 0 1vh rgba(0,240,255,.4); overflow-wrap: break-word; }
+.cy-line.in { animation: cy-in .6s cubic-bezier(.2,.9,.2,1) both; }
+@keyframes cy-in { from { transform: translateY(40%); opacity: 0; filter: blur(4px); } to { transform: none; opacity: 1; filter: none; } }
+.cy-sub { flex: 0 0 auto; font: max(var(--min), min(.8vw, 1.7vh)) var(--font-mono); color: var(--cyan); white-space: nowrap; overflow: hidden; }
+.cy-sweep { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent) no-repeat; background-size: 14vw 100%;
+  background-position: -14vw 0; animation: cy-sweep 6s linear infinite; }
+@keyframes cy-sweep { to { background-position: 110vw 0; } }
+.cy-prog { position: absolute; left: 0; bottom: 0; height: .35vh; width: 100%; background: linear-gradient(90deg, var(--cyan), var(--magenta)); transform-origin: left; transform: scaleX(0); }
+
+.cy-t2 { position: relative; flex: 0 0 5.6vh; display: flex; align-items: center; overflow: hidden; background: rgba(8,3,28,.9);
+  border-top: 1px solid var(--magenta); border-bottom: 1px solid var(--cyan); }
+.cy-lbl { position: relative; z-index: 2; flex: 0 0 auto; height: 100%; display: flex; align-items: center; padding: 0 2vw 0 1.2vw;
+  font: 900 max(var(--min), min(.95vw, 2vh)) var(--font-display); letter-spacing: .14em; color: #1a0533; background: var(--cyan);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 1vw) 100%, 0 100%); white-space: nowrap; }
+.cy-view { position: relative; flex: 1 1 auto; height: 100%; overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent); mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent); }
+.cy-track { position: absolute; left: 0; top: 0; height: 100%; display: flex; align-items: center; white-space: nowrap; will-change: transform; }
+.cy-item { position: relative; display: inline-flex; align-items: baseline; gap: .55vw; padding: 0 1.6vw; font: 600 max(var(--min), min(1.25vw, 2.6vh)) var(--font-ui); color: #fff; }
+.cy-item::after { content: '◆'; position: absolute; right: -.4vw; color: var(--magenta); font-size: .6em; text-shadow: 0 0 .8vh var(--magenta); }
+.cy-item .nm { font-weight: 700; }
+.cy-item .ctx { color: var(--soft); font-weight: 500; }
+.cy-item .v { font-family: var(--font-mono); color: var(--cyan); }
+.cy-item .mv { font-family: var(--font-mono); }
+.cy-view { transition: opacity .35s; }
+.cy-view.swap { opacity: 0; }
+.cy-lbl { transition: background .3s; }
+.cy-t2.wire .cy-lbl { background: var(--amber); }
+.cy-t2.wire { border-top-color: var(--amber); }
+.cy-item.wi::after { color: var(--amber); text-shadow: 0 0 .8vh var(--amber); }
+.cy-item .ol { font: 700 max(var(--min), .8vw) var(--font-display); letter-spacing: .1em; color: var(--amber); }
+.cy-item .ag { font: max(var(--min), .8vw) var(--font-mono); color: var(--soft); }
+.cy-item .ex { font: 700 max(var(--min), .72vw) var(--font-display); letter-spacing: .08em; color: var(--pink); }
+
+.cy-t3 { flex: 0 0 3.4vh; margin: 0 .8vw; display: flex; align-items: center; justify-content: space-between; gap: 1.2vw;
+  font: max(var(--min), min(.78vw, 1.6vh)) var(--font-mono); color: var(--soft); letter-spacing: .06em; }
+.cy-t3 > span { min-width: 0; white-space: nowrap; overflow: hidden; }
+.cy-t3 b { font-weight: 400; color: var(--cyan); }
+.cy-note { color: var(--amber); flex: 0 1 auto; }
+.cy-dot { display: inline-block; width: .7vh; height: .7vh; border-radius: 50%; background: var(--up); margin-right: .5vw; box-shadow: 0 0 .8vh var(--up); animation: blink 1.4s infinite; }
+body.alerting .cy-t1 { opacity: .25; transition: opacity .3s; }
+.cy-tag.desk { background: linear-gradient(90deg, var(--magenta), var(--amber)); }
+body[data-desk="economy"] .cy-tag.desk { background: linear-gradient(90deg, #12b07a, #3dffb0); color: #1a0533; text-shadow: none; }
+body[data-desk="tech"] .cy-tag.desk { background: linear-gradient(90deg, #00b8d4, var(--cyan)); color: #1a0533; text-shadow: none; }
+body[data-desk="world"] .cy-tag.desk { background: linear-gradient(90deg, #6a4dff, var(--violet)); }
+body[data-desk="culture"] .cy-tag.desk { background: linear-gradient(90deg, var(--magenta), var(--pink)); }
+body[data-desk="politics"] .cy-tag.desk { background: var(--amber); color: #1a0533; text-shadow: none; }
+/* ALSO MOVING / COMING UP: the lower third carries something new while a full-screen card is up (watchability #5) */
+.cy-tag.alt { background: linear-gradient(90deg, #3dffb0, var(--cyan)); color: #1a0533; text-shadow: none; }

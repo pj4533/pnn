@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>Sky test</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block}#hud{position:fixed;left:10px;top:8px;color:#9fe;font:12px monospace;background:rgba(0,0,0,.5);padding:6px;white-space:pre}</style>
+</head><body><div id="hud"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { createSky } from './sky.js';
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+const pr = Math.min(devicePixelRatio, 2);
+renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 6000);
+camera.position.set(0, 30, 160); camera.lookAt(0, 8, -100);
+const ctx = { alert: { value: 0 }, flash: { value: 0 }, res: { value: new THREE.Vector2(innerWidth * pr, innerHeight * pr) },
+  sunDir: { value: new THREE.Vector3(0.2, 0.08, -1).normalize() }, quality: 2 };
+const sky = createSky(scene, ctx);
+// dummy hologram for readability
+const ico = new THREE.Mesh(new THREE.IcosahedronGeometry(30, 1), new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true }));
+ico.position.set(40, 30, 0); scene.add(ico);
+const PRESETS = {
+  classicSunset: { zenith: '#05000f', mid: '#1a0533', horizon: '#ff2a8a', glow: '#ff6ad5', cloudAmt: 0.25, nebulaAmt: 0.1, auroraAmt: 0, starAmt: 0.7, palDrift: 0 },
+  midnightAurora: { zenith: '#01010a', mid: '#031033', horizon: '#0a3a5a', glow: '#3af0ff', cloudAmt: 0.1, nebulaAmt: 0.15, auroraAmt: 0.85, auroraHue: 0.35, starAmt: 1 },
+  neonRain: { zenith: '#02000a', mid: '#120a2a', horizon: '#5a1a6a', glow: '#ff6ad5', cloudAmt: 0.7, nebulaAmt: 0, auroraAmt: 0, starAmt: 0.2 },
+  dataStorm: { zenith: '#01000c', mid: '#0a0a3a', horizon: '#3a1aff', glow: '#6a8aff', cloudAmt: 0.5, nebulaAmt: 0.6, warp: 0.9, auroraAmt: 0, starAmt: 0.5 },
+  nebulaDrift: { zenith: '#020010', mid: '#12052a', horizon: '#2a0a4a', glow: '#b04aff', cloudAmt: 0.1, nebulaAmt: 0.9, warp: 0.6, auroraAmt: 0.2, starAmt: 1, palD: [0.3, 0.2, 0.2] },
+  ringedPlanetDawn: { zenith: '#120a2a', mid: '#4a2a6a', horizon: '#ffb08a', glow: '#ffd0a0', cloudAmt: 0.4, palDrift: 0.4, nebulaAmt: 0, auroraAmt: 0, starAmt: 0.3 },
+};
+const names = Object.keys(PRESETS);
+let i = Math.max(0, names.indexOf(q.get('mood') || 'classicSunset'));
+const apply = () => sky.setParams(PRESETS[names[i]]);
+apply();
+let quality = 2;
+addEventListener('keydown', (e) => {
+  if (e.key === ']') { i = (i + 1) % names.length; apply(); }
+  if (e.key === '[') { i = (i + names.length - 1) % names.length; apply(); }
+  if (e.key === 'q') { quality = (quality + 2) % 3; sky.setQuality(quality); }
+  if (e.key === 'e') ctx.flash.value = 0.35;
+  if (e.key === 'a') ctx.alert.value = ctx.alert.value ? 0 : 1;
+});
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); ctx.res.value.set(innerWidth * pr, innerHeight * pr); });
+const hud = document.getElementById('hud');
+let last = performance.now(), frames = 0, fpsT = last, fps = 0, t = 0;
+window.__sky = { sky, ctx, get fps() { return fps; } };
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now; t += dt;
+  ctx.flash.value *= Math.exp(-dt * 4);
+  ico.rotation.y += dt * 0.3;
+  sky.update(dt * (q.get('fast') ? 20 : 1), t, camera);
+  renderer.render(scene, camera);
+  frames++; if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  hud.textContent = `${names[i]}  q${quality}  ${fps.toFixed(0)} fps\n[ ] mood  q quality  e flash  a alert`;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

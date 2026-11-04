@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Terrain Test</title>
+<style>html,body{margin:0;background:#07021a;overflow:hidden;font:12px monospace;color:#cfe}#ui{position:fixed;left:8px;top:8px;background:#000a;padding:6px}button{font:inherit}</style>
+</head><body><div id="ui"><span id="m">-</span> <button id="nx">next preset</button> <button id="pl">pulse</button> <span id="fps"></span></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { createTerrain } from './terrain.js';
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setPixelRatio(Math.min(devicePixelRatio, 2)); r.setSize(innerWidth, innerHeight);
+r.setClearColor(0x07021a); document.body.appendChild(r.domElement);
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 6000); cam.position.set(0, 30, 160); cam.lookAt(0, 8, -100);
+const sunDir = new THREE.Vector3(Math.sin(0.2), 0.1, -Math.cos(0.2)).normalize();
+const ctx = { THREE, alert: { value: 0 }, accent: { value: new THREE.Color('#ff2bd6') }, fogCol: { value: new THREE.Color(0.13, 0.015, 0.13) },
+  sunDir: { value: sunDir }, res: { value: new THREE.Vector2(innerWidth * r.getPixelRatio(), innerHeight * r.getPixelRatio()) },
+  guardRect: { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) }, guardAmt: { value: 0.45 }, quality: 2 };
+const T = createTerrain(scene, ctx);
+const C = (h) => new THREE.Color(h);
+const PRESETS = [
+  ['classicSunset', { ridge: 1, dune: 0, canyon: 0, wave: 0, amp: 1, wireColA: C('#ff2bd6'), wireColB: C('#00a0ff'), skyline: 0.6 }],
+  ['neonRain', { ridge: 0.5, dune: 0.5, canyon: 0, wave: 0, amp: 0.6, skyline: 1, windowRate: 1, flicker: 1 }],
+  ['eclipse', { ridge: 0.3, dune: 0, canyon: 0.7, wave: 0, amp: 1.1, wireColA: C('#ff3a2a'), wireColB: C('#ff8a3a'), skyline: 0 }],
+  ['oceanDusk', { ridge: 0, dune: 0, canyon: 0, wave: 1, amp: 0.8, scroll: 1, wireColA: C('#00ffd0'), wireColB: C('#ff6ad5'), skyline: 0 }],
+  ['twinSunDesert', { ridge: 0, dune: 0.5, canyon: 0.5, wave: 0, amp: 1, wireColA: C('#ff9a2a'), wireColB: C('#00e0d0'), skyline: 0 }],
+  ['ringedDawn', { ridge: 0.2, dune: 0.8, canyon: 0, wave: 0, amp: 0.6, wireColA: C('#ff9ad5'), wireColB: C('#9a7aff'), skyline: 0.3 }],
+];
+let pi = +(new URLSearchParams(location.search).get('p') || 0);
+const set = () => { T.setParams(PRESETS[pi][1]); document.getElementById('m').textContent = PRESETS[pi][0]; };
+set();
+document.getElementById('nx').onclick = () => { pi = (pi + 1) % PRESETS.length; set(); };
+document.getElementById('pl').onclick = () => T.pulse(1);
+addEventListener('keydown', (e) => { if (e.key === 'e') T.pulse(1); if (e.key === ']') { pi = (pi + 1) % PRESETS.length; set(); } if (e.key === 'a') ctx.alert.value = 1 - ctx.alert.value; });
+let last = performance.now(), fr = 0, acc = 0, t = 0;
+window.__t = { T, r, frames: () => fr };
+function loop(now) {
+  const dt = (now - last) / 1000; last = now; t += dt; fr++; acc += dt;
+  if (acc > 1) { document.getElementById('fps').textContent = (fr / t).toFixed(0) + ' fps, calls ' + r.info.render.calls; acc = 0; }
+  T.update(dt, t, cam); r.render(scene, cam); requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

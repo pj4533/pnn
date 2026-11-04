@@ -1,0 +1,44 @@
+/* Full-screen BREAKING: MARKET MOVE takeover (~8s). */
+#alerts { overflow: hidden; }
+.al { --ac: var(--magenta); --ag: rgba(255,43,214,.55); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+  opacity: 0; animation: al-fade var(--dur, 8s) linear both; }
+.al.down { --ac: var(--down); --ag: rgba(255,90,134,.55); }
+@keyframes al-fade { 0% { opacity: 0; } 4% { opacity: 1; } 92% { opacity: 1; } 100% { opacity: 0; } }
+.al-bg { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(7,2,26,.72) 0%, rgba(7,2,26,.93) 70%),
+  repeating-linear-gradient(135deg, transparent 0 3vw, color-mix(in srgb, var(--ac) 8%, transparent) 3vw 3.4vw); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.al-flash { position: absolute; inset: 0; background: #fff; opacity: 0; animation: al-flash .8s ease-out; }
+@keyframes al-flash { 0% { opacity: .85; } 15% { opacity: .1; } 25% { opacity: .5; } 100% { opacity: 0; } }
+.al-bar { position: absolute; left: -60vw; width: 60vw; height: 1.4vh; background: linear-gradient(90deg, transparent, var(--ac), #fff, var(--ac), transparent);
+  box-shadow: 0 0 1vh var(--ag); animation: al-bar 1.6s cubic-bezier(.3,.7,.2,1) both; }
+.al-bar.r { left: auto; right: -60vw; animation-name: al-barr; }
+@keyframes al-bar { to { transform: translateX(170vw); } }
+@keyframes al-barr { to { transform: translateX(-170vw); } }
+.al-edge { position: absolute; left: 0; right: 0; height: 1vh; background: var(--ac); box-shadow: 0 0 1vh var(--ag); animation: al-edge 1s ease-out; }
+.al-edge.t { top: 7vh; } .al-edge.b { bottom: 7vh; }
+@keyframes al-edge { from { transform: scaleX(0); } }
+.al-ring { position: absolute; left: 50%; top: 50%; width: 10vh; height: 10vh; margin: -5vh; border: .6vh solid var(--ac); border-radius: 50%; opacity: 0; animation: al-ring 1.6s ease-out forwards; }
+@keyframes al-ring { from { transform: scale(.2); opacity: 1; } to { transform: scale(22); opacity: 0; } }
+
+.al-stage { position: relative; width: 88vw; display: flex; flex-direction: column; align-items: center; gap: 2.4vh; }
+.al-kick { font: 900 max(var(--min), min(2.6vw, 5vh)) var(--font-display); letter-spacing: .3em; color: #fff; padding: 1vh 2.4vw 1vh 3vw; background: var(--breaking);
+  clip-path: polygon(1.2vw 0, 100% 0, calc(100% - 1.2vw) 100%, 0 100%); box-shadow: 0 0 1.5vh var(--breaking); white-space: nowrap;
+  animation: al-kick .6s cubic-bezier(.2,1.4,.3,1) .15s both, al-blink .8s steps(2) .8s 4; }
+@keyframes al-kick { from { transform: scale(2.4) translateY(-4vh); opacity: 0; filter: blur(8px); } to { transform: none; opacity: 1; filter: none; } }
+@keyframes al-blink { 50% { filter: brightness(1.25); } }
+.al-title { width: 100%; max-height: 26vh; padding-bottom: .8vh; box-sizing: border-box; overflow: hidden; font: 900 max(var(--min), min(4.6vw, 9vh))/1.16 var(--font-display); /* 1.05 clipped Orbitron's last line */ text-transform: uppercase; color: #fff;
+  text-shadow: 0 0 .6vh var(--ag), 0 .3vh 0 rgba(0,0,0,.9); overflow-wrap: break-word; animation: al-title .7s cubic-bezier(.2,.9,.2,1) .3s both; }
+@keyframes al-title { from { transform: scale(1.2) skewX(-12deg); opacity: 0; filter: blur(10px); } to { transform: none; opacity: 1; filter: none; } }
+.al-move { display: flex; align-items: center; gap: 2vw; animation: al-sub .6s ease-out .7s both; }
+.al-from, .al-to { font: max(var(--min), min(6vw, 12vh))/1 var(--font-mono); color: #fff; }
+.al-from { color: var(--soft); opacity: .8; }
+.al-to { text-shadow: 0 0 1.2vw var(--ac); }
+.al-from small, .al-to small { font-size: .45em; color: var(--ac); }
+.al-arrow { font: max(var(--min), min(3vw, 6vh)) var(--font-display); color: var(--ac); animation: al-push 1s ease-in-out infinite; }
+@keyframes al-push { 50% { transform: translateX(.8vw); } }
+.al-delta { display: flex; flex-direction: column; align-items: flex-start; gap: .6vh; padding-left: 1.6vw; border-left: 2px solid var(--ac); }
+.al-delta b { font: 900 max(var(--min), min(2.2vw, 4.4vh)) var(--font-display); color: var(--ac); white-space: nowrap; }
+.al.up .al-delta b { color: var(--up); }
+.al-delta small { font: 700 max(var(--min), min(1.1vw, 2.2vh)) var(--font-display); letter-spacing: .16em; color: #fff; white-space: nowrap; }
+.al-sub { width: 80%; max-height: 10vh; overflow: hidden; font: 600 max(var(--min), min(1.7vw, 3.4vh))/1.2 var(--font-ui); color: #fff; text-shadow: 0 .2vh 0 rgba(0,0,0,.9); animation: al-sub .6s ease-out .9s both; }
+.al-src { max-width: 100%; font: max(var(--min), min(.95vw, 2vh)) var(--font-mono); letter-spacing: .1em; color: var(--cyan); white-space: nowrap; overflow: hidden; animation: al-sub .6s ease-out 1.1s both; }
+@keyframes al-sub { from { transform: translateY(3vh); opacity: 0; } to { transform: none; opacity: 1; } }

@@ -1,0 +1,15 @@
+{
+  "name": "pnn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PNN: Pre News Network. A 24-hour broadcast of what prediction markets are pricing.",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server/index.mjs",
+    "sim": "SIM=1 node server/index.mjs",
+    "check": "for f in $(find server -name '*.mjs') $(find public/js -name '*.js' 2>/dev/null); do node --check \"$f\" || exit 1; done && echo OK",
+    "health": "curl -s localhost:4180/api/health",
+    "watch": "bash scripts/watch.sh"
+  }
+}

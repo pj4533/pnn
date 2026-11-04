@@ -1,0 +1,12 @@
+node_modules/
+dist/
+logs/
+data/
+.env*
+.vercel
+.DS_Store
+.env.local
+.playwright-mcp/
+
+# local test screenshots (large); README images live in docs/images/
+docs/shots/

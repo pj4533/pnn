@@ -1,0 +1,44 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Grid test</title>
+<style>html,body{margin:0;background:#07021a;overflow:hidden;font:12px monospace;color:#fff}canvas{display:block}#ui{position:fixed;left:8px;top:8px;display:flex;gap:4px;flex-wrap:wrap}button{font:inherit}#fps{position:fixed;right:8px;top:8px}</style>
+<script type="importmap">{"imports":{"three":"../../../vendor/three/three.module.js"}}</script></head><body>
+<div id="ui"></div><div id="fps"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { createGrid } from './grid.js';
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x07021a); document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 1, 6000);
+camera.position.set(0, 30, 160); camera.lookAt(0, 8, -100);
+const ctx = { THREE, alert: { value: 0 }, accent: { value: new THREE.Color('#ff2bd6') }, accent2: { value: new THREE.Color('#00f0ff') },
+  fogCol: { value: new THREE.Color(0.13, 0.015, 0.13) }, res: { value: new THREE.Vector2(innerWidth, innerHeight).multiplyScalar(renderer.getPixelRatio()) },
+  guardRect: { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) }, guardAmt: { value: 0.45 }, quality: 2 };
+const grid = createGrid(scene, ctx);
+const C = (h) => new THREE.Color(h);
+const P = {
+  square: { square: 1, hex: 0, polar: 0, dots: 0 }, hex: { square: 0, hex: 1, polar: 0, dots: 0, colA: C('#3a8aff'), colB: C('#ff2bd6') },
+  polar: { square: 0, hex: 0, polar: 1, dots: 0, colA: C('#ff3a5a'), colB: C('#ff9a2a') }, dots: { square: 0, hex: 0, polar: 0, dots: 1, colA: C('#7aff9a'), colB: C('#b04aff') },
+  mix: { square: .4, hex: .2, polar: .2, dots: .2, ripple: .8, colA: C('#00ffd0'), colB: C('#ff6ad5') },
+};
+const base = { colA: C('#ff2bd6'), colB: C('#00f0ff'), ripple: 0, storyMix: .5 };
+const ui = document.getElementById('ui');
+function set(n) { grid.setParams({ ...base, ...P[n] }); }
+for (const n of Object.keys(P)) { const b = document.createElement('button'); b.textContent = n; b.onclick = () => set(n); ui.append(b); }
+let cyc = false;
+for (const [n, f] of [['pulse', () => grid.pulse((Math.random() - .5) * 200, -40 - Math.random() * 200, C('#00f0ff'))], ['shockwave', () => grid.shockwave(0, -80)], ['alert', () => ctx.alert.value = ctx.alert.value ? 0 : 1], ['cycle', () => cyc = !cyc]]) { const b = document.createElement('button'); b.textContent = n; b.onclick = f; ui.append(b); }
+set(q.get('mode') || 'square'); if (q.get('pulse')) { grid.pulse(30, -90, C('#00f0ff')); grid.shockwave(-40, -60, C('#ff2bd6')); }
+if (q.get('alert')) ctx.alert.value = 1;
+const names = Object.keys(P); let ci = 0, ct = 0, last = performance.now(), fr = 0, ft = 0; const fpsEl = document.getElementById('fps');
+function loop(now) {
+  const dt = Math.min(0.1, (now - last) / 1000) * (q.get('fast') ? 10 : 1); last = now;
+  ct += dt; if (cyc && ct > 5) { ct = 0; ci = (ci + 1) % names.length; set(names[ci]); }
+  grid.update(dt, now / 1000, camera);
+  renderer.render(scene, camera);
+  fr++; ft += dt; if (ft > 1) { fpsEl.textContent = fr + ' fps'; fr = 0; ft = 0; window.__fps = fpsEl.textContent; }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+window.__grid = grid; window.__set = set;
+</script></body></html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PNN scene harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&display=swap" />
+<style>
+  html, body { margin: 0; height: 100%; background: #07021a; overflow: hidden; }
+  #stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 0; }
+  #hud { position: fixed; left: 12px; top: 10px; z-index: 5; font: 600 13px/1.4 Rajdhani, sans-serif; color: #9fe; background: rgba(5,2,20,.55); padding: 6px 10px; border: 1px solid #2a2050; pointer-events: none; white-space: pre; }
+  .zone { position: fixed; z-index: 2; border: 1px dashed rgba(0,240,255,.35); background: rgba(0,0,0,.25); pointer-events: none; display: none; }
+  #zL { left: 0; top: 0; width: 29vw; height: 100vh; }
+  #zB { left: 29vw; top: 72vh; width: 71vw; height: 28vh; }
+  #zT { left: 29vw; top: 0; width: 71vw; height: 6vh; }
+  body.zones .zone { display: block; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="zone" id="zL"></div><div class="zone" id="zB"></div><div class="zone" id="zT"></div>
+<div id="hud">loading</div>
+<script type="module">
+  import { createScene } from './index.js';
+  import { STATE as FIXTURE } from './dev-fixture.js';
+  const q = new URLSearchParams(location.search);
+  if (q.get('zones') === '1') document.body.classList.add('zones');
+  const hud = document.getElementById('hud');
+  const canvas = document.getElementById('stage');
+  const scene = createScene(canvas);
+  window.addEventListener('resize', () => scene.resize(window.innerWidth, window.innerHeight));
+
+  let state = FIXTURE;
+  if (q.get('fixture') !== '1') {
+    try { const r = await fetch('/dev/state.sample.json'); if (r.ok) state = await r.json(); } catch {}
+  }
+  scene.setTicker(state.movers || []);
+  // playlist: every story (filtered by ?type=), then movers, week (closing stories), alert
+  const want = q.get('type');
+  const items = [];
+  const only = q.get('only'), segQ = q.get('seg') || 'top';   // ?only=<id substring>  ?seg=card (full-screen card, no big %)
+  for (const s of state.stories) if ((!want || want === s.visual?.type) && (!only || s.id.includes(only))) items.push({ seg: segQ, story: s, name: `${s.visual?.type} · ${s.visual?.theme} · ${s.eventTitle}` });
+  if (state.sotd && (!want || want === 'sotd')) items.push({ seg: 'sotd', story: { id: state.sotd.id, eventTitle: state.sotd.title, markets: state.sotd.markets }, name: 'sotd · ' + state.sotd.title });
+  if (!only && (!want || want === 'movers')) items.push({ seg: 'movers', story: state.stories[0], name: 'movers · ticker field' });
+  if (!only && (!want || want === 'week')) for (const s of (state.closing || []).slice(0, 2)) items.push({ seg: 'week', story: s, name: `week · ${s.eventTitle}` });
+  if (!only && (!want || want === 'alert')) items.push({ seg: 'alert', story: state.stories[0], alert: state.alerts?.[0] || FIXTURE.alerts[0], name: 'alert · breaking' });
+  if (want && !items.length) items.push({ seg: 'top', story: state.stories[0], name: 'fallback' });
+  let i = Math.max(0, Math.min(items.length - 1, Number(q.get('i') || 0)));
+  const holdMs = Number(q.get('hold') || 9000);
+  let alertTimer = 0;
+  function play() {
+    const it = items[i];
+    clearTimeout(alertTimer);
+    scene.clearAlert();
+    if (it.seg === 'alert') { scene.showStory(it.story, 'top'); alertTimer = setTimeout(() => scene.showAlert(it.alert), 400); }
+    else scene.showStory(it.story, it.seg);
+    hud.textContent = `[${i + 1}/${items.length}] ${it.name}`;
+    window.__harness = { i, item: it, items };
+  }
+  play();
+  let timer = 0;
+  if (q.get('auto') !== '0') timer = setInterval(() => { i = (i + 1) % items.length; play(); }, holdMs);
+  window.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'ArrowRight') { i = (i + 1) % items.length; play(); } if (e.key === 'ArrowLeft') { i = (i - 1 + items.length) % items.length; play(); } if (e.key === 'a') scene.showAlert(FIXTURE.alerts[0]); if (e.key === 'c') scene.clearAlert(); });
+  setInterval(() => { const fps = window.__pnnScene?.api?.fps; if (fps) hud.textContent = hud.textContent.replace(/( · \d+ fps)?$/, ` · ${Math.round(fps)} fps`); }, 2000);
+  window.__next = () => { i = (i + 1) % items.length; play(); };
+  window.__goto = (k) => { i = k; play(); };
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PNN // Pre News Network</title>
+  <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" />
+  <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/overlay.css" />
+  <link rel="stylesheet" href="/css/panels.css" />
+  <link rel="stylesheet" href="/css/cards.css" />
+  <link rel="stylesheet" href="/css/chyron.css" />
+  <link rel="stylesheet" href="/css/alerts.css" />
+  <link rel="stylesheet" href="/css/flash.css" />
+  <link rel="stylesheet" href="/css/pops.css" />
+  <script type="importmap">
+  { "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }
+  </script>
+</head>
+<body>
+  <div id="backdrop" aria-hidden="true"><div class="bd-sun"></div><div class="bd-grid"></div></div>
+  <canvas id="scene"></canvas>
+  <div id="scanlines" aria-hidden="true"></div>
+  <div id="overlay"></div>
+  <div id="flash"></div>
+  <div id="chyron"></div>
+  <div id="chip"></div>
+  <div id="pops"></div>
+  <div id="alerts"></div>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

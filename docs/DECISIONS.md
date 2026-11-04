@@ -1,0 +1,369 @@
+# PNN decisions log
+
+The user asked for an autonomous first build ("make decisions, write them down, we'll talk after"). D1–D5 were then settled with the user in a quick Q&A on 2026-11-04. The rest are calls made without asking. Revisit any of them.
+
+## 2026-11-04: MVP build
+
+### D1. Look: full Three.js synthwave, with visuals specific to each story (the user chose this)
+- **Look:** carries over Election Night's neon grid and horizon, adds a wireframe globe, and gives each story its own 3D data visual, in the spirit of the Senate balance hologram.
+- **How a visual is picked:** the server tags each story with a `visual` hint (type plus region). The scene picks a hologram from it: an outcome ring or bars for multi-outcome events, a probability dial for yes/no questions, a 3D price ribbon from the history, a globe pinned to the story's region, and a countdown for markets closing soon.
+- **Overlays:** 2D layers on top carry all the text (chyron, ticker, boards).
+- **Later:** an LLM could pick or design visuals per story.
+
+### D2. Where it runs: local only (the user chose this)
+`npm start` serves on http://localhost:4180. Nothing is deployed. Public use needs a read of the exchanges' data terms first.
+
+### D3. Copy: templates only, no LLM yet (the user chose this)
+Deterministic templates live in `server/editorial/copy.mjs`. The module has a seam where Claude API copy can be added later.
+
+### D4. Sensitive markets: exclude all war, violence and death (the user chose this)
+- **Dropped:** invasions, strikes, attacks, ceasefires, blockades, military action, missiles, troops, hostages, regime collapse, and anything about someone dying, being assassinated or killed, casualties or nuclear weapons.
+- **Kept:** non-violent geopolitics, such as leaders leaving office (Putin, Xi), elections abroad, trade and diplomacy.
+- **Config:** patterns live in `server/config.mjs` under `sensitive.excludePatterns`.
+
+### D5. Categories: everything except noise (the user chose this)
+- **On:** Politics and elections, Economy and markets (Fed, CPI, oil, gas, tariffs, IPOs), Courts, tech and science, Health, Culture, and Weather.
+- **Always off:** sports, esports, crypto price brackets, promos and tweet-count or "mention" novelty markets.
+- **Ranking still decides what airs.** Weather and culture only lead when they're moving on real volume.
+
+### D6. Port 4180, Node ≥ 24, minimal dependencies
+- Built on Node's `http`, global `fetch` and SSE, following election_night's architecture without importing from it.
+- The only runtime dependency is Three.js, vendored into `public/vendor/` so the browser never loads from a CDN.
+
+### D7. SIM mode
+`npm run sim` replays the saved samples in `research/samples/`, with jittered prices so breaking alerts fire. It works offline and is useful for UI work.
+
+### D8. Build process
+- The parallel build is a Claude Code workflow.
+- I (Opus, the orchestrator) did the planning and contract myself, since I already had the context.
+- Sonnet built the mechanical parsers and docs, and Opus built the server core, editorial engine, UI and integration.
+- Fable handles the two hardest jobs: the Three.js scene (visuals unique to each story) and an adversarial editorial and correctness review.
+
+## Calls made during build
+- Sources: Kalshi markets with a placeholder close year of 2090 or later get closesAt null; Kalshi change1d is last minus previous price, null when previous is missing or 0.
+- Sources: Kalshi series map (ticker to category/tags) is cached 6h in memory; if the series call fails we continue without tags.
+- Server core: PNN's own price samples are kept only for markets with at least $1k 24h volume (about 1.8k of 9k Polymarket markets). An unchanged price is re-sampled every 5 min, and samples are kept for 24h, capped at 1000 per market.
+- Server core: in SIM, the Kalshi feed shows as not OK because the saved Kalshi sample is a series list with no markets. SIM backfills 24h of samples that end at the current price, so startup never fires a fake alert. Every 8th tick it adds a 10–16 point jump on a kept market with at least $50k volume.
+- Server core: history for sparklines comes from the Polymarket CLOB for Polymarket leads in the top 8. Everything else uses PNN's own samples.
+- Server core: `/api/health` marks a feed stale when its last success is older than 3× its poll interval.
+- Editorial: promo tags ("Earn 3.25%", "Rewards…", "Hide From New") are ignored for categorization rather than excluding the market, because they decorate real events like Balance of Power. Promo-looking titles are still dropped.
+- Editorial: when no tag maps, the category comes from title keywords before `categories.fallback`. The top-100 markets sample carries no tags.
+- Editorial: a market past its exchange `closesAt` is dropped as `expired` only if it is also quiet and pinned at ≤5% or ≥95% for more than 48h. Gamma end dates are unreliable: the LA mayor market "ended" in June but still trades heavily.
+- Editorial: a multi-outcome lead is the volume-weighted biggest mover, with risers favored by 1.2× (so "Bettors lift Colom" beats "Bettors cut Hyde-Smith"). Breaking alerts fire once per event per cooldown, not once per outcome.
+- Editorial: `closing` is capped at 8 even if `limits.closing` is higher. Weather, culture and fallback-category stories get a 0.45–0.8× score weight unless they move ≥5 points on ≥$50K.
+- UI: the news block is labeled "IN THE NEWS", not "Why it moved". Putting a headline next to a move doesn't prove it caused the move, so PNN doesn't claim it did.
+- UI: the client strips ellipses from source titles before display ("Putin out by…?" becomes "Putin out?"), since the no-ellipsis rule covers source text too. See `cleanText` in `public/js/util.js`.
+- UI: rundown is TOP STORIES (26s) → STORY FOCUS (3 stories × 10s) → BIGGEST MOVERS (20s) → STORY FOCUS (3 more) → THIS WEEK (22s). Segments with no data are skipped. Focus cycles through the top 6 stories and starts at story 2, so it doesn't repeat the lead that was just on screen.
+- UI: after a breaking takeover, the director cuts to STORY FOCUS on that story for 12s, then resumes the rundown. The scene gets `showAlert`/`clearAlert` around the takeover.
+- UI: on short wide screens (aspect > 2.1, e.g. 2000×810) TOP STORIES shows 3 secondary cards instead of 4. When a stacked panel doesn't fit, low-priority blocks are dropped first (second news item, sparkline, outcomes 4–5, dek), then a zoom is applied that is floored so text never drops below 0.7vw. Text that still won't fit at 0.7vw wraps; it is never truncated.
+- UI: `?fixture=1` rebases every fixture timestamp to "now" so "updated Xm ago" reads correctly. `&alerts=1` adds a fake alert every minute, `?noscene=1` skips the 3D scene. Keys: Space pauses, ←/→ step through segments, 1–4 jump to a segment.
+- Scene: Three.js 0.170 is vendored by copying `build/three.module.js` plus the postprocessing addons into `public/vendor/three/`, with the addons' bare `'three'` imports rewritten to relative paths, so no import map is needed in index.html.
+- Scene: globe land mass comes from world-atlas 2.0.2 `land-110m` (Natural Earth, public domain), pre-baked offline into `public/vendor/geo/land.json` (11.7k dots on a 1° grid plus coastline rings).
+- Scene: holograms are framed into a fixed stage rect (x 0.30–0.985, y 0.07–0.70 of the viewport) so the left column and bottom band stay clear for the overlays; `createScene(canvas, {stageRect})` and `api.setStageRect()` override it.
+- Scene: each story is seeded by `hash(story.id)` for its station (camera slides sideways between five stations; the globe has its own), palette hue nudge, geometry variant and camera orbit direction, so two stories of the same visual type never look identical.
+- Scene: one of every hologram is built below the floor and rendered once at startup to pre-compile all shader programs; camera flights run on wall-clock time so a stall can't leave the camera cruising in slow motion.
+- Scene: every GLSL `pow()` is guarded against a zero base because Apple's GL stack returns NaN for `pow(0.0, y)`, and a single NaN pixel turns the whole bloom pass black.
+- Scene: an alert replaces the current hologram with a red/amber gauge sweeping from→to and tints the world; `clearAlert()` re-shows the last story at the same station.
+- Integration: Kalshi is polled as a slow full sweep (every open event, ~120 pages, paced 400ms, at most every 20 min) plus a hot set (the 40 busiest non-sports/crypto/mentions events, re-fetched one by one each 180s poll). The old 10-page cap only reached obscure long-dated events; the big races sit 30–60 pages deep.
+- Integration: Kalshi series from short-cycle recurrences (fifteen_min, hourly, daily, weekly) are off by default (`config.filter.excludeFrequencies`). Their "previous price" is the listing price, so every fresh daily temperature/oil/approval bracket looked like a 90-point mover.
+- Integration: Kalshi cumulative strike ladders (non-mutually-exclusive events of "Above X" / "At least X" markets) are dropped (`config.filter.dropLadders`). Other non-exclusive multi-market Kalshi events ("Which counties will X win?") air as independent yes/no stories, never as a race with a runner-up; a `group:` tag lets diversity damping treat them as one family.
+- Integration: Kalshi combo/parlay markets are a new excluded `novelty` category.
+- Integration: the same race on both exchanges is merged into one story (same inferred region and event-title token overlap >= 0.5). The story credits both sources; the copy comes from the version without a quoted-question fallback, else Polymarket when it scores at least half as high. Movers are deduped the same way, and breaking alerts are re-pointed at the story that aired.
+- Integration: diversity damping in ranking. Two stories per family (House race, margin bracket, seat count, governor race, Senate race, Kalshi group) keep full score, then each further one is multiplied by 0.6^(k-2). The day after the election was otherwise 25 near-identical House races.
+- Integration: Kalshi leads get exchange history from the candlesticks endpoint (hourly, 24h), like Polymarket leads. When the lineup changes (e.g. Kalshi's first sweep lands), news and history for new top stories are fetched right away, rate-limited to once per 2 minutes.
+- Integration: the SSE heartbeat is a named `ping` event (not a comment) so the browser watchdog counts it; the client hands `overlay.stageRect` to `scene.setStageRect` whenever the layout changes; the movers segment drives the 3D pillar field even when no story maps to the top mover.
+- Review fixes (2026-11-04): Polymarket groups whose outcomes are cumulative ("released by Nov 4 / Nov 15 / Dec 31", thresholds, or prices summing past 110%) air as one yes/no story on the live rung nearest the action: no runner-up sentence, no outcome bars, never the outcomes hologram. Expiring rungs (closing within 48h) are skipped as the lead.
+- Review fixes (2026-11-04): a "by <date>" market at under 15% that closes within 48h and fell today counts as decay whatever the size of the drop, so it no longer leads THIS WEEK. THIS WEEK ranks thin markets at 0.35x so rows with real money come first.
+- Review fixes (2026-11-04): when one race trades on both exchanges, the merged story keeps the version with the larger 24h volume (unless only its copy falls back to a quoted question). The story is THIN only if every exchange is thin, and the meta line shows each exchange's volume ("$10M Kalshi · $1.4M Polymarket").
+- Review fixes (2026-11-04): breaking alerts are deduped and cooled down per aired story, not per exchange event, so one race moving on Kalshi and Polymarket fires one takeover (the bigger move). The client also dedupes on storyId.
+- Review fixes (2026-11-04): one person's departure ("X out as ... by Nov 30 / by Dec 31 / before 2027", "X leaves / resigns") airs as one story, the best-scoring deadline; the others alias to it.
+- Review fixes (2026-11-04): Polymarket tags 'parlays', 'parlay', 'midterm combos' and Kalshi 'mixed combos' map to the excluded `novelty` category, as do Kalshi tickers containing COMBO and titles that join two hold/win legs with a capital AND. 'senate combos'/'house combos' stay (Kalshi uses them for real seat counts).
+- Review fixes (2026-11-04): Kalshi title grammar is repaired at parse ("Democratics" -> "Democrats", "Will Democratic win" -> "Will the Democrat win", "in before 2027" -> "before 2027", "Will X leaves" -> "Will X leave"); meaning is never changed. Kalshi party races name the candidate from the sub-title ("Democrat Richard Ojeda"). Independent Kalshi group markets use their own question as the event title.
+- Review fixes (2026-11-04): placeholder outcomes ("None", "Other", "All 7") are labelled on boards, bars, ticker and holograms with the market's own question as a clause ("Republicans lose all seven key Senate seats"). The server sends `label` (and `context` for movers).
+- Review fixes (2026-11-04): margin brackets read "by 12 points or more" and are phrased "Bettors now give a 92% chance ...", never "raise the odds ... by 12% ... to 92%".
+- Review fixes (2026-11-04): memory. Kalshi sweep keeps only the fields the parser reads and drops sports/crypto/mentions events; PNN samples only markets that pass the filter; the news query cache is capped at 300 entries; /api/health reports `memory.rssMB`.
+- Review fixes (2026-11-04): a Kalshi full sweep cut short by an error keeps the previous sweep's events for the pages it missed and retries in ~5 min.
+- Review fixes (2026-11-04): Polymarket is polled every 300s (was 120s) to match Gamma's 300s cache. The breaking window (60 min) still has ~12 samples.
+- Review fixes (2026-11-04): the movers hologram scales pillar height as sqrt(|move|) over the full 0-100 point range and labels only the single biggest riser and faller.
+
+## 2026-11-04: after launch
+
+- **The mouse pointer stays visible.** The pointer had been hidden over the whole page (`cursor: none`), and the user wants to click.
+- **Click-to-focus.** Clicking a top-story card, the lead card, a Biggest Movers or This Week row, or a ticker item cuts to STORY FOCUS on that story.
+  - A clicked story holds for 20s, then the rundown resumes.
+  - Clicks are ignored during a breaking takeover.
+  - Hovering a clickable item shows a cyan glow.
+  - A mover whose event isn't on the board gets a one-market story built from its mover data.
+
+## 2026-11-04: copy style (the user asked for this)
+- **No "Bettors give…" template.** Headlines lead with the subject, the number and the change ("Fed December hike odds rise to 80%, up 7 points today").
+  - Every line still reads as a probability, with a %, "odds" or "chance".
+  - Never "will".
+  - Attribution comes from each story's source/time/volume line and the standing "Odds are not facts" disclaimer.
+  - CLAUDE.md's editorial rule is updated to match.
+
+## 2026-11-04: variety pass
+- **DESK segment (UI).** Rundown is now TOP STORIES → DESK → FOCUS ×3 → MOVERS → DESK → FOCUS ×3 → THIS WEEK. Each DESK airs the next desk in rotation (Economy → Tech & Science → World → Culture → Politics, skipping desks the server didn't send) for 3 × 9s: a desk board in the left column (up to 6 rows, per-desk accent: economy mint, tech cyan, world violet, culture pink, politics amber) while the 3D shows each story in turn as `focus` and the board lights that row. Skipped when `state.desks` is missing or empty. Desk rows are clickable (`storyFor` also searches desk stories). Key 5 jumps to the next desk. On-screen copy and fixture headlines drop the repeated "Bettors give…" phrasing and state the odds and the move ("Bank of Mexico November cut climbs to 74%, up 11 points today"); the "ODDS ARE NOT FACTS · BETTORS' PRICES, NOT CALLS" disclaimer stays.
+- **Board quotas (rank).** The score still orders stories, but the 30-story board is picked with category quotas: elections ≤ 7, politics ≤ 6, any other category ≤ 6. Every category whose best story clears a minimal floor gets a reserved seat. The floor is ≥ $5K event volume, no deadline decay, and not near-certain unless it moved ≥ 10 points today. Quotas relax only when there aren't enough candidates. Live on 2026-11-04 this took the board from elections 19 / politics 6 to elections 7, politics 6, economy 6, geopolitics 4, tech 4, and 1 each for world, culture and weather.
+- **Top 6 span categories (rank).** #1 stays the strongest story. Slots 2–6 take the best qualifying story from each other category until 4 categories are covered, then fill by rank with at most 2 per category. They're interleaved so the same category isn't back to back.
+- **Interesting beats certain (rank).** A near-certain (≥ 97% / ≤ 3%) market that didn't move ≥ 3 points today is now damped ×0.15 (was ×0.35). An open question (15–85%) with real volume gets a +4×volume-factor bonus. Result: a competitive non-election market outranks a pinned, static race.
+- **Desks (rank + ingest).** `state.desks` has economy, tech (tech+science+health), world (geopolitics+world), culture (culture+weather) and politics (politics+courts; elections stay on TOP STORIES). Each desk takes up to 6 qualifying stories from the full ranked pool, not just the board, with at most 2 per story family, and is omitted with fewer than 2. Ingest fetches news and exchange history for each desk's lead along with the board's top 10/8, so each cycle makes up to 5 extra requests. The cadence and spacing are unchanged.
+- **Copy for the new market kinds (copy).** "X IPO by" → "X goes public by". Kalshi "Closer Senate Race: A or B" → "the A Senate race is closer than B's". "Closest Senate race?" outcomes are places, not names. Central-bank "at the November … Governing Board meeting" → "in November". "Oscar Winner: Best Picture" → "for Best Picture at the Oscars". "Best AI…" / "Top Artist…" → "in the race for best AI…". "… · Winner" → "to win …". A statement title with a participle ("GPT Astra released by Nov 6?") is now a clause ("… is released by Nov 6"). An outcome only counts as a name if every word is capitalized, so "Maintain current rate" isn't one; it reads "no change" in deks. A name whose event is a quoted question falls back to the market's own question ("Chance Ron DeSantis announces a presidential run before 2027"), never to a bare "X a 95% chance".
+- **Headline voice (copy).** Following the copy-style decision above, there's no "Bettors" anywhere. Name stories read "Scott Colom's odds jump to 84% in …", "… holds at a 59% chance …". Question stories read "Chance <clause>: P, up N points today", "P chance <clause>" or "Odds <short clause> rise to P". The verb scales with the size of the move (edges up / climbs / jumps / surges; slips / falls / drops / sinks). The variant is seeded by market id, so it's stable between rebuilds but varied across the board. The dek skips any move the headline already states, and falls back to the 24h volume.
+
+## 2026-11-04: variety pass
+
+- Sources: Polymarket gets a second sweep through 41 Gamma tag slugs (economy, fed, finance, ipos, earnings, tech, ai, science, space, health, pop-culture, movies, music, awards, weather, climate, courts, scotus, world and others, each checked with curl). It pulls the top 50 events per tag by 24h volume, every ~15 min (`config.sources.polymarket`), with requests 350ms apart, and stops early on a 429 or 5xx. The results are cached as parsed markets and merged into every 300s main poll, deduped by event id, with the main sweep's fresher copy winning.
+- Sources: a Kalshi market listed less than 24h ago (`open_time`) gets `change1d = null`, because its `previous_price` is the listing price. Weekly and monthly series air again. 15-min and hourly series stay off and are no longer held in memory by the sweep.
+- Filter: daily Kalshi series air only from Economics, Financials, Commodities or Companies, unless a market has at least $50K of 24h volume. Daily city-temperature brackets on either exchange need $50K too.
+- Filter: a broad tag (world, geopolitics, weather, science, culture) gives way to clear title cues. Central banks, inflation, GDP and IPOs go to economy. Measles, pandemics and the FDA go to health. Moon, Mars, meteors and aliens go to science. Polymarket's catch-all "climate & science" tag is no longer mapped.
+- Filter: "S&P 500 Daily Up/Down" index coin-flips and "# of views" YouTube markets are novelty and are dropped.
+- Sensitive: "meteor/asteroid strike" and "War Machine" (a film role) no longer trip the war/strike patterns. "recapture" (of territory) now counts as sensitive.
+
+## 2026-11-04: news wire
+
+The user asked for "news meets markets": watch the news, check whether a breaking story trades anywhere, and work it in. The modules are built standalone (`server/sources/wire.mjs`, `server/editorial/match.mjs`, `server/editorial/flash.mjs`, config in `server/wire-config.mjs`) and aren't wired into ingest yet. See the "Wire contract" section of ARCHITECTURE.md.
+
+- **Feeds.** 32 feeds from research/news-feeds.md §3, polled at 60–600s with ±20% jitter and staggered starts.
+  - Conditional GET (ETag and Last-Modified) is done locally in wire.mjs, because http.mjs only replays ETags.
+  - Per-host backoff doubles from 60s to a 10-min cap on 429, 5xx or network errors, and honors Retry-After.
+  - The fetches are wire-specific, so they don't share http.mjs's backoff state.
+  - MarketWatch `mw_realtimeheadlines` is frozen at 2025 items, so it's replaced by `mw_topstories`. AP comes through Bluesky RSS: its posts have no `<title>`, so the first sentence of the post is used.
+- **Headline filters run before clustering.** D4 is extended to news: war, violence, death, Gaza/Hamas/Hezbollah, injuries and weapons are all dropped. Sports, celebrity gossip, crime (arrests, charges, sentencing) and service pieces (opinion, quizzes, deals) are dropped too.
+  - This is aggressive. On 2026-11-04 the sensitive filter dropped about 15% of headlines.
+  - "Indicted" and "trial" stay, because courts markets exist.
+- **Clustering is IDF-weighted, not plain Jaccard.** In testing, plain token Jaccard ≥ 0.5 almost never matched real cross-outlet headlines ("Speaker Johnson Won't Stay On as GOP Leader" vs "Mike Johnson bows out of leadership"). At 0.3 it glued unrelated "Democrats sweep midterms" stories together.
+  - Words are weighted by inverse frequency over the 6h ring, so the day's common words count little.
+  - An item joins a cluster at weighted Jaccard ≥ 0.3 with at least one shared rare token, or when it shares ≥ 2 rare tokens with weighted overlap ≥ 0.3.
+  - Multi-word places and institutions ("North Carolina", "White House", "Federal Reserve") are folded into one token, so they count once.
+  - Clusters of 3 or more must also match their core tokens, which stops chaining.
+- **Breaking rules.** A cluster fires when its newest item is ≤ 40 min old and any one of these holds:
+  - 2 independent outlets publish within 15 min.
+  - 3 independent outlets appear in the 45-min window.
+  - A BREAKING or JUST IN marker appears plus 1 other outlet.
+  - An official item lands. Official items are pattern-gated, so Fed enforcement actions and SEC charges don't count but FOMC, BEA GDP and PCE releases, and White House orders and signings do.
+
+  Google News is never independent. A cluster, or a near-duplicate of one, never re-fires within 6h. On a cold start, clusters that are already corroborated and fresh fire once.
+- **Matching needs two independent signals.** Topics count once per family (Tesla and SpaceX are one "Musk" signal). Country topics and generic rate words count as half a signal, and so do months and years. Ubiquitous words count for nothing: Trump, Democrat, Republican, US, candidate, win, race, stock, market.
+  - At least one signal must be a strong topic or a word that's rare in the market index. Words are weighted by event-level inverse frequency over the market index.
+  - 1.5 signals is enough when the news covers ≥ 40% of the market's distinctive wording.
+  - The Fed topic needs Fed/FOMC/Powell/Warsh. Generic "rate cut" wording is a weak topic, so a Bank of Mexico story never pulls Fed markets.
+  - Every candidate goes through `filter.classify`, so noise and sensitive markets can't match.
+  - Results keep at most 2 outcomes per event and drop anything below 45% of the best score.
+  - Live probes: "Texas floods", "Apple iPad", "Starmer visits Macron" and "Federation of unions strike" match nothing. "Fed signals December hike" → Fed December decision. "Bank of Mexico cuts" → Banxico November decision. "Putin no plans to step down" → Putin out by…. Real wire clusters: "Mike Johnson won't run for minority leader" → Kalshi House GOP leader market (Johnson 1%, down 56 today). "Mississippi Senate race too close to call" → the Mississippi Senate winner markets on both exchanges.
+- **Live search fallback** runs only when the local best score is under 16. It uses at most 2 queries per cluster: topic queries first, then the rarest words of the headline. Each exchange is called at most once per 10s and results are cached 15 min.
+  - Polymarket `public-search` results go through `parsePolymarketEvents`.
+  - Kalshi's undocumented `v1/search/series` results are adapted to v2 shape for `parseKalshiMarkets`. v1 has no per-market 24h volume, so the event's `recent_volume` is split by each market's share of total volume. That's an estimate.
+  - Both fail soft.
+- **Flash copy follows the copy-style decision.** The headline is the outlet's own words, credited ("BBC, The Hill and 2 others"). The market line is subject + % + change, with no "Bettors" and no "will". When copy.mjs's label would lose the verb of a wh-question, the exchange's question is quoted instead (copy.mjs allows "will" inside a quoted question). The same outcome on both exchanges shows once, using the busier market.
+- **Not done (at build time):** wiring into ingest, store and SSE, an economic-calendar "hot window", and the UI. Wiring and UI are done now, see below; the hot window is still open.
+
+### Integration (wire → flash → on air)
+- **Where it runs.** `server/newsroom.mjs` starts the wire inside the server (from `startIngest`), matches each `breaking` cluster, builds the flash, stores it and applies the boost. Clusters are handled one at a time on a promise chain, with a 30s match timeout.
+- **Match index = every airable market on both exchanges.** Not just the board: the same `classify`-kept set ingest samples for history (about 4k markets / 1.3k events live), held as one array per rebuild so match.mjs caches its index. The unfiltered ~25k-market set was tried first; its IDF was dominated by Kalshi brackets (turnout, vote-percent, combos) and it was 5× slower, and non-airable markets can never match anyway.
+- **match.mjs tuning: "rare" scales with the index.** A token is rare at ≤ max(7, 1% of events), not a fixed ≤ 7 events. With Kalshi in the index, "Mississippi" sits in 12–21 events, so the live "Mississippi Senate race is toss-up" cluster matched nothing. After the change it matches the Mississippi Senate winner markets on both exchanges; the negative probes (Texas floods, Apple iPad, Starmer/Macron, unions strike, Kansas City chiefs, restaurant week, CVS split, alligator) still match nothing.
+- **On-air bar (newsroom, `wire-config.flash`).** Best match score ≥ 11 (match.mjs's floor is 9; the live "'Beef' creator sets Netflix projects" cluster matched an Oscars market at 8.8). Rows from another event than the lead's need ≥ 80% of the lead's score (a live Mississippi flash had pulled in the Alaska Senate winner). Rows pinned under 3% / over 97% that moved < 5 points today are dropped as dead content. Weak matches log `wire weak match`.
+- **"Worked in."** rank.mjs takes no boost option, so ingest applies it after `buildStories`: for `flash.boostMin` (10) minutes the matched story moves to #1 on the board (found by story id, event id or any matched market; pulled from a desk or This Week if it isn't on the board; otherwise a one-event story is built from the fresh markets, `kind: 'news'`). It gets `story.flash` {id, headline, credit, newsAt, url}, `tags: ['news']`, and the flash headline as `story.news[0]`. The flash triggers an immediate rebuild. Panels show the kicker "IN THE NEWS" (amber) on such stories.
+- **changeSinceNews** comes from PNN's own samples (`store.history`): the last sample at or before the cluster's first sighting. Right after a restart there's no sample that old, so it's omitted rather than guessed. It shows only when it's ≥ 1 point.
+- **SSE.** `flash` per new flash only (dedupe by cluster id, last 10 in `state.flashes`). Connect sends `state` only; the UI marks `state.flashes` seen, so nothing replays. `state.wire` is the newest 30 headlines (≤ 3h old, title-deduped, outlet without "via Google News").
+- **Health.** `feeds.wire`: `ok` when at least half the feeds are ok; `count` = feeds ok; plus `feedsOk`, `feedsTotal`, `lastPoll`, `items` (ring size), `clustersFired`, `clustersMatched`, `flashesMade`, `lastFlashAt`. Stale after 900s. Top-level `flashes` and `wireItems`. The wire never fails top-level `ok`.
+- **SIM.** No network: a canned 8-headline wire and a canned breaking cluster (Fed hike / Mississippi Senate, alternating) at 40s and then every 180s, matched against the SIM markets with live search off.
+
+### UI
+- **NEWS MEETS MARKETS popup** (`public/js/flash.js`, `css/flash.css`). It's a side takeover sitting exactly on the left column (.8–30vw × 8.4–78vh), so it overlaps no other text; the left panel fades out underneath it. It's calmer than BREAKING: amber/cyan, slides in, no full-screen flash, 10s. Content: kicker, the outlet's headline in quotes, credit + age, "WHAT THE MARKETS ARE PRICING" with 1–3 rows (label, %, move today, change since the news, exchange · 24h volume · updated, THIN flag), the data line, and the disclaimer. A fit-stack drops the line first, then row 3, then row 2.
+- **Queue rules.** Live SSE only, never from state; deduped by id and by story/lead market within 10 min; queue cap 3; flashes older than 10 min are dropped. While a BREAKING alert is up the queue pauses and a flash on air is cut (not replayed). During a flash the rundown holds and only the flash drives the 3D (the scene shows the matched story as `focus`). When it ends, it cuts to STORY FOCUS on that story for 12s. Clicking the popup focuses the story for 20s. Ad-hoc stories (event not on the board) are built client-side like `moverStory`.
+- **Wire crawl.** The bottom ticker alternates MOVERS (45s) and NEWS WIRE (30s) with a 0.35s crossfade. The wire crawl shows outlet (amber) + headline + age. It's skipped while the wire has fewer than 3 headlines. A second crawl would have cost 5vh the 2000×810 layout doesn't have.
+- **Fixture.** `?fixture=1` adds 7 wire headlines and fires a fake Fed flash at 12s, which waits for the 5s alert to finish. `&flash=1` fires it at 2s with no alert; `&hold=1` keeps a flash up for 60s for screenshots. `window.__pnnFakeFlash()`, `__pnn.flashes`, `__pnn.chyron.setTickerMode('wire')`.
+- Screens: `docs/shots/flash-{1920x1080,1512x945,2000x810}.png`, `docs/shots/wire-*.png`. `fitReport()` (it now covers `#flash` too) is clean at all three sizes and the console is clean.
+
+## 2026-11-04: polish
+
+- **Strike ladders air as one line (rank + kalshi + filter).** Kalshi cumulative ladders are no longer dropped: `config.filter.dropLadders` is now `false`.
+  - Ladders include gas, diesel, Brent/WTI, gold, CPI, mortgage rates, margins, seat counts and Rotten Tomatoes scores.
+  - `kalshi.mjs` keeps each ladder's rungs grouped under its event, with `strike`, `strikeDir` and `eventSub` on each rung.
+  - A ladder needs at least 3 distinct numeric strikes. "Where will it rain?" (every city at strike 0) is not one.
+  - Rank airs each ladder as ONE yes/no story on the line: the rung nearest 50%, among rungs that hold at least 1% of the event's volume.
+  - Headline: "National diesel price above $6.14 this week: 59% chance, down 30 points today".
+  - Dek: the neighboring rungs, skipping any priced against the ladder's order ("Above $6.12: 74% · above $6.16: 34%.").
+  - The visual is a `dial`, or a `ribbon` if the line moved ≥ 8 points this week. The volume and thin flag use the whole event's 24h volume.
+  - Only the line can be a mover. When the line moves a cent, the far rungs swing 40 points, and that isn't news.
+  - Polymarket threshold groups (outcomes like "↑ $2.0T" or "Above 4%") get the same line pick. "By <date>" ladders keep the move-led pick.
+- **Ladder families.** Diversity and desks treat everything a ladder measures as one family: every gas-price line (national, state, daily, weekly, monthly), every oil line, every Rotten Tomatoes film. Margin and seat ladders join the existing margin and seat-count families. A desk takes at most 1 story per ladder family.
+- **Ladder noise.** Data-vendor index ladders stay off via `config.filter.ladderExcludePatterns`: credit-card spend, point of sale, array index, sector trends and foot traffic. The other noise rules are unchanged: crypto price brackets, daily up/down, and 15-min and hourly series.
+- **Live result (2026-11-04 18:12, test server on :4189).** The economy desk now has these ladder lines on it: national diesel this week, Brent Nov 6 and national gas in November. The board also carries the Rotten Tomatoes lines and a second Brent line (Nov 30).
+- **Ladder copy (copy.mjs `ladderParts`/`rungLabel`).** "Will X be above Y …?" becomes a noun phrase.
+  - Kalshi nouns are rewritten without changing their meaning: "average gas prices" → "National gas price" (or "Texas gas price" when the event names a state), "WTI crude oil settlement price" → "WTI oil", and "margin of victory for Democrats in the U.S. Senate election in Georgia" → "Democrats' Georgia Senate margin".
+  - Values are formatted: "$4.0200" → "$4.02", "USD/Bbl" → "a barrel", "8200000" → "8.2 million".
+  - The time comes from the event ("this week", "tomorrow") or the date line. A date already past is dropped, such as an election day.
+  - A noun too long for a headline falls back to the clause forms.
+- **Kalshi/Polymarket grammar repairs (copy PRE + kalshi fixTitle).**
+  - Central banks take "the".
+  - "increases/decreases (interest) rates by" → "hikes/cuts rates", for example "Chance the Bank of Mexico cuts rates a quarter point in November".
+  - "Hike rates by 0bps" → "leaves rates unchanged", ">25bps" → "more than a quarter point", and "at their December meeting" → "in December".
+  - Names ending in s are singular ("Sarah Huckabee Sanders receives …"), and "there are at least 4 …" takes the plural.
+  - "leaves Chief of Staff" → "is out as Chief of Staff", "retires the Supreme Court" → "retires from …", and "Will Yes receive …" → "the Yes side gets …".
+  - Stray capitals ("Susie WIles") are fixed, "Q3 2026"/"November 2026" drop the current year, big numbers get commas, and "(HIGH)" is removed.
+  - Kalshi independent markets whose title is only the event's "Who will …?" become "Will <name> …?".
+  - Wh-question events give names a context: "Ron DeSantis steady at a 45% chance to be Trump's next Secretary of Defense".
+  - "X winner" events read "in the X race", Kalshi nomination races drop the redundant party prefix, and "Republican party" outcomes read "Republicans".
+- **Noun-phrase markets are no longer quoted.** "“US-Iran Hormuz Agreement by December 31”: 41% chance" → "Chance of a US-Iran Hormuz agreement by December 31: 41%, up 6 points today". This applies only when the head word is an event noun (agreement, talks, meeting, blackout, trifecta…). Only those common words are lowercased, so names keep their capitals. "Russia x Ukraine" → "Russia-Ukraine", and "Next …" → "a …". A bracket favorite in a dek reads as a range ("The favorite is still above 39%"), not a quoted label.
+- Scene: the globe's region label and probability are drawn on a taller two-line canvas (1024×440, name at 0.2 and percentage at 0.66; `makeLabel` gained `mainY`/`subY`). The label also floats higher above the beacon tip, so "MOSCOW, RUSSIA" no longer overprints the percentage at 1920×1080 or 2000×810 (`docs/shots/scene-globe-*.png`).
+
+## 2026-11-04: full-screen story cards (the user asked for this)
+The user said the list boards were unreadable ("so much on the screen just doesn't work… separate these out into cards that are the full screen so the user can read everything").
+- **DESK, BIGGEST MOVERS and THIS WEEK are now sequences of one-story cards**, 8s each: a desk airs its 3–6 stories, movers the top 5, this week the top 5. Segment length = cards × 8s. TOP STORIES and STORY FOCUS are unchanged.
+- **Layout.** The card fills .8–47.8vw between the top bar and the chyron (8.4–78vh). The 3D stage moves right (frame from 49vw; `stageRect.x0` 0.49) and shows each card's story as `focus`. A mover whose market isn't its board story's lead gets the one-market `moverStory`.
+- **Type.** The header reads "WORLD DESK · 2 OF 6" with progress pips and keeps the desk accent (movers cyan, this week amber). Headline is up to 2.9vw, auto-fit. The percentage is up to 10vw. The move line ("up 59 points today") is 2vw, then "this week" or "Resolves in 1 day 7 hrs". After that: up to 4 outcome bars for multi-outcome stories, one "In the news" line and the meta line at 1vw. A fit-stack drops the news line, then the 4th bar, then the bars, then the weekly line, before any zoom.
+- Clicking a card still focuses its story for 20s. Keys 3/4/5 still jump to movers/this week/desk. The old list builders in panels.js (`moversBoard`, `weekBoard`, `deskBoard`) aren't used any more. `public/js/cards.js` builds the cards and `css/cards.css` styles them.
+- Screens: `docs/shots/card-{desk,movers,week}-{1920x1080,1512x945,2000x810}.png`. fitReport is clean at all three sizes, nothing overlaps the chyron, and the console is clean.
+
+## 2026-11-04: entertainment is in (the user asked for this)
+- **Entertainment and culture are full-weight content.** The 0.75 ranking damping on culture is removed, and Rotten Tomatoes, Oscars, Bond, charts and box office aren't capped beyond the normal per-category board quota.
+- **Bug fix:** Polymarket's internal `hide-from-new` tag matched the promo exclusion (the hyphenated form slipped past the promo-tag ignore list), which silently dropped 20 legit events such as Gold futures and daily city temperatures. Promo tags are now ignored for categorizing and never drop a market.
+- **Kalshi daily entertainment series** (charts, box office) now pass on normal volume, like economy dailies.
+- Wire crawl sports filter (2026-11-04): added positions (linebacker, pitcher…), NFL/NBA/MLB/NHL team nicknames, tennis/golf tours and star names after "Detroit Lions linebacker…" and "Djokovic… ATP Finals" leaked into the NEWS WIRE crawl.
+- On-screen move rounding (2026-11-04): the client now rounds the magnitude like the server (-29.5 → "down 30"), so a card's headline and its big move line always agree.
+
+## 2026-11-04: short headlines (the user asked for this)
+- **Every story now has `short`,** a number-free headline from `copy.shortHeadline()`. It removes the %/move part from each oddsLine shape, then tightens the words (Dec, PM, GOP/Dems, "deal", "out", RT score…).
+  - On live data the average is 38 characters, down from 71; the longest is 53.
+- **Where each version is used:** cards, focus, the lead card, minis and board rows show `short`, because the big % and the move line are already on screen. The chyron, ticker, alerts and flashes keep the full headline.
+- **Still deterministic.** Real rephrasing ("GOP swept in 7 key races") would need an LLM. That's an open option, and the templates stay as the fallback.
+
+## 2026-11-04: rotation & freshness
+- **Director freshness (client).** `director.js` stamps every story it shows (top lead and minis, focus, desk/movers/week cards, clicks, alerts, flashes) in an `aired` map. Each pick prefers stories not aired in the last 15 min: never-aired first, then least recently aired, with a 15s-per-rank nudge toward higher board ranks. It only reuses a recent story when the whole pool is recent.
+- **STORY FOCUS draws from the whole board** (`state.stories`, ~30), not ranks 1–6. The "N OF M" kicker now reads board rank of board size.
+- **TOP STORIES** keeps #1 as the lead; the minis come from board ranks 2–12 by the same freshness rule (3 or 4 minis by aspect ratio, as before). The director hands the overlay a reordered copy of `state.stories`, so the mini rank numbers (2–5) are strip positions, not true board ranks.
+- **DESK** shows 4 cards per airing (was up to 6) chosen from up to 12 desk stories by freshness, so successive visits to the same desk show different stories. **MOVERS** and **THIS WEEK** pick 5 per airing from the full lists (up to 20 movers, 8 closing); movers are de-duplicated by story id. The picks are fixed when the segment starts and refreshed by id on each state update.
+- **Test hooks.** `window.__pnn.airLog` is the capped list of `{id, at, seg}`. `?fast=1` runs segment timers and the freshness clock 10x. `director.note(id, seg)` lets main.js stamp alerts and flashes.
+- **Measured** (synthetic live-sized state: 30 board stories, 20 movers, 8 closing, 5 desks x 12, 15 simulated minutes at ?fast=1): unique stories on air went from 51 to 80; focus 7 to 19, top minis 8 to 12, movers 5 to 17, this week 5 to 8. No story aired twice in focus or desk within the window.
+- **Bigger pool (fix 5; sources + filter).** Low daily floor: `config.filter.lowVolume24h` = $200 (was the $1K floor for everything). It applies to non-election, non-politics markets whose lifetime volume is >= $25K (`lowVolumeTotal`) or whose liquidity/open interest is >= $10K (`lowVolumeLiquidity`) and whose price is 2-98%; elections and politics keep $1K. Daily/recurring/hourly noise is dropped before the volume check, so it cannot come back. These markets are THIN by definition (`thinVolume` $25K) and score x0.5.
+- **Deeper Polymarket.** The main poll stays the top 300 events every 300s. Events 300-800 by volume24hr (5 pages, 500ms apart) refresh every 15 min (`sources.polymarket.deepEvents`/`deepSec`) from inside `fetchPolymarket`, cached as parsed markets, merged main > deep > tags (deduped by event). At that depth an event still trades $5-20K a day. Tag sweep limit 50 -> 100 per tag. 429/5xx backoff is unchanged (a cut-short deep sweep keeps the previous deep markets).
+- **Memory.** Markets under $200/24h are dropped at the source (they can never pass the filter), which more than pays for the deeper sweep. Kalshi `liquidity` falls back to open interest when the book-depth field is 0.
+- **Measured** (one 4192 test run, kept events by category incl. Kalshi): before-config 1541 events (elections 767, politics 230, economy 220, culture 161, tech 86, weather 24, geopolitics 19, world 15, health 9, science 8, courts 2; 342 live 5-95% with >= $10K/24h) -> after 1854 events (elections 827, economy 282, politics 279, culture 209, tech 130, world 41, geopolitics 32, weather 28, health 11, science 10, courts 5; 371 live >= $10K). Steady RSS 236 MB on the test server (cold-start peak ~660 MB).
+- **Movers caps (fix 3; rank).** The 20-mover list is picked like the board: at most 6 per category (`boardCat`, so House/seat/margin markets count as elections; a merged race counts under the aired story's category) and at most 2 per story family. Strong movers ($10K+ 24h and 3+ points, or a 3+ point 1h move) fill first. The caps relax only when there aren't enough strong candidates, and weaker ones (2+ points) come after that. THIS WEEK (8) takes at most 3 per category, with the same relaxation. `capPick()` in rank.mjs does both.
+- **What's moving now (fix 4; store + ingest + rank + copy).** `store.motion(id)` reads PNN's own samples and returns `change1h`, `change15m` and `flatMin`. change1h is null until the samples span 30 min, change15m until they span 10 min. flatMin is the minutes since the price was last 1.5+ points from now, capped at the observed span. Ingest attaches these to every airable market before `buildStories`. In scoring, the 24h move is weighted by `freshness()`: 1 while moving, then down 8% per hour once flat for over an hour, to a floor of 45%. A 3+ point move in the last hour on $10K+ adds `2 × min(pts, 20)` to the move term, and the story counts as a mover. Lead and mover picks use the same blend. No samples means no change, so a cold start ranks exactly as before. The decay only starts once PNN itself has watched a market sit flat for over an hour, so nothing fades in the first hour after a restart.
+- **Hourly copy.** When the 1h move is the notable one (3+ points, and the day's move is under 5 points or the hour is at least 60% of it), the headline says "…, up 5 points in the last hour" or "X climbs to 45% … in the last hour". `shortHeadline` strips the hour. When the headline leads with today's move, the dek adds "Up 4 points in the last hour." and no longer says "steady today" on a story that moved this hour.
+- **Desks up to 12 stories** (`limits.deskStories`, default 12; the client pages 4 at a time). Still at most 2 per family and 1 per ladder family, and desks with fewer than 2 stories are left out.
+- **Rebuild cost.** `mergeCrossSource` re-tokenized every kept story for every candidate, and that was the hot spot. Tokens are now cached per story: buildStories over 20k live markets went from 463–516 ms to 359–387 ms warm. The motion pass costs 2 ms over about 5.3k airable markets. The rebuild debug log line now carries `motionMs`, `buildMs` and `airable`.
+- Orchestrator integration (2026-11-04): Top Stories minis show their real board rank (rotation now picks from ranks 2–12). Non-election stories need $2K/24h, not $5K, to take a desk slot or reserved board seat, so the bigger pool can actually reach desks. ARCHITECTURE cadence lines updated to match the deeper Polymarket sweep.
+- Measured after the rotation pass (live data, `?fast=1`, about 18 simulated minutes): 137 airings, 65 unique stories (was 37), Story Focus 18 unique of 27. The #1 story still leads each loop, so it airs the most (5 times).
+
+## 2026-11-04: outcomes visual (the user asked for this)
+- **The 3D "outcomes" hologram is now a clean podium for every story:** one column per outcome, height set by its chance, coloured with the same OUTCOME_COLORS as the 2D bars, and labels lifted clear of the columns.
+- **The 100-pip hemicycle is retired.** It was Election Night's Senate-seats graphic: it read a 41% chance as "41 seats", the theme palette wrapped so outcomes shared colours, and the dot wedges didn't line up with the columns.
+- **A chamber view for seat-count markets was tried and dropped.** The user found it hard to read and not a fit for these uses.
+
+## 2026-11-04: bigger focus card, breaking-alert clipping (the user asked for this)
+- **STORY FOCUS uses the full-height card** (the same `segmentCard` as desk/movers/week). The compact focus card left half the left column empty. Progress pips are skipped when a sequence has more than 12 cards (focus rotates about 30), so they don't crowd out "8 OF 30".
+- **The BREAKING title clipped the bottom of its last line at every size.**
+  - Root cause: `fit.js` allowed a quarter line of "slack" before calling an element overflowing, but `.al-title` has overflow:hidden, so that slack was just clipped.
+  - Slack now applies only to tight line boxes (line-height < 1.1).
+  - `.al-title` got line-height 1.16 and bottom padding.
+  - Alerts now carry `short` (from `shortHeadline`), and the takeover title uses it, because from→to and the points are already shown big.
+- **Verified with Playwright** by forcing alerts with the longest live headlines, full and short, at 1920×1080, 1512×945 and 2000×810: no clipped text in the alert, and `fitReport` is clean on every segment. `window.__pnn.alerts` is exposed for this kind of test.
+
+## 2026-11-04: card "re-display" jitter fix (the user reported this)
+- **Bug:** when an SSE `state` update arrived while a card was on air (a few times a minute: exchange polls, news, the wire), the overlay rebuilt that card's DOM, so its `cardIn`/`grow` entrance animations replayed. The card looked like it displayed again a second or two later.
+  - Two related triggers did the same thing: the chyron re-animated whenever the headline's numbers ticked, and the 3D hologram rebuilt (re-scanned in) on every price change, because its signature included `yesPrice`.
+- **Fix:**
+  - Same-card refreshes finish one-shot animations instantly via `settle()` in overlay.js; looping effects keep running.
+  - The chyron animates only when the story changes.
+  - The scene signature is segment + story id.
+- **Reproduced and verified in Playwright** by sending a fresh state (with a price tick) right after each segment's card appeared:
+  - before the fix, all 5 segments replayed their entrance;
+  - after it, none do, and new cards still slide in.
+
+## 2026-11-04: shuffled rotation (the user asked for this)
+- **Shuffle bags replace the freshness picker.** The old picker broke ties by board rank and showed its picks in rank order, so desks aired story 1, 2, 3, 4.
+  - Every list has its own shuffled queue: each desk, the desk rotation itself, Story Focus, Movers, This Week and the Top Stories minis.
+  - A queue airs every item once before any repeats, then reshuffles, and never opens a new round with the item just shown.
+  - Newcomers join the current round at a random spot.
+  - On page load the queues and the starting rundown segment are random.
+- **Verified:**
+  - Unit test (12 items, 30 cycles): every cycle covers all 12 with no repeats; 30 distinct orders; no back-to-back repeat across rounds; 11 different first items over 20 simulated reloads; newcomers air within the round.
+  - Live: two reloads started on different segments with different stories.
+- **Kept on purpose:** the TOP STORIES lead card is still the #1 story on the board (it's the "top story"); everything around it is shuffled.
+
+## 2026-11-04: mixed stream instead of segment blocks (the user asked for this)
+- **The diagnosis.** The user saw "Biggest Movers 1, 2, 3…".
+  - Client 'air'/'draw' logs showed the stories were already shuffled (ranks 1, 9, 4, 13, 2).
+  - The actual complaints were the counters ("1 OF 5 / 2 OF 5", which count airing position) and blocks of 4–5 cards of the same kind in a row.
+- **The rundown is now a mixed stream of single cards.** Each card is a different kind from the last (STORY FOCUS, mover, this week, a desk story), drawn from shuffle bags that prefer a different category group than the previous card. TOP STORIES airs every 6–8 cards.
+  - Measured over 30 cards: 0 same-kind repeats, and 2 same-group repeats, both caused by the fixed TOP STORIES lead.
+- **Card headers show the story's real rank in its list** ("BIGGEST MOVERS · #9 OF 20"). The progress pips and "N of M" airing counters are gone.
+- **Client air/draw logging stays on** (`client` log lines with kind `air`/`draw`, per page id) for diagnosing what a real screen showed.
+- **"Major airlines suspend Ben Gurion flights"** (conflict-driven) is now covered by the sensitive filter.
+
+## 2026-11-04: watchability plan (the user chose this)
+- The research workflow and the user's picks are in `docs/PLAN-watchability.md`.
+  - Chosen: dead-content cut, THEN vs NOW swings, ON THE MOVE stings (about 1 per 3 min), next-up tease plus a 5-min no-repeat rule, declutter, price replay, Story of the Day as one card, Next Big Decision clock, a MONEY MOVING large-trade flash (trading language, never "bet"), and the exchanges-agree badge.
+  - Declined: settled cards, Claude take line, early-money panel, wall-clock rituals.
+
+## 2026-11-04: watchability build
+- Editorial (rank.mjs): dead content never airs anywhere (board, desks, THIS WEEK, ticker): weather at 90%+ or 10%- (`dead:weather-certain`), markets closing within 12h on under $25K (`dead:closing-thin`), and election races pinned at 97%+/3%- without a 10-point move today (`dead:decided`). Counted in `stats.dropped`.
+- Editorial: no top-6 slot for a story under $10K unless it has news or more than 3 history points (optional `buildStories(..., {enrich: {hasNews(storyId), historyLen(leadId)}})`; without it the $10K test alone applies). Quiet nights still fill the top 6 through the old floor, then anything.
+- Editorial: `story.swing` is set for a 10+ point 24h move on $25K+ (or 5+ points in the last hour on $10K+, `window: '1h'`), with `title` (BIGGEST SWINGS / LONGSHOTS ON THE MOVE / FAVORITES SLIPPING) and, for election races, `note: 'Market prices, not official results'`. `story.settling` marks 95%+/5%- after a 10-point move; the client airs it once.
+- Editorial: `story.exchanges`/`story.agree` only compare the same outcome on both exchanges (matching outcome names, or binary markets with matching titles). A gap over 20 points gets no badge, because live that was always two different questions (Google "best AI" 5% vs 60%).
+- BREAKING: fires only for a board/desk story (from rank's last build) or a $250K+ market. It never fires on margin/seat-count brackets or on ladder rungs other than the line, and only when the alert headline is plain and 64 characters or fewer (no quoted-question fallback).
+- THIS WEEK lists only non-thin stories, unless every candidate is thin.
+- Scene (3D): swing sweep. With `story.swing`, the dial needle (and the lead podium column on outcomes) sweeps `swing.from` to `swing.to` over about 2s with a ghost needle and rim tick (dial) or ghost ring (podium) at the old value. Falls run in reverse. The top-card number counts along.
+- Scene (3D): `showStory(story, segName)` drops the big % on every segment except 'top' (dial) and shows names only on podium columns. Alert dials keep their label.
+- Scene (3D): price replay. With >= 8 history points the ribbon replays the last 24h (or the full series when 24h has < 8 points): scan-in, 0.6s rewind, then a 3s glowing tracer redraw with a camera follow, gold news markers (outlet + "N H AGO", max 5), ghost lines at 24h-ago and 1h-ago, ending on the live price.
+- Scene (3D): swing dial stories with history >= 8 points air as the replay. Swing outcomes stay on the podium sweep, and swing globe/countdown stories keep their own visual.
+- Scene (3D): Story of the Day is `showStory({ id, eventTitle, markets: state.sotd.markets }, 'sotd')`. It is a 4x2 gauge board capped at the 8 biggest moves (so labels stay readable), the biggest haloed, and the camera pulls to it at about 2.4s and back out at about 8s. Empty markets means no-op.
+- Scene (3D): holograms may set `holo.camFocus = { dx, dy, zoom }` and the rig follows it smoothly. This is a new generic hook in `index.js`, used by the replay and the SOTD board.
+- Server (moments): ON THE MOVE, JUST LISTED and MONEY MOVING are detected in the new `server/moments.mjs` (driven by ingest after each rebuild) and go out through `store.addMoment(kind, ev)`: SSE `move`/`listed`/`money`, with the last 10 kept in `state.moves/listed/money` (never replayed on connect). Thresholds are defaults in moments.mjs and can be overridden by an optional `config.moments`.
+- Server (move): it fires for a board/desk story whose market moved >= 5 points in PNN's own 1h samples on >= $10K 24h volume, at most one every 3 minutes globally and once per story per 30 minutes. `kind: 'still'` means the story popped within the last 3h and is >= 15 points off its 3h-ago price. Moves need >= 30 min of samples, so none fire right after a start.
+- Server (listed): it fires only for an event first seen after a 30-min warm-up, created on the exchange within 48h (new `Market.createdAt` from Polymarket createdAt/startDate and Kalshi open_time), that passes the filter, has >= $10K 24h volume and is priced 3–97%. It fires at most once per 10 minutes, one per event, busiest first.
+- Server (money): Polymarket data-api v1 `/trades?market=` is retired. v2 is `GET https://data-api.polymarket.com/v2/trades?condition=<ids>&filterType=CASH&filterAmount=10000`. It accepts at most 20 ids per request and a big filtered query can 503, so we send chunks of 10, 600ms apart, and skip a failed chunk. Every 2 min it polls the top 15 board/desk stories that have Polymarket markets (3 markets each, via new `Market.conditionId`). Emitted trades are fresh (<= 20 min), at prices 5–95% (a NO trade is aired at its YES-equivalent price) and limited to 1 per 10 min. `largestToday` and `countToday` count $10K+ trades on that story over 24h. Trader handles are dropped in `sources/trades.mjs`. Kalshi aggregate skipped.
+- Server (countdown): `state.countdown` lists the next 3 scheduled decisions closing within 14 days, built by `sources/calendar.mjs` from markets already loaded, with no new API calls. It matches CPI/inflation, Fed/FOMC, jobs, GDP, PCE/retail/PPI, other central banks, the Oscars/Grammys/Emmys/Globes, award announcements and earnings, needs >= $5K event volume and keeps one per kind per day (the busiest event). The line is the outcome nearest 50% among the busier half. Labels drop "Will", become gerunds and say "a quarter point" instead of bps.
+- Server (wire): a cluster that fires before markets load is queued and retried every 2 min for 30 min. A repeat fire (same id, or title Jaccard >= 0.5 within 6h) is skipped, and so is a second flash on the same story within 90 min. Health `feeds.wire` gains retryQueued/retryPending/retried/retryDropped/dupesSkipped.
+- Server (newsMarks): every wire cluster matched to an aired story, by flash or SOTD pass, adds `{t: firstSeen, title, outlet}` to that story's `newsMarks` (last 6, within 24h). ingest attaches them to every story.
+- Server (sotd): every 5 min, and after each flash, the live clusters (>= 2 outlets) plus clusters fired in the last 12h are matched against board/desk markets. The strict flash matcher finds the lead and a loose topic pass adds every aired story sharing >= 2 expanded key words (congress→house/senate/midterm, democrat↔democratic, GOP↔republican…). Dead rows are dropped and >= 3 stories are needed. The title is the cluster's consensus words that also appear in the matched markets, in headline order, up to a 3-word span, uppercased (live: "DEMOCRATS WIN"). The credit lists the outlets. The card is sticky: it switches only to a cluster that scores as well or better, or after 3h, and is kept for up to 12h with live prices.
+- Server (SIM): one fake move/still/listed/money every 60–90s, rotating, and marked `sim: true`. This ignores the 10-min pacing so the UI can be tested offline. A canned 3-outlet midterms cluster feeds the SIM Story of the Day.
+- UI (swing #2): any card whose story has `swing` becomes a THEN vs NOW card: dimmed "YESTERDAY 39%" → huge "NOW 98%" counting up over 2s (CSS @property counter, so in-place refreshes land on the final value), a big glowing +59, a FLIPPED stamp when `flipped`, a SETTLING tag, and "Market prices, not official results" on election races. The banner is `swing.title`, else BIGGEST SWINGS / LONGSHOTS ON THE MOVE / FAVORITES SLIPPING by `shape`. It also replaces the top-bar title.
+- UI (settling): a `settling` story airs once. When its card ends it joins `director.settled` and is filtered out of every bag, the TOP lead and the ALSO MOVING pool until it stops settling.
+- UI (pops #3): a new `public/js/pops.js` handles SSE `move`/`listed`/`money` as 4s top-right corner pops. They queue (max 3), sit ≥60s apart, wait while `body.alerting`/`flashing` is set, drop when older than 5 min, and never replay ids already in `state.moves/listed/money`. MONEY MOVING reads "$30,000 traded on <label> at 80%" with a count-up, then "Largest trade on this story today · Polymarket · 4:26 PM ET" (12-hour ET, matching the clock, not "20:47"). It's skipped outside 5–95%. Clicking a pop focuses its story.
+- UI (tease #4): the director plans two cards ahead, and the top bar shows "NEXT <short> · then <short>" (eventTitle when `short` is missing). The "then" part drops before the text would shrink below .7vw. On full-screen cards the top-bar segment title hides to make room, because the card header already carries the banner.
+- UI (5-min rule #4): bag picks prefer stories not aired (or planned) in the last 5 min. A kind whose pick is recent is passed over for another kind. It only falls back to a recent story when every kind's pick is recent, and it still never airs the same kind twice in a row. TOP STORIES waits up to 6 cards while its lead is recent. SOTD and COUNTDOWN are exempt.
+- UI (declutter #5): while a card is up, the chyron lower third shows "ALSO MOVING": a top-8 non-thin mover not on screen, using its board story's `short`/headline (raw "Will …?" titles never air). If there's none, it shows "COMING UP" with the tease. The day's move is a huge glowing +7 / −40 "POINTS TODAY". "Unchanged today"/"New on the board" are gone: the card shows the week move, else the runner-up, else nothing.
+- UI (chyron copy): the strip note now reads "MARKET PRICES, NOT CALLS" instead of "BETTORS' PRICES" (no "Bettors" rule).
+- UI (SOTD #7): STORY OF THE DAY is a full-screen card kind that airs about every 9–11 cards when `state.sotd` is set. It shows the title plus "· N markets moved", an IN THE NEWS credit, the wire headline, and a board sorted by |move| with the biggest highlighted. The scene gets `showStory({...sotd, markets}, 'sotd')`, which is what the scene's sotd hologram reads, rather than the lead story.
+- UI (countdown #8): a persistent NEXT BIG DECISION chip sits lower right for the next future `state.countdown` item with its odds. It ticks mm:ss in the last hour, otherwise shows "2H 14M" / "3 DAYS". It's hidden during alerts, flashes, SOTD, COUNTDOWN and standby, and moves up above the TOP STORIES strip. A COUNTDOWN DESK card (next 3 on a vertical timeline, live-ticking) airs about every 11–13 cards.
+- UI (exchanges #10): the badge "KALSHI 79% · POLYMARKET 80% · both exchanges agree" or "EXCHANGES DISAGREE · KALSHI 58% vs POLYMARKET 49%" shows on any card with ≥2 `exchanges`, using `agree`, or computed with the 5-point rule. There's no separate disagree pop.
+- UI (fixture): `public/dev/state.sample.json` gains swing/settling/exchanges/agree/newsMarks on 5 stories, plus sotd, countdown and old moves/listed/money (to prove no replay). `?fixture=1` fakes move/money/listed pops at 20/22/24s, and `window.__pnnFakePop(type)` fires one. The air log skips its POST in fixture mode, because the static server has no /api/client-log. Keys 6/7 force SOTD/COUNTDOWN.
+- Integration: ingest passes `enrich: {hasNews, historyLen}` into `buildStories`, so the top-6 floor uses news and history, not only the $10K test. `/api/health.build.dead` now shows the dead-content drop counts (live first run: 16 weather-certain, 20 closing-thin, 148 decided).
+- Integration: MONEY MOVING "Largest trade on this story today" now keys on `isLargestToday`. The server's `largestToday` is a dollar amount, so the old truthy check put that note on every pop.
+- Integration: ALSO MOVING uses only movers that belong to a board or desk story, and always carries the price ("Dems hold exactly 56 Senate seats next Congress · 85% chance, up 78 points today"). The number-free `short` line read as a fact, and raw bracket movers read as "44 climbs to 90% in Republican Senate seats…".
+- Integration: COUNTDOWN DESK airs only with 2+ upcoming decisions. One lone entry made a mostly empty card, and the corner chip still shows it. Each row's outcome carries its event title ("Core CPI in October: Above 0.1%"), and the kicker reads "THE NEXT SCHEDULED DECISION" for one entry.
+- Integration: COUNTDOWN DESK now drives the 3D scene with a synthetic story of orbital clocks (`visual.type` 'week' for 2+, 'countdown' for 1). Before, the previous story's hologram stayed up under a "NEXT BIG DECISIONS" label.
+- Integration check (port 4195, about 14 minutes live): no errors in the log; one BREAKING alert fired (AZ-02). No move, listed or money events yet. Moves and listings need a 30-minute warm-up, and there were no $10K+ Polymarket trades on airing stories after 21:21Z, as confirmed by curl. fitReport is clean and the console is clean at 1920x1080, 1512x945 and 2000x810 for the swing card, Story of the Day, COUNTDOWN DESK, the three pops and BREAKING.
+
+## 2026-11-04: swing count-up fix (the user reported this)
+- **Bug:** the THEN vs NOW "NOW" number counted up with a CSS `@property` integer animated through a CSS counter. Safari doesn't interpolate it, so the number sat at 0 for the 2s animation and then popped to the final value.
+- **Fix:** the count-up is now JS-driven (`countUps()` in overlay.js). It starts from yesterday's value and eases to today's over 2s after a 0.3s beat, and jumps straight to the final value on in-place SSE refreshes. The CSS counter rules are removed from cards.css.
+- **Verified in WebKit:** the number counted 50 → 48 → 43 → … → 23 over about 2s, never showing 0.
+
+## 2026-11-04: watchability leftovers
+- Editorial (margin brackets): `diversify()` in rank.mjs now multiplies the score of margin-bracket stories ("...by 12+ pts", "popular vote margin between...", via exported `isMarginBracket`) by 0.2, so they stay off the board top 6. SOTD `leadStoryId` in newsroom.mjs skips margin brackets and takes the biggest non-bracket row.
+- UI (countdown chip): the corner chip now reads "<event>: <outcome> 88%" (e.g. "Core CPI in October: Above 0.1% 88%"), matching the COUNTDOWN DESK rows.
+- UI (countdown desk scene): the countdown segment sorts upcoming items soonest first before building, so the card's first row, the scene's lead and the story handed to the scene are the same soonest decision.
+
+## 2026-11-04: living background
+
+- The background is now 6 param-driven env modules plus a mood director, replacing world.js's single sun/grid/mountain look. 9 moods: classicSunset (the original, weighted 1.4 so it recurs as "home"), midnightAurora, neonRain, eclipse, oceanDusk, dataStorm, ringedPlanetDawn, twinSunDesert, nebulaDrift. Hold 3-6 min, blend 40-90 s, first switch after 120 s; params wander slowly inside a mood.
+- Readability caps: background luminance is capped at 0.35 (below the 0.78 bloom threshold) except the sun core and lightning; the stage rect is dimmed by 45% (60% for bright-horizon moods); post bloom is clamped to 0.4-0.65, sun brightness to 1.2 and fog density to 1; weather amounts sum to 1 at most; camera orbit/bob bias is clamped to 0.7-1.3 so fitPose framing holds.
+- The alert overrides everything: the timeline freezes during an alert, and every env shader applies the red mix last, after the post grade.
+- Mood fog colors were darkened from the first pass, because a bright fog washed out the far floor behind holograms.
+- Orchestrator check (2026-11-04): living background verified in WebKit (Safari engine).
+  - Harness and full app with `?moodfast=1`: moods crossfade, 0 console errors, fitReport clean, about 50–55fps headless (66–97 in Chromium per the integrator).
+  - Aurora fix in `env/sky.js`: the camera only sees the low sky band above the mountains, where the aurora faded to nothing and its curtains collapsed to hairlines. It now keeps broad curtains near the horizon and is brighter there.
+
+## 2026-11-04: faster moods, calmer terrain (the user asked for this)
+- **Mood timing:** each mood holds 1–2 min (was 3–6) and blends over 15–30 s (was 40–90). The first change comes about 45 s after load.
+- **Terrain is subtler** (it "jumped around"):
+  - The shape seed no longer wanders (it was ±0.5 × 7 noise units, enough to reshape whole ranges).
+  - Height wander dropped from ±12% to ±4%.
+  - Mood blends move the seed ×1.2 instead of ×7.
+  - The idle morph runs at half speed.
