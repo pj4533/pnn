@@ -1,6 +1,7 @@
 // Scene-to-scene transitions: 8 fullscreen ShaderMaterials sampling tA (outgoing) and tB (incoming) at half
 // resolution, plus the MorphCloud (16k GPU points flying from A's shapes into B's). Each shader eases uP itself.
-// Transition-added light (rims, flashes, streaks) is multiplied by guard() and the hologram rect is luma-capped at
+// Every transition centres on the widget (uHero: iris/warp/vortex/morph open from it, wipes cross it at the peak).
+// Transition-added light (rims, flashes, streaks) is multiplied by guard() and the calm eye ellipse is luma-capped at
 // 2.5, so holograms drawn on top stay readable. uLite (0/1) halves the tap counts (uniform-bounded loops).
 import * as THREE from '../../../vendor/three/three.module.js';
 
@@ -23,13 +24,13 @@ uniform sampler2D tA, tB, uNoise;
 uniform float uP, uTime, uAlert, uGuardAmt, uLite;
 uniform vec2 uRes, uOrigin;
 uniform vec3 uColA, uColB;
-uniform vec4 uGuardRect;
+uniform vec4 uGuardRect, uHero;
 varying vec2 vUv;
 const float PI = 3.14159265;
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vn(vec2 p){ return texture2D(uNoise, p / 256.).r; }
 float fbm3(vec2 p){ float v = 0., a = .5; for (int i = 0; i < 3; i++) { v += a * vn(p * 64.); p = p * 2.03 + 7.7; a *= .5; } return v / .875; }
-float gmask(){ vec2 q = gl_FragCoord.xy / uRes; vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return m.x * m.y; }
+float gmask(){ vec2 q = gl_FragCoord.xy / uRes; if (uHero.z < 1e-4) { vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return m.x * m.y; } return 1. - smoothstep(.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3)))); }
 float guard(){ return 1. - uGuardAmt * gmask(); }
 float e3(float x){ x = clamp(x, 0., 1.); return x * x * (3. - 2. * x); }
 float eIn(float x){ x = clamp(x, 0., 1.); return x * x * x; }
@@ -89,7 +90,7 @@ const FRAG = {
     col += inA ? A(q) : B(q); w += 1.;
   }
   col /= w;
-  float near = exp(-pow((uP - PK) * 9., 2.));
+  float near = exp(-pow(abs((uP - PK) * 9.), 2.));
   vec2 c2 = uOrigin + dd * (1. - .03 * near);
   vec3 split = inA ? A(c2) : B(c2);
   col.r = mix(col.r, split.r, near); col.b = mix(col.b, (inA ? A(uOrigin + dd * (1. + .03 * near)) : B(uOrigin + dd * (1. + .03 * near))).b, near);
@@ -100,19 +101,19 @@ const FRAG = {
   float streak = smoothstep(len, 0., abs(r - head * 1.4) ) * step(.82, hash12(vec2(cell, 9.7))) * smoothstep(.03, .12, r);
   float streakAmt = inA ? pA : (1. - pB) * .7;
   col += mix(vec3(.6, .95, 1.), ${accent}, .4) * streak * streakAmt * 1.4 * guard();
-  float flash = exp(-pow((uP - PK) * 18., 2.)) * .6;
-  float ring = exp(-pow((r - (uP - PK) * 3.2) * 22., 2.)) * step(PK, uP) * (1. - pB);
+  float flash = exp(-pow(abs((uP - PK) * 18.), 2.)) * .6;
+  float ring = exp(-pow(abs((r - (uP - PK) * 3.2) * 22.), 2.)) * step(PK, uP) * (1. - pB);
   col += (vec3(.7, 1., 1.) * flash * (1. - .7 * gmask()) + ${accent} * ring * 1.5) * guard();
   gl_FragColor = vec4(done(col), 1.);
 }`,
   // VHS tracking band, datamosh blocks, head-switch stripe, saturation crush
   vhs: `void main(){
   vec2 uv = vUv; vec2 px = gl_FragCoord.xy;
-  float bc = mix(-.25, 1.25, uP), band = 1. - smoothstep(0., .16, abs(uv.y - bc));
+  float bc = uHero.y + (uP - .5) * 1.5, band = 1. - smoothstep(0., .16, abs(uv.y - bc));
   float tq = floor(uTime * 30.);
   float row = floor(px.y / 4.);
   float disp = (hash12(vec2(row, tq)) - .5) * .12 * band;
-  float head = step(uv.y, .035) * exp(-pow((uP - .5) * 5., 2.));
+  float head = step(uv.y, .035) * exp(-pow(abs((uP - .5) * 5.), 2.));
   disp += (hash12(vec2(row, tq + 3.)) - .5) * .2 * head;
   vec2 q = uv + vec2(disp, 0.);
   vec2 blk = floor(px / 16.); float hb = hash12(blk);
@@ -127,7 +128,7 @@ const FRAG = {
   vec3 a = vec3(A(q + vec2(sp, 0.)).r, A(q).g, A(q - vec2(sp, 0.)).b);
   vec3 b = uLite > .5 ? B(qB) : vec3(B(qB + vec2(sp, 0.)).r, B(qB).g, B(qB - vec2(sp, 0.)).b);
   vec3 col = mix(a, b, mixB);
-  float crush = exp(-pow((uP - .5) * 6., 2.)) * .65;
+  float crush = exp(-pow(abs((uP - .5) * 6.), 2.)) * .65;
   col = mix(col, vec3(dot(col, vec3(.2126, .7152, .0722))), crush);
   float noise = hash12(px * .5 + tq) * band * .35;
   col += (vec3(noise) * .6 + ${accent} * band * .08 + vec3(.8, .9, 1.) * head * hash12(vec2(row, tq + 9.)) * .4) * guard();
@@ -137,6 +138,7 @@ const FRAG = {
   scanwipe: `void main(){
   vec2 uv = vUv; float asp = uRes.x / uRes.y;
   float f = (1. - uv.y) * .92 + (uv.x - .5) * .2126 * asp * .5;
+  f += .5 - ((1. - uHero.y) * .92 + (uHero.x - .5) * .2126 * asp * .5);   // front crosses the widget at the peak
   float pos = mix(-.2, 1.2, e3(uP));
   float odd = mod(floor(gl_FragCoord.y / 2.), 2.);
   float posR = pos + (odd > .5 ? .06 : -.06) * sin(PI * clamp(uP, 0., 1.));
@@ -146,7 +148,7 @@ const FRAG = {
   vec3 b = uLite > .5 ? B(uv + vec2(sp, 0.)) : vec3(B(uv + vec2(sp, 0.)).r, B(uv).g, B(uv - vec2(sp, 0.)).b);
   vec3 col = mix(A(uv), b, rev);
   float lw = 2. / uRes.y;
-  float line = exp(-pow((f - pos) / lw, 2.));
+  float line = exp(-pow(abs((f - pos) / lw), 2.));
   float glow = exp(-max(behind, 0.) / .04) * rev * .5;
   col += (${accent} * (line * 2. + glow) + vec3(1.) * line * .4) * guard();
   gl_FragColor = vec4(done(col), 1.);
@@ -170,7 +172,7 @@ const FRAG = {
   gridfold: `void main(){
   vec2 uv = vUv; vec2 G = vec2(16., 9.);
   vec2 id = floor(uv * G), lc = fract(uv * G);
-  float st = (1. - id.x / 15.) * .9 + (id.y / 8.) * .3;
+  float st = length(((id + .5) / G - uHero.xy) * vec2(uRes.x / uRes.y, 1.)) * .62 + hash12(id) * .08;   // flips ripple out from the widget
   float ang = clamp(uP * 2.2 - st, 0., 1.) * PI;
   float c = cos(ang), sn = sin(ang);
   float lx = (lc.x - .5) / max(abs(c), .02) + .5;
@@ -194,7 +196,7 @@ const FRAG = {
   bool inA = uP < .5;
   float tw = inA ? eA : 1. - eB;
   float rr = r * (1. + 2.2 * tw);
-  float aa = a + pow(max(1. - r, 0.), 2.) * tw * 9. * (inA ? 1. : -1.);
+  float aa = a + pow(abs(max(1. - r, 0.)), 2.) * tw * 9. * (inA ? 1. : -1.);
   vec2 q = uOrigin + vec2(cos(aa), sin(aa)) * rr / vec2(asp, 1.);
   vec3 col = inA ? A(q) : B(q);
   float eye = smoothstep(.0, .15 + .2 * tw, r);
@@ -208,7 +210,7 @@ const FRAG = {
   whip: `void main(){
   vec2 uv = vUv;
   float S = e3(uP) * 1.04;
-  float blur = pow(sin(PI * clamp(uP, 0., 1.)), 2.);
+  float blur = pow(abs(sin(PI * clamp(uP, 0., 1.))), 2.);
   float taps = uLite > .5 ? 5. : 10.;
   vec3 col = vec3(0.); float w = 0.;
   for (int i = 0; i < 10; i++) {
@@ -244,15 +246,16 @@ void main(){
   pos = mix(pos, aTo, w);
   vec4 mv = viewMatrix * vec4(pos, 1.);
   gl_Position = projectionMatrix * mv;
-  float flare = exp(-pow((uP - .5) * 7., 2.));
+  float flare = exp(-pow(abs((uP - .5) * 7.), 2.));
   vCol = mix(uColA, uColB, smoothstep(.3, .7, uP)) * (1. + 1.2 * flare);
   vA = smoothstep(0., .06, uP) * (1. - smoothstep(.82, 1., uP)) * (.3 + .3 * r.z);
   gl_PointSize = clamp(uSize * (1. + flare) * uRes.y / 1080., 1., 48.);
 }`;
 const CLOUD_FS = /* glsl */`
-uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt, uAlert;
+uniform vec2 uRes; uniform vec4 uGuardRect, uHero; uniform float uGuardAmt, uAlert;
 varying vec3 vCol; varying float vA;
-float guard(){ vec2 q = gl_FragCoord.xy / uRes; vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return 1. - uGuardAmt * m.x * m.y; }
+float gmask(){ vec2 q = gl_FragCoord.xy / uRes; if (uHero.z < 1e-4) { vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return m.x * m.y; } return 1. - smoothstep(.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3)))); }
+float guard(){ return 1. - uGuardAmt * gmask(); }
 void main(){
   vec2 c = gl_PointCoord - .5; float d = dot(c, c);
   float a = smoothstep(.25, .0, d) * vA;
@@ -302,9 +305,10 @@ void main(){
   gl_PointSize = clamp(max(uRes.x / G.x, uRes.y / G.y) * mix(1.03, .4 + .7 * h, env), 1., 64.);
 }`;
 const TILE_FS = /* glsl */`
-uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt, uAlert;
+uniform vec2 uRes; uniform vec4 uGuardRect, uHero; uniform float uGuardAmt, uAlert;
 varying vec3 vCol; varying float vA, vLand;
-float guard(){ vec2 q = gl_FragCoord.xy / uRes; vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return 1. - uGuardAmt * m.x * m.y; }
+float gmask(){ vec2 q = gl_FragCoord.xy / uRes; if (uHero.z < 1e-4) { vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return m.x * m.y; } return 1. - smoothstep(.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3)))); }
+float guard(){ return 1. - uGuardAmt * gmask(); }
 void main(){
   vec2 c = gl_PointCoord - .5;
   float a = mix(smoothstep(.25, .0, dot(c, c)), 1., vLand * vLand * vLand) * vA;
@@ -314,12 +318,13 @@ void main(){
 }`;
 
 /** Build every transition material, the fullscreen quad that draws them and the morph cloud. */
-export function createTransitions({ res, guardRect, guardAmt, alert, noise, time }) {
+export function createTransitions({ res, guardRect, guardAmt, alert, noise, time, hero }) {
+  const uHero = hero || { value: new THREE.Vector4(0.64, 0.6, 0.2, 0.25) };
   const U = {
     tA: { value: null }, tB: { value: null }, uNoise: { value: noise },
     uP: { value: 0 }, uTime: { value: 0 }, uAlert: alert, uGuardAmt: guardAmt, uLite: { value: 0 },
     uRes: res, uOrigin: { value: new THREE.Vector2(0.28, 0.62) },
-    uColA: { value: new THREE.Color('#ff2bd6') }, uColB: { value: new THREE.Color('#00f0ff') }, uGuardRect: guardRect,
+    uColA: { value: new THREE.Color('#ff2bd6') }, uColB: { value: new THREE.Color('#00f0ff') }, uGuardRect: guardRect, uHero,
   };
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
@@ -341,7 +346,7 @@ export function createTransitions({ res, guardRect, guardAmt, alert, noise, time
   cg.setAttribute('position', aFrom); cg.setAttribute('aFrom', aFrom); cg.setAttribute('aTo', aTo); cg.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
   const CU = {
     uP: U.uP, uTime: U.uTime, uSize: { value: 2.6 }, uScale: { value: 1 }, uVortex: { value: new THREE.Vector3() },
-    uColA: U.uColA, uColB: U.uColB, uRes: res, uGuardRect: guardRect, uGuardAmt: guardAmt, uAlert: alert,
+    uColA: U.uColA, uColB: U.uColB, uRes: res, uGuardRect: guardRect, uGuardAmt: guardAmt, uAlert: alert, uHero,
   };
   const cloudMat = new THREE.ShaderMaterial({ uniforms: CU, vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false });
   const cloud = new THREE.Points(cg, cloudMat); cloud.frustumCulled = false;
@@ -351,7 +356,7 @@ export function createTransitions({ res, guardRect, guardAmt, alert, noise, time
   for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) { cell[i * 2] = x; cell[i * 2 + 1] = y; }
   tg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TW * TH * 3), 3)); tg.setAttribute('aCell', new THREE.BufferAttribute(cell, 2));
   const tileMat = new THREE.ShaderMaterial({
-    uniforms: { tA: U.tA, tB: U.tB, uP: U.uP, uTime: U.uTime, uLite: U.uLite, uRes: res, uOrigin: U.uOrigin, uColA: U.uColA, uColB: U.uColB, uGuardRect: guardRect, uGuardAmt: guardAmt, uAlert: alert },
+    uniforms: { tA: U.tA, tB: U.tB, uP: U.uP, uTime: U.uTime, uLite: U.uLite, uRes: res, uOrigin: U.uOrigin, uColA: U.uColA, uColB: U.uColB, uGuardRect: guardRect, uGuardAmt: guardAmt, uAlert: alert, uHero },
     vertexShader: TILE_VS, fragmentShader: TILE_FS, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
   });
   const tiles = new THREE.Points(tg, tileMat); tiles.frustumCulled = false; cloudScene.add(tiles);

@@ -5,7 +5,7 @@
 // ?mood=<x> (= outrunClassic + mood), ?envquality=0|1|2, ?envfast=1 (= scenefast).
 import * as THREE from '../../../vendor/three/three.module.js';
 import { SCENES, META, ROTATION, prefetchAll } from './registry.js';
-import { createSceneCtx, disposeInstance } from './common.js';
+import { createSceneCtx, disposeInstance, patchHeroUniforms, heroUniforms } from './common.js';
 import { createTransitions, TRANSITIONS, TRANSITION_TYPES, defaultMorphPoints } from './transitions.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -43,12 +43,14 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     pulse: { value: 0 }, res: { value: new THREE.Vector2(1920, 1080) },
     guardRect: ctxShared.guardRect || { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) },
     guardAmt: ctxShared.guardAmt || { value: 0.55 }, noise: ctxShared.noise,
+    ...heroUniforms(THREE),       // uHero, uHeroW, uStory, uStoryCol, uStoryColA (shared by reference, written by stage.js)
+    hero: null,                   // the projector stage (set by setHero)
   };
   // upload the shared noise now so its one-time upload is never attributed to the first scene (false leak report)
   try { if (sh.noise) renderer.initTexture(sh.noise); } catch { /* old three */ }
-  const T = createTransitions({ res: sh.res, guardRect: sh.guardRect, guardAmt: sh.guardAmt, alert: sh.alert, noise: sh.noise, time: sh.time });
+  const T = createTransitions({ res: sh.res, guardRect: sh.guardRect, guardAmt: sh.guardAmt, alert: sh.alert, noise: sh.noise, time: sh.time, hero: sh.uHero });
   const ortho = T.ortho;
-  const subject = new THREE.Vector2(0.64, 0.615);        // hologram centre, bottom-up screen fraction
+  const subject = new THREE.Vector2(0.64, 0.615);        // hologram centre, bottom-up screen fraction (= hero.anchor.screen each frame)
   const story = { x: 0, z: 0, color: new THREE.Color('#00f0ff') };
 
   // ---- layer RTs: two fixed slots (one per live instance), sized CSS px x scale
@@ -129,7 +131,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     return {
       id, meta: META[id] || { id, family: id, similar: [], morph: false }, state: 'idle', api: null, ctx: null, k: 0,
       cam0: new THREE.Vector3(), errors: 0, upG: 0, upT: 0, layerSlot: null, disposeIn: -1, mem: null, warmMs: 0,
-      info: { camera, dt: 0, k: 0, phase: 'warm', alert: 0, camX: 0, par: new THREE.Vector3(), story, transition: -1 },
+      info: { camera, dt: 0, k: 0, phase: 'warm', alert: 0, camX: 0, par: new THREE.Vector3(), story, transition: -1, hero: null },
     };
   }
   function normalize(api) {
@@ -149,6 +151,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     try {
       inst.ctx = createSceneCtx({ renderer, camera, sh, quality, opts: flags, seed: (Math.random() * 2 ** 31) | 0, inst, allocLayer: (s) => allocLayer(inst, s) });
       inst.api = normalize(mod.create(inst.ctx));
+      patchHeroUniforms(inst.stage, sh); if (inst.layer) patchHeroUniforms(inst.layer.scene, sh);
       inst.stage.visible = false;
       inst.cam0.copy(camera.position);
       setK(inst, 0.001);
@@ -190,7 +193,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     for (let i = 0; i < inst.anchors.length; i++) { const a = inst.anchors[i]; a.o.position.x = cx * a.k; if (a.y != null) a.o.position.y = a.y; if (a.z != null) a.o.position.z = a.z; }
     const I = inst.info;
     I.dt = dt; I.k = inst.k; I.phase = phase; I.alert = sh.alert.value; I.camX = cx; I.transition = p;
-    I.par.subVectors(camera.position, inst.cam0);
+    I.par.subVectors(camera.position, inst.cam0); I.hero = sh.hero;
     try { inst.api.update(dt, lt.value, I); } catch (e) {
       if (inst.errors++ === 0) console.error('[scene] update', inst.id, e);
       if (inst.errors > 30 && !failed.has(inst.id)) { fail(inst, 'update', e); if (inst === cur && !trans) { due = true; dueAt = clock; holdLeft = 0; } }
@@ -266,10 +269,9 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     try { A.api.exit(spec.dur * spec.peak); } catch (e) { A.errors++; }
     try { B.api.enter(spec.dur * (1 - spec.peak)); } catch (e) { B.errors++; }
     T.use(type);
-    T.U.uColA.value.copy(sh.accent.value); T.U.uColB.value.copy(story.color);
-    if (type === 'inkbleed' || type === 'wormhole') T.U.uOrigin.value.copy(subject);
-    else if (type === 'warp') T.U.uOrigin.value.set(0.3, 0.6);
-    else T.U.uOrigin.value.set(0.28, 0.62);
+    T.U.uColA.value.copy(sh.accent.value); T.U.uColB.value.copy(sh.hero ? sh.hero.story.color : story.color);
+    // every transition opens from / crosses through the widget (iris, warp, vortex, morph all centre on the hero)
+    T.U.uOrigin.value.copy(subject);
     T.U.uLite.value = lite ? 1 : 0;
     if (type === 'morph') {
       const n = Math.max(1024, CLOUD_N[quality] >> (lite ? 1 : 0));
@@ -343,6 +345,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     clock += dt;
     if (frameWaiters.length) { const w = frameWaiters.splice(0); for (const f of w) f(); }
     sh.pulse.value = Math.max(0, sh.pulse.value - dt * 1.6);
+    if (sh.hero) subject.copy(sh.hero.anchor.screen);
     alertK += ((frozen ? 0.85 : 1) - alertK) * (1 - Math.exp(-3 * dt));
     for (let i = dying.length - 1; i >= 0; i--) { if (--dying[i].disposeIn <= 0) { destroy(dying[i]); dying.splice(i, 1); } }
     if (!cur) return;
@@ -452,7 +455,17 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
       sh.res.value.copy(fullRes);
       for (const L of layerPool) if (L.busy) sizeLayer(L);
     },
-    setSubject(x, y) { subject.set(x, y); },
+    setSubject(x, y) { if (!sh.hero) subject.set(x, y); },
+    /** Attach the projector stage: ctx.hero for scenes, info.hero in update(), and hero pulses forwarded to every live
+     * scene as event('heroPulse', p) plus the per-instance ctx.onHeroPulse listeners. */
+    setHero(hero) {
+      sh.hero = hero || null;
+      if (!hero) return;
+      hero.onPulse((p) => {
+        if (p.type === 'flash' || p.type === 'alert') sh.pulse.value = Math.max(sh.pulse.value, p.strength);
+        forEachAlive((a, i) => { a.event('heroPulse', p); for (const f of i.pulseFns || []) f(p); });
+      });
+    },
     setQuality(l) { quality = clamp(l | 0, 0, 2); forEachAlive((a) => a.setQuality(quality)); if (next && !trans) { try { next.api.setQuality(quality); } catch { /* */ } } },
     shockwave(x, z, color) {
       lastShockAt = clock;

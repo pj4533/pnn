@@ -10,6 +10,7 @@ import { createDirector } from './director.js';
 import { startAutoFit, fitAll, fitReport } from './fit.js';
 import { createPops } from './pops.js';
 import { createCountdownChip } from './countdown.js';
+import { createStageLink, watchFx } from './stagelink.js';
 
 window.addEventListener('error', (e) => report('window.error', e.error || e.message, { src: e.filename, line: e.lineno }));
 window.addEventListener('unhandledrejection', (e) => report('unhandledrejection', e.reason));
@@ -17,6 +18,8 @@ window.addEventListener('unhandledrejection', (e) => report('unhandledrejection'
 const canvas = document.getElementById('scene');
 const overlay = createOverlay(document.getElementById('overlay'));
 const chyron = createChyron(document.getElementById('chyron'));
+// Projector stage (2D side): shared --story accent, connector beam, eye-wall reticle; driven by the scene's 'pnn:hero' events.
+safe('stagelink', () => { createStageLink(document.getElementById('overlay'), overlay); watchFx(); });
 
 // Scene proxy: every call is guarded; calls before the scene loads are remembered and replayed.
 let sceneImpl = null;

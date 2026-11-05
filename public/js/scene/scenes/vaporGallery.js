@@ -80,7 +80,7 @@ export function create(ctx) {
 
   const U = {
     uP: { value: 0 }, uFloor: { value: 1 }, uRip: { value: new THREE.Vector4(0.2, 99, 0, 0) }, uRipCol: { value: new THREE.Color(1, 0.3, 0.8) }, uPar: { value: new THREE.Vector2() },
-    uBuild: { value: 1 }, uBreak: { value: 0 }, uFlare: { value: 0 }, uOrb: { value: 0 }, uPunch: { value: 0 },
+    uBuild: { value: 1 }, uBreak: { value: 0 }, uFlare: { value: 0 }, uOrb: { value: 0 }, uPunch: { value: 0 }, uSunPh: { value: 0 }, uWv: { value: new THREE.Vector2(9, 0) },
   };
   const uni = { ...ctx.common(), ...U };
   const mk = (vs, fs, extra, o = {}) => ctx.track(new THREE.ShaderMaterial({
@@ -104,27 +104,28 @@ export function create(ctx) {
   const bustMat = mk(S.BUST_VS, S.BUST_FS, { uY: { value: new THREE.Vector2(...bg.userData.y) } }, { depth: true });
   const bust = new THREE.Mesh(bg, bustMat); bust.frustumCulled = false; root.add(bust);
   const bp = at(BUST.sx, BUST.sy, BUST.z); const bScale = BUST.hf * uph(BUST.z) / 3.4;
+  const HU = ctx.uHero ? ctx.uHero.value : new THREE.Vector4(0.64, 0.6, 0.2, 0.25);
   bust.scale.setScalar(bScale); bust.position.set(lx(bp.x), bp.y, bp.z);
   const bustC = bust.position.clone();
 
   // ---- columns (8)
   const lathe = []; for (const [r, y] of [[0.62, -2.05], [0.62, -1.9], [0.44, -1.78], [0.34, -1.6], [0.31, 0.5], [0.3, 1.6], [0.42, 1.75], [0.62, 1.88], [0.62, 2.05]]) lathe.push(new THREE.Vector2(r, y));
   const cg0 = new THREE.LatheGeometry(lathe, 20);
-  const CP = [[0.56, 0.84, -330, 0.13], [0.955, 0.7, -215, 0.19], [0.66, 0.88, -380, 0.12], [0.985, 0.42, -240, 0.19], [0.72, 0.9, -420, 0.11], [0.94, 0.26, -300, 0.13], [0.975, 0.62, -380, 0.15], [0.52, 0.86, -440, 0.1]];
+  // colonnade flanking the eye: [side * lateral (eye radii), floor-depth ratio, view depth, _]; nearer rows sit lower, taller and further out
+  const CP = [[-1.5, 0.5, 400], [1.5, 0.5, 400], [-1.5, 0.75, 330], [1.5, 0.75, 330], [-1.5, 1.0, 260], [1.5, 1.0, 260], [-1.5, 1.35, 200], [1.5, 1.35, 200]];
   const mkInst = (base, n, attrs) => { const g = new THREE.InstancedBufferGeometry(); g.index = base.index; for (const k in base.attributes) g.setAttribute(k, base.attributes[k]); g.instanceCount = n;
     for (const [name, arr] of Object.entries(attrs)) g.setAttribute(name, new THREE.InstancedBufferAttribute(arr, 4)); return ctx.track(g); };
   const cA = new Float32Array(32), cB = new Float32Array(32);
-  CP.forEach(([sx, sy, z, hf], i) => { const w = at(sx, sy, z); cA.set([lx(w.x), w.y, w.z, hf * 1.25 * uph(z) / 4.1], i * 4); cB.set([(rnd() - 0.5) * 0.35, rnd() * 6.28, i / 8, rnd() < 0.5 ? 1 : -1], i * 4); });
+  CP.forEach(([lat, dd, z], i) => { cA.set([lat, dd, z, 1], i * 4); cB.set([(rnd() - 0.5) * 0.1, rnd() * 6.28, i / 8, rnd() < 0.5 ? 1 : -1], i * 4); });
   const colMesh = new THREE.Mesh(mkInst(cg0, 8, { iA: cA, iB: cB }), mk(S.COL_VS, S.COL_FS, {}, { depth: true })); colMesh.frustumCulled = false; colMesh.renderOrder = 1; root.add(colMesh);
 
   // ---- windows (24) + palms (10), one shader program (uKind)
   const atl = ctx.track(atlas(THREE));
   const qg = new THREE.PlaneGeometry(1, 1, 1, 10); qg.translate(0, 0.5, 0);
   const wA = new Float32Array(96), wB = new Float32Array(96);
-  for (let i = 0; i < 24; i++) {
-    const top = i % 2 === 0, z = -190 - rnd() * 130, sx = top ? 0.5 + rnd() * 0.48 : 0.93 + rnd() * 0.06, sy = top ? 0.84 + rnd() * 0.12 : 0.2 + rnd() * 0.3;
-    const w = at(sx, sy, z), size = (0.09 + rnd() * 0.08) * uph(z) * 1.25;
-    wA.set([lx(w.x), w.y, w.z, size], i * 4); wB.set([0.72, rnd(), i / 24, 11 + rnd() * 10], i * 4);
+  for (let i = 0; i < 24; i++) {   // satellites on the eye-wall: [angle, ring radius, -view depth, screen height] [aspect, seed, delay, period]
+    const top = i % 3 !== 2, ang = top ? (30 + rnd() * 120) * Math.PI / 180 : (-60 + rnd() * 30) * Math.PI / 180, z = -(190 + rnd() * 130);
+    wA.set([ang, 1.9 + rnd() * 0.4, z, (0.07 + rnd() * 0.05) * 1.25], i * 4); wB.set([0.72, rnd(), i / 24, 11 + rnd() * 10], i * 4);
   }
   const wMesh = new THREE.Mesh(mkInst(qg, 24, { iA: wA, iB: wB }), mk(S.QUAD_VS, S.QUAD_FS, { uKind: { value: 0 }, uAtlas: { value: atl } })); wMesh.frustumCulled = false; wMesh.renderOrder = 2; root.add(wMesh);
   const pA = new Float32Array(40), pB = new Float32Array(40);
@@ -150,7 +151,7 @@ export function create(ctx) {
   const stars = new THREE.Points(pg, mk(S.STAR_VS, S.STAR_FS, { uBox: { value: new THREE.Vector3(bw, bh, 0) } }, { add: true })); stars.frustumCulled = false; sroot.add(stars);
 
   // ---- state
-  const st = { mode: 'live', t: 0, dur: 1 }, v2 = new THREE.Vector3(); let k = 1, flare = 0, punch = 0, orb = 0, ph = 0, ripAge = 99, ripStr = 0, q = ctx.quality ?? 2;
+  const st = { mode: 'live', t: 0, dur: 1 }, v2 = new THREE.Vector3(); let sunPh = 0, wvAge = 9, k = 1, flare = 0, punch = 0, orb = 0, ph = 0, ripAge = 99, ripStr = 0, q = ctx.quality ?? 2;
   const rotY = { v: 0 };
   const api = {
     grade: { bloom: 0.8, bloomThreshold: 0.72, bloomRadius: 0.6, tint: new THREE.Color(1, 0.88, 1), tintAmt: 0.05, sat: 1.05, contrast: 1.05, ca: 0.0012, grain: 0.04, vignette: 0.3, scan: 0.1 },
@@ -158,14 +159,22 @@ export function create(ctx) {
     update(dt, t, info) {
       const al = ctx.alert.value; const sp_ = (1 + 0.4 * al) * (0.6 + 0.4 * k);
       ph += dt * sp_; if (ph > 3600) ph -= 3600; U.uP.value = ph;
-      orb += dt * sp_ * (1 + punch * 3); punch = Math.max(0, punch - dt * 1.5); U.uOrb.value = orb;
+      const en = ctx.uStory ? ctx.uStory.value.y : 0.35, dirS = ctx.uStory ? ctx.uStory.value.x : 0;
+      orb += dt * sp_ * (0.5 + 1.1 * en) * (1 + punch * 3); punch = Math.max(0, punch - dt * 1.5); U.uOrb.value = orb;
+      sunPh += dt * (0.05 + 0.3 * en) * (dirS < -0.3 ? -1 : 1) * (Math.abs(dirS) > 0.3 ? 1 : 0.3); U.uSunPh.value = sunPh;
+      wvAge += dt; U.uWv.value.x = wvAge; if (wvAge > 1.6) U.uWv.value.y = 0;
       flare = Math.max(0, flare - dt * 1.3); U.uFlare.value = flare; ripAge += dt; U.uRip.value.y = ripAge;
       if (st.mode !== 'live') { st.t += dt; const p = Math.min(1, st.t / st.dur);
         if (st.mode === 'enter') { U.uBuild.value = p; U.uBreak.value = 0; U.uFloor.value = ease(p * 1.1); } else { U.uBuild.value = 1; U.uBreak.value = p; U.uFloor.value = 1 - ease(p * 1.1); }
         if (p >= 1) st.mode = st.mode === 'enter' ? 'live' : 'gone'; }
       else { U.uBuild.value = 1; U.uBreak.value = 0; U.uFloor.value = 1; }
       sync(info && info.par);
-      rotY.v += dt * 0.38 * sp_ * (1 + flare); bust.rotation.y = rotY.v; bust.position.y = bustC.y + Math.sin(ph * 0.7) * 3.2;
+      // the bust stands to one side of the widget, turned three-quarters toward it, swaying gently
+      const bx = Math.min(0.93, HU.x + HU.z * 1.3), by = Math.max(0.3, Math.min(0.8, HU.y + HU.w * 0.15));
+      const tp = at(bx, by, BUST.z); bustC.set(tp.x, tp.y, tp.z); bust.position.x += (bustC.x - bust.position.x) * Math.min(1, dt * 3);
+      const face = bx > HU.x ? -0.85 : 0.85;
+      rotY.v += dt * 0.38 * sp_ * (1 + flare) * 0.3; bust.rotation.y = face + Math.sin(rotY.v * 1.4) * 0.22 + flare * Math.sin(ph * 6) * 0.15;
+      bust.position.y = bustC.y + Math.sin(ph * 0.7) * 3.2;
       if (info && info.par) U.uPar.value.set(info.par.x * 0.0008, 0);
     },
     setIntensity(a) { k = a; },
@@ -178,7 +187,10 @@ export function create(ctx) {
       flare = Math.max(flare, 0.4 + 0.6 * s); punch = Math.max(punch, s);
     },
     shockwave(x, z, color) { api.ripple({ x, z, color, strength: 1 }); },
-    event() {},
+    event(type, d) {
+      if (type !== 'heroPulse' || !d || (d.strength ?? 1) < 0.3 || d.type === 'beat') return;
+      wvAge = 0; U.uWv.value.set(0, Math.min(1, d.strength ?? 1)); flare = Math.max(flare, 0.5 * (d.strength ?? 1));   // floor ring wave + bust flare
+    },
     setQuality(v) {
       q = v; const f = v >= 2 ? 1 : 0.5; wMesh.geometry.instanceCount = v === 0 ? 0 : Math.round(24 * f); wMesh.visible = v > 0;
       pMesh.visible = v > 0; pMesh.geometry.instanceCount = v > 0 ? 10 : 0; stars.visible = v >= 2;
@@ -191,8 +203,9 @@ export function create(ctx) {
         if (r < 0.55) { const t = (Math.random() * nt | 0) * 9; const a = Math.random(), b = Math.random() * (1 - a), c = 1 - a - b;
           const lxp = P[t] * a + P[t + 3] * b + P[t + 6] * c, lyp = P[t + 1] * a + P[t + 4] * b + P[t + 7] * c, lzp = P[t + 2] * a + P[t + 5] * b + P[t + 8] * c;
           x = bust.position.x + (lxp * cy + lzp * sy) * s; y = bust.position.y + lyp * s; z = bust.position.z + (-lxp * sy + lzp * cy) * s; }
-        else if (r < 0.8) { const j = (Math.random() * 8 | 0) * 4; x = cA[j] + (Math.random() - 0.5) * 0.9 * cA[j + 3]; y = cA[j + 1] + (Math.random() - 0.5) * 4 * cA[j + 3]; z = cA[j + 2]; }
-        else { const j = (Math.random() * 24 | 0) * 4; x = wA[j] + (Math.random() - 0.5) * wA[j + 3]; y = wA[j + 1] + Math.random() * wA[j + 3] * 0.7; z = wA[j + 2]; }
+        else if (r < 0.8) { const j = (Math.random() * 8 | 0) * 4, dd = cA[j + 1], span = Math.max(0.06, 0.47 - (HU.y - HU.w * 0.93) * 0.45 - 0.0);
+          const sx = HU.x + cA[j] * HU.z * dd, sy = Math.min(0.95, HU.y - HU.w * 0.93 + Math.random() * 4.4 * dd * 0.17); const w = at(sx, sy, -cA[j + 2]); x = w.x; y = w.y; z = w.z; }
+        else { const j = (Math.random() * 24 | 0) * 4, a = wA[j] + (Math.random() - 0.5) * 0.4, w = at(Math.min(0.95, Math.max(0.34, HU.x + Math.cos(a) * HU.z * wA[j + 1])), Math.min(0.9, Math.max(0.08, HU.y + Math.sin(a) * HU.w * wA[j + 1])), wA[j + 2]); x = w.x; y = w.y; z = w.z; }
         V3.set(x, y, z).applyMatrix4(M); out[i * 3] = V3.x; out[i * 3 + 1] = V3.y; out[i * 3 + 2] = V3.z;
       }
       return true;

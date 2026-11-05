@@ -131,7 +131,7 @@ void main(){
     float ang = atan(p.y, p.x) * 0.95493;                // 3 tiles around the circle (seamless on a repeat texture)
     float s1 = texture2D(uNoise, vec2(ang + uShaftPh, 0.37)).r;
     float s2 = texture2D(uNoise, vec2(ang * 2.0 - uShaftPh * 1.7, 0.63)).g;
-    float streak = pow(clamp(s1 * s2 * 2.0, 0.0, 1.0), 2.0);
+    float streak = pow(abs(clamp(s1 * s2 * 2.0, 0.0, 1.0)), 2.0);
     float fall = exp(-r * 0.95) * smoothstep(0.75, 1.15, r);
     float edge = smoothstep(1.7 * uQuad, 1.7 * uQuad * 0.55, r);
     c += mix(uCorona, vec3(1.0), 0.2) * streak * fall * edge * 0.18 * uShafts * g;

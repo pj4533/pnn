@@ -2,7 +2,8 @@
 // One guard mechanism: GLSL.GUARD / GLSL.PALETTE / guardUniforms come from env/common.js.
 import * as THREE from '../../../vendor/three/three.module.js';
 import { GPUComputationRenderer } from '../../../vendor/three/addons/misc/GPUComputationRenderer.js';
-import { GLSL as ENV_GLSL, guardUniforms } from '../env/common.js';
+import { GLSL as ENV_GLSL, guardUniforms, heroUniforms, HERO_KEYS, setThreeRef } from '../env/common.js';
+setThreeRef(THREE);
 
 export { guardUniforms };
 
@@ -11,7 +12,8 @@ export function mulberry32(a) {
 }
 
 const UNIFORMS = `uniform float uTime, uAlert, uPulse, uFade; uniform vec3 uAccent, uAccent2; uniform sampler2D uNoise;`;
-const GUARD_FN = ENV_GLSL.GUARD.slice(ENV_GLSL.GUARD.indexOf('float guard('));
+// the `guard` sub-chunk carries the hero uniforms + eye/rim/heroFlow helpers so a scene adding only it still compiles
+const GUARD_FN = ENV_GLSL.GUARD.slice(ENV_GLSL.GUARD.indexOf('uniform vec4 uHero;'));
 const HELPERS = `
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float hash13(vec3 p3){ p3 = fract(p3 * .1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
@@ -21,7 +23,7 @@ float fbm(vec3 p, int oct){ float v = 0., a = .5, s = 0.; for (int i = 0; i < 4;
 vec3 pal(float t){ return .5 + .5 * cos(6.28318 * (t + vec3(0., .33, .67))); }
 ${ENV_GLSL.PALETTE}`;
 const ALERT_MIX = `vec3 alertMix(vec3 c){ float l = dot(c, vec3(.2126, .7152, .0722)); vec3 r = mix(vec3(1., .07, .03), vec3(1., .5, .1), clamp(l * .6, 0., 1.)) * l * 1.5; return mix(c, r, uAlert); }`;
-const FINISH = `vec3 finish(vec3 c){ c = alertMix(c) * guard() * uFade; float l = dot(c, vec3(.2126, .7152, .0722)); c *= l > 2.5 ? 2.5 / l : 1.; return max(c, 0.); }`;
+const FINISH = `vec3 finish(vec3 c){ c = alertMix(c) * guard() * (1. + rim() * (0.2 + 0.3 * uStory.y + 0.5 * uStory.w)) * uFade; float l = dot(c, vec3(.2126, .7152, .0722)); c *= l > 2.5 ? 2.5 / l : 1.; return max(c, 0.); }`;
 
 // COMMON is fragment-only (guard reads gl_FragCoord). Each sub-chunk is a verbatim substring of COMMON so scene
 // preamble builders that "add whatever is missing" never redeclare.
@@ -41,17 +43,23 @@ export function createSceneCtx({ renderer, camera, sh, quality, opts, seed, inst
   const stage = new THREE.Scene();
   stage.matrixWorldAutoUpdate = true;
   const localTime = { value: 0 }, fade = { value: 0 };
-  inst.tracked = []; inst.anchors = []; inst.layer = null; inst.localTime = localTime; inst.fade = fade; inst.stage = stage;
+  inst.tracked = []; inst.anchors = []; inst.pulseFns = []; inst.layer = null; inst.localTime = localTime; inst.fade = fade; inst.stage = stage;
   const track = (...objs) => { for (const o of objs) if (o) inst.tracked.push(o); return objs[0]; };
   const tri = () => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(FS_TRI.slice(), 3)); return track(g); };
   const common = () => ({
     uTime: localTime, uAlert: sh.alert, uPulse: sh.pulse, uFade: fade, uAccent: sh.accent, uAccent2: sh.accent2,
     uRes: sh.res, uGuardRect: sh.guardRect, uGuardAmt: sh.guardAmt, uNoise: { value: sh.noise },
+    uHero: sh.uHero, uHeroW: sh.uHeroW, uStory: sh.uStory, uStoryCol: sh.uStoryCol, uStoryColA: sh.uStoryColA,
   });
   const ctx = {
     THREE, renderer, camera, stage, quality, rnd: mulberry32(seed >>> 0), opts,
     time: sh.time, localTime, alert: sh.alert, pulse: sh.pulse, fade, accent: sh.accent, accent2: sh.accent2,
     res: sh.res, guardRect: sh.guardRect, guardAmt: sh.guardAmt, sharedNoise: sh.noise,
+    uHero: sh.uHero, uHeroW: sh.uHeroW, uStory: sh.uStory, uStoryCol: sh.uStoryCol, uStoryColA: sh.uStoryColA,
+    // the projector stage (anchor, story, pulse); `stage` stays this scene's THREE.Scene
+    get hero() { return sh.hero || null; },
+    /** Subscribe to hero pulses ({ type, strength, color, screen, world }); unsubscribed automatically on dispose. */
+    onHeroPulse(fn) { (inst.pulseFns || (inst.pulseFns = [])).push(fn); return () => { const i = inst.pulseFns.indexOf(fn); if (i >= 0) inst.pulseFns.splice(i, 1); }; },
     common, GLSL, track,
     backdrop(material) {
       if (!material.vertexShader || /projectionMatrix/.test(material.vertexShader)) material.vertexShader = BACK_VS;
@@ -115,5 +123,18 @@ export function disposeInstance(inst, shared) {
   });
   if (inst.layer) inst.layer.scene.clear();
   inst.stage?.clear();
-  inst.tracked = []; inst.anchors = [];
+  inst.tracked = []; inst.anchors = []; inst.pulseFns = [];
 }
+
+/** Give every ShaderMaterial whose shader reads the hero uniforms the shared refs it is missing (env modules and
+ * scenes that list uniforms by hand), so the calm eye never silently falls back. Cheap: runs once per instance. */
+export function patchHeroUniforms(root, sh) {
+  root?.traverse?.((o) => {
+    const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of ms) {
+      if (!m.isShaderMaterial || !m.uniforms || !/uHero|uStory/.test(m.fragmentShader + m.vertexShader)) continue;
+      for (const k of HERO_KEYS) if (!m.uniforms[k]) m.uniforms[k] = sh[k];
+    }
+  });
+}
+export { heroUniforms };

@@ -27,10 +27,12 @@ const FinalShader = {
     // per-mood grade (env director); identity defaults
     uTint: { value: new THREE.Color(1, 1, 1) }, uTintAmt: { value: 0 }, uSat: { value: 1 }, uContrast: { value: 1 },
     uGrainK: { value: 1 }, uVigK: { value: 1 }, uScanK: { value: 1 }, uCAk: { value: 1 },
+    // projector stage: uPlinth = (cx, plinthY, rx, amt) floor reflection under the widget; uHeroC = eye centre (vignette)
+    uPlinth: { value: new THREE.Vector4(0.64, 0.3, 0.2, 0) }, uHeroC: { value: new THREE.Vector2(0.5, 0.5) },
   },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; uniform float uFlash; uniform vec3 uFlashCol; uniform float uCA; uniform float uGlitch; uniform float uAlert; uniform vec2 uRes;
-    uniform vec3 uTint; uniform float uTintAmt, uSat, uContrast, uGrainK, uVigK, uScanK, uCAk;
+    uniform vec3 uTint; uniform float uTintAmt, uSat, uContrast, uGrainK, uVigK, uScanK, uCAk; uniform vec4 uPlinth; uniform vec2 uHeroC;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
@@ -44,8 +46,16 @@ const FinalShader = {
       col.r = texture2D(tDiffuse, uv + c * ca).r;
       col.g = texture2D(tDiffuse, uv).g;
       col.b = texture2D(tDiffuse, uv - c * ca).b;
+      // fake floor reflection: inside the plinth ellipse, mirror the frame about the plinth's screen line (rippled)
+      if (uPlinth.w > 0.0 && uv.y < uPlinth.y && abs(uv.x - uPlinth.x) < uPlinth.z * 1.3) {
+        float dpt = uPlinth.y - uv.y;
+        float fx = 1.0 - smoothstep(uPlinth.z * 0.7, uPlinth.z * 1.3, abs(uv.x - uPlinth.x));
+        vec2 ruv = vec2(uv.x + 0.004 * sin(uv.y * 140.0 + uTime * 3.0), 2.0 * uPlinth.y - uv.y);
+        col += texture2D(tDiffuse, clamp(ruv, 0.001, 0.999)).rgb * uPlinth.w * fx * smoothstep(0.0, 0.012, dpt) * (1.0 - smoothstep(0.012, 0.1, dpt));
+      }
       col += uFlashCol * uFlash * (0.25 + r2 * 1.2);
-      float vig = smoothstep(0.75, 0.12, r2);
+      vec2 cv = uv - mix(vec2(0.5), uHeroC, 0.5); float v2 = dot(cv, cv);   // the eye is the brightest place
+      float vig = smoothstep(0.75, 0.12, v2);
       col *= mix(1.0 - 0.5 * uVigK, 1.0, vig);
       // mood grade (before the alert so the alert always wins)
       float lu = dot(col, vec3(0.2126, 0.7152, 0.0722));
@@ -78,6 +88,14 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   const tRA = new THREE.WebGLRenderTarget(4, 4, tOpts), tRB = new THREE.WebGLRenderTarget(4, 4, tOpts);
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.55, 0.4, 0.78);
   composer.addPass(bloom);
+  // projector stage: bloom is added back at less than full strength inside the calm eye (no extra pass, one ALU
+  // mask in the bloom's own blend shader) so the bright eye-wall glows outward instead of fogging over the widget
+  const uBloomEye = { value: new THREE.Vector4(0.64, 0.6, 0, 0) };   // cx, cy, rx, ry (bottom-up uv); rx 0 = off
+  bloom.copyUniforms.uEye = uBloomEye;
+  bloom.blendMaterial.fragmentShader = `uniform float opacity; uniform sampler2D tDiffuse; uniform vec4 uEye; varying vec2 vUv;
+    void main(){ float m = 1.0; if (uEye.z > 0.0) { vec2 d = (vUv - uEye.xy) / max(uEye.zw, vec2(1e-3)); m = mix(0.4, 1.0, smoothstep(0.75, 1.25, length(d))); }
+      gl_FragColor = opacity * texture2D(tDiffuse, vUv) * m; }`;
+  bloom.blendMaterial.needsUpdate = true;
   const fin = new ShaderPass(FinalShader);
   fin.uniforms.uTime = TIME;   // ShaderPass clones uniforms; share the live clock so grain/glitch animate
   composer.addPass(fin);
@@ -104,11 +122,15 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
     },
     glitch(amount = 0.6) { glitch = Math.max(glitch, amount); ca = Math.max(ca, amount * 0.6); },
     setAlert(on) { alertTarget = on ? 1 : 0; },
+    /** Projector stage: floor-reflection ellipse (bottom-up uv) and eye centre for the vignette. */
+    setHero({ plinthY = 0.3, cx = 0.64, cy = 0.6, rx = 0.2, ry = 0, amt = 0, vis = 1 } = {}) { U.uPlinth.value.set(cx, plinthY, rx, amt); U.uHeroC.value.set(cx, cy); uBloomEye.value.set(cx, cy, vis > 0.5 ? rx : 0, ry); },
     // env director: mood bloom base (alert/flash boosts stay on top) and colour grade
     setBloom({ strength, threshold, radius } = {}) {
       if (strength != null) base.strength = strength;
       if (threshold != null) bloom.threshold = threshold;
-      if (radius != null) bloom.radius = radius;
+      // projector stage: a wide bloom radius smears the bright eye-wall across the calm core (green/pink fog over the
+      // widget), so the glow stays local to the rim; the scene's own strength/threshold still set the mood
+      if (radius != null) bloom.radius = Math.min(radius, 0.5);
     },
     setGrade(g) {
       if (!g) return;

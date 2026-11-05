@@ -42,7 +42,7 @@ export function create(ctx) {
     uFogA: { value: new THREE.Color(0.02, 0.006, 0.038) }, uFogB: { value: new THREE.Color(0.085, 0.024, 0.032) },
     uHz: { value: 0.8 }, uBuild: { value: 1 }, uSink: { value: 0 }, uTravel: { value: 0 },
     uRip: { value: new THREE.Vector4(0, 0, 99, 0) }, uRipCol: { value: new THREE.Color('#00f0ff') }, uBrake: { value: 0 },
-    uCarPh: { value: 0 }, uRainPh: { value: 0 }, uPar: { value: new THREE.Vector2() }, uOct: { value: 3 }, uRootX: { value: 0 },
+    uCarPh: { value: 0 }, uRainPh: { value: 0 }, uSnap: { value: 0 }, uOrbT: { value: 0 }, uFlowT: { value: 0 }, uWave: { value: new THREE.Vector2(9, 0) }, uPar: { value: new THREE.Vector2() }, uOct: { value: 3 }, uRootX: { value: 0 },
   };
   const mat = (vs, fs, o = {}) => track(new THREE.ShaderMaterial({
     uniforms: { ...ctx.common(), ...U }, vertexShader: S.HEAD_V + vs, fragmentShader: FP + fs, ...o,
@@ -131,9 +131,10 @@ export function create(ctx) {
   // ---------- holo ad panels ----------
   const ag = track(new THREE.InstancedBufferGeometry());
   ag.index = quad.index; ag.setAttribute('position', quad.getAttribute('position'));
-  // [x, y, z, type] [w, h, seed, _] in the sky root (y follows the camera at 0.7)
-  const ADS = [[-640, -30, -900, 0, 70, 130, 0.1], [-470, 85, -1500, 1, 120, 70, 0.5], [-1050, 150, -2000, 2, 110, 160, 0.9],
-    [430, -20, -980, 1, 56, 110, 0.3], [740, 120, -1750, 0, 130, 90, 0.7], [300, -95, -620, 2, 40, 70, 0.2]];
+  // satellites on the eye-wall ellipse: [angle (rad), ring radius (widget radii), depth factor behind the widget, type] [height (screen fraction), aspect, seed, _]
+  const D = Math.PI / 180;
+  const ADS = [[22 * D, 1.55, 1.25, 0, 0.2, 0.5, 0.1], [62 * D, 1.6, 1.6, 1, 0.16, 1.7, 0.5], [98 * D, 1.62, 2.1, 2, 0.24, 0.7, 0.9],
+    [-28 * D, 1.55, 1.15, 1, 0.19, 0.55, 0.3], [140 * D, 1.6, 1.8, 0, 0.17, 1.4, 0.7], [-62 * D, 1.6, 1.4, 2, 0.14, 0.62, 0.2]];
   const aA = new Float32Array(24), aA2 = new Float32Array(24);
   ADS.forEach((a, i) => { aA.set(a.slice(0, 4), i * 4); aA2.set([...a.slice(4), 0], i * 4); });
   ag.setAttribute('aA', new THREE.InstancedBufferAttribute(aA, 4));
@@ -172,6 +173,11 @@ export function create(ctx) {
       U.uTravel.value = (U.uTravel.value + dt * 24 * sp) % SPAN;
       U.uCarPh.value = (U.uCarPh.value + dt * sp) % 320;
       U.uRainPh.value = (U.uRainPh.value + dt * 380 * sp) % 3200;
+      // projector stage: the current story sets orbit / flow speed; pulses decay here
+      const en = ctx.uStory ? ctx.uStory.value.y : 0.3;
+      U.uOrbT.value += dt * (0.5 + 1.5 * en) * sp; U.uFlowT.value += dt * 3 * (0.75 + 0.9 * en) * sp;
+      U.uSnap.value = Math.max(0, U.uSnap.value - dt / 0.6);
+      U.uWave.value.x += dt; if (U.uWave.value.x > 1.6) U.uWave.value.y = 0;
       U.uRip.value.z = Math.min(99, U.uRip.value.z + dt);
       U.uBrake.value = Math.min(1, U.uRip.value.w * 1.2) * Math.exp(-U.uRip.value.z * 1.3);
       const cx = cam.position.x;
@@ -187,7 +193,15 @@ export function create(ctx) {
     exit(dur = 2) { exitDur = Math.max(0.1, dur); exitT = 0; },
     ripple,
     shockwave(x, z, color) { ripple({ x, z, color: color || red, strength: 1 }); },
-    event(type, data) { if (type === 'alert') ripple({ x: data?.x ?? 0, z: data?.z ?? 0, color: red, strength: 1 }); },
+    event(type, data) {
+      if (type === 'alert') ripple({ x: data?.x ?? 0, z: data?.z ?? 0, color: red, strength: 1 });
+      else if (type === 'heroPulse' && data) {
+        const st = Math.min(1, data.strength ?? 1);
+        // searchlights snap onto the widget for ~0.6 s; a window-grid wave rolls outward from the plaza
+        if (data.type !== 'beat' && st >= 0.3) U.uSnap.value = Math.max(U.uSnap.value, Math.min(1, st + 0.2));
+        if (st >= 0.3) U.uWave.value.set(0, Math.max(U.uWave.value.y * 0.5, st));
+      }
+    },
     setQuality,
     morphPoints(out, n) {
       // sample the visible towers' facades and roof outlines in their current (wrapped, risen) world position

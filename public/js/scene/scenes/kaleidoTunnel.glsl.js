@@ -17,7 +17,10 @@ uniform vec4 uRot;          // cos/sin of fold angle A (xy) and B (xz)
 uniform vec3 uOff;
 uniform vec3 uRing;         // x = distance ahead, y = amplitude, z = radius
 uniform vec3 uRingCol;
-uniform float uDrift;
+uniform float uDrift, uLand;
+// the corridor converges on the widget: calm eye at the vanishing point, bright eye-wall rim (layer res, so uv-based)
+float ktEye(vec2 q){ return smoothstep(0.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3)))); }
+float ktRim(vec2 q){ float r = length((q - uHero.xy) / max(uHero.zw, vec2(1e-3))); return exp(-pow(abs((r - 1.35) * 3.2), 2.0)); }
 
 const float PER = 2.0;          // slice spacing; slices alternate lace / counter-rotated echo
 
@@ -57,6 +60,9 @@ void main(){
   vec3 CYA = mix(vec3(0.0, 0.80, 1.0), uAccent2, 0.35);
   vec3 AMB = vec3(1.0, 0.52, 0.10);
   vec3 VIO = vec3(0.30, 0.10, 0.55);
+  float ad = abs(uStory.x), dn = max(-uStory.x, 0.0);
+  MAG = mix(MAG, uStoryCol, 0.15 + 0.25 * ad); CYA = mix(CYA, uStoryCol, 0.10 + 0.2 * ad);      // the story colour owns the cathedral
+  MAG = mix(MAG, vec3(1.0, 0.12, 0.08), dn * 0.35); CYA = mix(CYA, vec3(1.0, 0.4, 0.2), dn * 0.45);   // down: red-shift
   vec3 col = vec3(0.0);
   float fz = max(-rd.z, 1e-3);
   float k0 = floor(ro.z / PER);
@@ -96,8 +102,14 @@ void main(){
   // ring of light racing down the corridor (analytic plane hit)
   float tp = uRing.x / fz;
   vec2 hq = (ro + rd * tp).xy;
-  float ring = exp(-pow((length(hq) - uRing.z) * 3.2, 2.0)) * uRing.y * step(0.0, uRing.x);
+  float ring = exp(-pow(abs((length(hq) - uRing.z) * 3.2), 2.0)) * uRing.y * step(0.0, uRing.x);
   col += uRingCol * ring * (0.9 + 0.7 * exp(-uRing.x * 0.15));
+  // eye: ribs fall to a calm glow inside it and gather brightest on the eye-wall, in the story colour
+  float ey = ktEye(vUv), rm = ktRim(vUv);
+  col *= mix(0.12, 1.0, ey);
+  col *= 1.0 + rm * (0.5 + 1.1 * uStory.y + 0.8 * uStory.w);
+  col = mix(col, uStoryCol * dot(col, vec3(0.34)) * 1.9, 0.35 * rm);
+  col += uStoryCol * rm * uLand * 1.5;
   gl_FragColor = vec4(min(col, vec3(2.2)), 1.0);
 }`;
 
@@ -107,10 +119,7 @@ varying vec2 vUv;
 uniform sampler2D tLayer;
 uniform vec2 uVP;
 uniform float uLayerScale, uSeam;
-float ktRect(vec2 q){
-  vec2 m = smoothstep(uGuardRect.xy - 0.10, uGuardRect.xy + 0.04, q) * (1.0 - smoothstep(uGuardRect.zw - 0.04, uGuardRect.zw + 0.10, q));
-  return m.x * m.y;
-}
+float ktRect(vec2 q){ return 1.0 - smoothstep(0.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3)))); }   // 1 in the calm eye
 void main(){
   vec2 px = 1.0 / max(uRes * uLayerScale, vec2(1.0));
   float m = ktRect(vUv);
@@ -121,14 +130,13 @@ void main(){
   vec3 sharp = c + (c * 4.0 - n) * 0.22;
   vec3 blur = (c + n) * 0.2;
   vec3 col = max(mix(sharp, blur, m), 0.0);
-  // radial falloff: right-hand walls (hologram side) down to 30%
   vec2 d = (vUv - uVP) * vec2(uRes.x / uRes.y, 1.0);
-  float side = smoothstep(0.05, 0.75, d.x);
-  col *= mix(1.0, 0.24, max(m, side * 0.75));
+  col *= mix(1.0, 0.3, m);
   // deep violet base + vanishing-point core
   float r2 = dot(d, d);
   col += vec3(0.012, 0.003, 0.026) * (1.2 - vUv.y * 0.6);
-  col += mix(vec3(1.0, 0.25, 0.7), vec3(1.0, 0.55, 0.15), 0.5 + 0.5 * uAlert) * (0.004 / (0.002 + r2 * 6.0)) * 0.12;
+  col += mix(mix(vec3(1.0, 0.25, 0.7), uStoryCol, 0.6), vec3(1.0, 0.55, 0.15), 0.5 * uAlert) * (0.004 / (0.002 + r2 * 6.0)) * 0.12;
+  col += uStoryCol * rim() * (0.03 + 0.05 * uStory.y + 0.1 * uStory.w);
   // horizontal white seam on enter/exit
   col += vec3(1.2, 1.0, 1.15) * uSeam * exp(-abs(d.y) * 260.0) * smoothstep(1.4, 0.0, abs(d.x));
   col *= 0.93 + 0.07 * step(0.5, fract(gl_FragCoord.y * 0.5));
@@ -173,7 +181,8 @@ void main(){
   vec3 c = mix(mix(vec3(0.2, 0.9, 1.0), uAccent2, 0.3), mix(vec3(1.0, 0.25, 0.8), uAccent, 0.3), step(0.62, vHue));
   c = mix(c, vec3(1.0, 0.65, 0.25), step(0.92, vHue));
   vec2 q = gl_FragCoord.xy / uRes;
-  vec2 m = smoothstep(uGuardRect.xy - 0.06, uGuardRect.xy, q) * (1.0 - smoothstep(uGuardRect.zw, uGuardRect.zw + 0.06, q));
-  vec3 col = c * a * vBri * 1.8 * mix(1.0, 0.28, m.x * m.y);
+  float e = smoothstep(0.78, 1.18, length((q - uHero.xy) / max(uHero.zw, vec2(1e-3))));
+  c = mix(c, uStoryCol, 0.25 + 0.3 * rim());
+  vec3 col = c * a * vBri * 1.8 * mix(0.15, 1.0, e) * (1.0 + 1.2 * rim());
   gl_FragColor = vec4(finish(col), 1.0);
 }`;

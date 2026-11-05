@@ -6,6 +6,7 @@ import { createWorld } from './world.js';
 import { createPost } from './post.js';
 import { createFx } from './fx.js';
 import { createGlobe } from './globe.js';
+import { createHeroStage } from './stage.js';
 import { exchangeName, money, ago } from '../util.js';
 import { createOutcomes } from './holograms/outcomes.js';
 import { createDial } from './holograms/dial.js';
@@ -44,6 +45,25 @@ export function createScene(canvas, opts = {}) {
   const post = createPost(renderer, scene, camera, { samples: pixelRatio < 1.5 ? 4 : 0 });
   world.attachPost(post);
   const globe = createGlobe(scene, GLOBE_STATION);
+  // the projector stage: anchor + story + pulses shared by the widget, the rig under it, every scene and the post pass
+  const hero = createHeroStage({ THREE, scene, camera, fx, post, sh: world.director.sh });
+  world.setHero(hero);
+  // holograms get a thin fx proxy: their bursts/rings also pulse the stage while they are the current widget
+  function wrapFx(isCur) {
+    const s = (n) => Math.min(1, Math.max(0.3, (n || 0) / 40));
+    return {
+      ...fx,
+      burst(p, c, n = 200, o) { fx.burst(p, c, n, o); if (isCur()) hero.emit('burst', s(n), { world: p }); },
+      ring(p, c, o) { fx.ring(p, c, o); if (isCur()) hero.emit('ring', Math.min(1, 0.4 + (o?.radius || 30) / 40), { world: p }); },
+      stream(p, c, n, d, o) { fx.stream(p, c, n, d, o); if (isCur()) hero.pulse = Math.max(hero.pulse, 0.18); },
+    };
+  }
+  // hero.story from what airs: move = lead change1d (movers: top ticker market), swing/alert bonuses
+  function storySignals(story, seg, pal) {
+    const m = seg === 'movers' ? tickerMarkets[0] : (story?.lead || story?.markets?.[0]);
+    const move = +(m?.change1d ?? 0) || 0;
+    return { move, dir: move > 0.005 ? 1 : move < -0.005 ? -1 : 0, swing: !!story?.swing, alert: false, colorA: pal.a, colorB: pal.b, theme: pal.theme };
+  }
 
   let RECT = opts.stageRect || STAGE_RECT;
   let SUBJECT_X = (RECT.x0 + RECT.x1) / 2, SUBJECT_Y = (RECT.y0 + RECT.y1) / 2;
@@ -172,7 +192,7 @@ export function createScene(canvas, opts = {}) {
     post.setSize(W, Hh, pixelRatio);
     world.resize(W * pixelRatio, Hh * pixelRatio);
     const pr = pixelRatio * Hh / 1080;
-    world.setPixelRatio(pr); fx.setPixelRatio(pr); globe.setPixelRatio(pr);
+    world.setPixelRatio(pr); fx.setPixelRatio(pr); globe.setPixelRatio(pr); hero.setPixelRatio(pr);
   }
   const onWinResize = () => resize(window.innerWidth, window.innerHeight);
   window.addEventListener('resize', onWinResize);
@@ -217,7 +237,8 @@ export function createScene(canvas, opts = {}) {
     const pal = palette(story || { id: 'movers' }, seg === 'movers' ? (tickerMarkets[0]?.category && pickTheme(tickerMarkets[0].category)) || 'economy' : undefined);
     const seed = pal.seed;
     const station = vis === 'globe' ? GLOBE_STATION : seedStation(seed);
-    const ctx = { scene, fx, world, station, pal, seed, rnd: pal.rnd, globe };
+    let holoRef = null;
+    const ctx = { scene, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed, rnd: pal.rnd, globe, hero };
     const o = { seg };
     const dialOrReplay = () => (replayable ? createRibbon(ctx, story, o) : createDial(ctx, story, o));
     let holo;
@@ -231,26 +252,30 @@ export function createScene(canvas, opts = {}) {
       case 'movers': holo = tickerMarkets.length ? createMovers(ctx, tickerMarkets) : (story ? createDial(ctx, story) : null); break;
       default: holo = createDial(ctx, story, o);
     }
-    return { holo, pal, station, vis, storyId: story?.id ?? null };
+    holoRef = holo;
+    return { holo, pal, station, vis, storyId: story?.id ?? null, signals: storySignals(story, seg, pal) };
   }
   function pickTheme(cat) { return ['politics', 'economy', 'courts', 'tech', 'science', 'health', 'culture', 'weather', 'world'].includes(cat) ? cat : null; }
   function swapTo(built, { fly = true } = {}) {
     if (current) { current.hide(); outgoing.push(current); }
     current = built.holo; curStation = built.station;
     if (!current) return;
-    current.show();
+    current.show(); current._heroRevealed = false;
     world.setTheme(built.pal.a, built.pal.b);
+    if (built.signals) hero.setStory(built.signals);
+    hero.emit('arrive', 1);
     world.event('story', { x: built.station.x, z: built.station.z, color: built.pal.b });
     if (fly) flyTo(current.pose());
     rig.orbitDir = (built.pal.seed & 4) ? 1 : -1;
     // background beat: when the scene's hold is up, the scene transition fires on this card change
     const beat = built.vis !== 'alert' ? world.beat({ station: built.station, pal: built.pal, storyId: built.storyId }) : null;
     if (beat) {
-      window.__pnnBeat = beat;
+      window.__pnnBeat = beat; hero.emit('beat', 0.8);
       try { document.dispatchEvent(new CustomEvent('pnn:beat', { detail: beat })); } catch (e) { reportErr('beat', e); }
       post.glitch(0.12);   // the transition is the show
     } else post.glitch(0.22);
     fx.ring(new THREE.Vector3(built.station.x, 0.15, built.station.z), built.pal.b, { radius: 26, dur: 1.6, bright: 1.6 });
+    hero.dispatchDom(W, Hh);
   }
 
   // ---------- loop ----------
@@ -267,7 +292,10 @@ export function createScene(canvas, opts = {}) {
     t += dt; TIME.value = t;
     try {
       tickCamera(dt, t, now);
+      const live = current && !current.dead ? current : null;
+      hero.tick(dt, t, { pose: live ? live.pose() : null, rect: RECT, cssW: W, cssH: Hh, visible: !!live && live.visible !== false });
       if (current) current.tick(dt, t);
+      if (live && !live._heroRevealed && (live.reveal ?? 1) >= 0.999 && live.visible) { live._heroRevealed = true; hero.emit('reveal', 0.6); }
       for (let i = outgoing.length - 1; i >= 0; i--) {
         const h = outgoing[i]; h.tick(dt, t);
         if (h.dead) { try { h.dispose(); } catch (e) { reportErr('dispose', e); } outgoing.splice(i, 1); }
@@ -283,9 +311,9 @@ export function createScene(canvas, opts = {}) {
       api.fps = fps;
       // FPS guard: shed env quality first, then pixel ratio; step env quality back up only after 30 s of headroom
       if (document.hidden) goodChecks = 0;
-      else if (fps < 50 && envQ > 0) { envQ--; world.setQuality(envQ); goodChecks = 0; lastQChange = t; }
+      else if (fps < 50 && envQ > 0) { envQ--; world.setQuality(envQ); hero.setQuality(envQ); goodChecks = 0; lastQChange = t; }
       else if (fps < 48 && pixelRatio > 1) { pixelRatio = Math.max(1, +(pixelRatio - 0.25).toFixed(2)); lastSize = ''; resize(W, Hh); goodChecks = 0; }
-      else if (fps > 58) { if (++goodChecks >= 6 && envQ < 2 && t - lastQChange > 60) { envQ++; world.setQuality(envQ); goodChecks = 0; lastQChange = t; } }
+      else if (fps > 58) { if (++goodChecks >= 6 && envQ < 2 && t - lastQChange > 60) { envQ++; world.setQuality(envQ); hero.setQuality(envQ); goodChecks = 0; lastQChange = t; } }
       else goodChecks = 0;
       api.envQ = envQ;
     }
@@ -321,7 +349,7 @@ export function createScene(canvas, opts = {}) {
     forceBeat(type) { return world.env.forceBeat(type); },
     cut(type) { return world.env.cut(type); },
     get env() { return world.env.getState(); },
-    envEvent(type, data) { try { world.event(type, data); } catch (e) { reportErr('envEvent', e); } },
+    envEvent(type, data) { try { world.event(type, data); if (type === 'flash') hero.emit('flash', 1); } catch (e) { reportErr('envEvent', e); } },
     showStory(story, segmentName = 'top') {
       try {
         const seg = ['top', 'focus', 'movers', 'week', 'sotd'].includes(segmentName) ? segmentName : 'top';
@@ -349,11 +377,15 @@ export function createScene(canvas, opts = {}) {
         fx.burst(new THREE.Vector3(station.x, 8, station.z), COL.amber, 500, { speed: 12, up: 8, lifeS: 2.4, sz: 1.2 });
         const pal = { ...palette({ id: alert.id || alert.marketId || 'alert' }, 'world'), a: COL.alert.clone(), b: COL.amber.clone(), hexA: '#ff3a2e', hexB: '#ffab2e' };
         pal.pick = (i) => [pal.a, pal.b, COL.white][i % 3]; pal.hex = (i) => ['#ff3a2e', '#ffab2e', '#ffffff'][i % 3];
-        const ctx = { scene, fx, world, station, pal, seed: pal.seed, rnd: pal.rnd, globe };
+        let holoRef = null;
+        const ctx = { scene, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed: pal.seed, rnd: pal.rnd, globe, hero };
         const story = { id: alert.storyId, lead: { yesPrice: alert.to, change1d: alert.to - alert.from } };
         const holo = createDial(ctx, story, { alert: { from: alert.from, to: alert.to, minutes: alert.minutes || 0, label: alert.short || alert.label || alert.headline || '' } });
+        holoRef = holo;
         curKey = 'alert:' + (alert.id || '');
-        swapTo({ holo, pal, station, vis: 'alert' });
+        const mv = (alert.to ?? 0) - (alert.from ?? 0);
+        swapTo({ holo, pal, station, vis: 'alert', signals: { move: mv, dir: mv > 0 ? 1 : mv < 0 ? -1 : 0, energy: 1, swing: false, alert: true, colorA: COL.alert, colorB: COL.amber, theme: 'alert' } });
+        hero.emit('alert', 1);
       } catch (e) { reportErr('showAlert', e); }
     },
     clearAlert() {
@@ -377,11 +409,11 @@ export function createScene(canvas, opts = {}) {
       window.removeEventListener('resize', onWinResize);
       try { if (current) current.dispose(); for (const h of outgoing) h.dispose(); } catch {}
       current = null; outgoing = [];
-      globe.dispose(); fx.dispose(); world.dispose(); post.dispose();
+      hero.dispose(); globe.dispose(); fx.dispose(); world.dispose(); post.dispose();
       renderer.dispose();
     },
   };
-  window.__pnnScene = { api, camera, rig, world, post, fx, globe, scene, flyTo, get current() { return current; }, get RECT() { return RECT; } };
+  window.__pnnScene = { api, camera, rig, world, post, fx, globe, scene, flyTo, hero, get current() { return current; }, get RECT() { return RECT; } };
   warmup();
   world.setStageRect(RECT);
   // background: first scene + all transition programs compiled before the first frame (capped so a stuck import

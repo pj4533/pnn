@@ -101,7 +101,7 @@ void main(){
   float a = uWireAmt * uLayerAlpha * (0.55 + 0.45 * vH) * (0.6 + 0.4 * vBack);
   float glow = 0.5 + 0.5 * sin(vX * 0.0035 - uGlowPh);
   a *= 0.8 + 0.35 * glow * glow;
-  float band = exp(-pow((vX - uPulseX) / 90.0, 2.0)) * uPulseStr;
+  float band = exp(-pow(abs((vX - uPulseX) / 90.0), 2.0)) * uPulseStr;
   c = mix(c, vec3(1.0, 0.85, 1.0), clamp(band * 0.5, 0.0, 0.6));
   a = min(a + band * 0.35, 0.6);
   a *= guard();

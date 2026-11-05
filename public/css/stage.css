@@ -1,0 +1,106 @@
+/* THE PROJECTOR STAGE (2026-11-05): the 2D cards join the 3D room.
+   One shared accent (--story, set from the 'pnn:hero' event by js/stagelink.js) drives the glass cards, the edge glow and light
+   spill, the connector beam, the eye-wall reticle, the frame label and the chyron. Loaded last so it layers over cards/panels/chyron. */
+@property --story { syntax: '<color>'; inherits: true; initial-value: #00f0ff; }
+@property --story-a { syntax: '<color>'; inherits: true; initial-value: #7a2cff; }
+@property --story-b { syntax: '<color>'; inherits: true; initial-value: #ff2bd6; }
+:root {
+  --story: #00f0ff; --story-a: #7a2cff; --story-b: #ff2bd6; --move: #00f0ff; --energy: .3;
+  --hero-x: 64vw; --hero-y: 48vh; --hero-rx: 12vw; --hero-ry: 20vh; --sheen-d: 0s;
+  --stage-accent: var(--story);
+  transition: --story .7s ease, --story-a .7s ease, --story-b .7s ease;
+}
+/* defined on body (not :root) so the alert's red --story-a override below reaches them */
+body { --glass-a: color-mix(in srgb, var(--story-a) 16%, rgba(14, 4, 40, .6)); --glass-b: rgba(7, 2, 26, .66); }
+/* alerts override everything to red */
+body.alerting, html.hero-alert body { --story: var(--breaking); --story-a: var(--breaking); --story-b: var(--breaking); --move: var(--breaking); }
+
+/* ---- 1) shared accent: cards follow the story colour instead of per-segment colours */
+.bigc { --ac: var(--story); --ag: color-mix(in srgb, var(--story) 50%, transparent); }
+.bigc.bc-swing { --ac: var(--story); --ag: color-mix(in srgb, var(--story) 50%, transparent); }
+.desk-board { --desk: var(--story); --desk-g: color-mix(in srgb, var(--story) 50%, transparent); }
+
+/* ---- 2) glass: the live scene shows through, blurred. Border gradients are re-declared because a shorthand can't swap one layer. */
+.card, .bigc, .desk-board, .mini {
+  --glass: linear-gradient(160deg, var(--glass-a), var(--glass-b));
+  backdrop-filter: blur(10px) saturate(1.5) brightness(.85); -webkit-backdrop-filter: blur(10px) saturate(1.5) brightness(.85);
+}
+.card { background: var(--glass) padding-box, linear-gradient(130deg, var(--story-b), color-mix(in srgb, var(--story) 60%, transparent) 55%, var(--story)) border-box;
+  box-shadow: inset 0 0 2vw color-mix(in srgb, var(--story-b) 14%, transparent); }
+.bigc { background: var(--glass) padding-box, linear-gradient(130deg, var(--ac), color-mix(in srgb, var(--story-b) 55%, transparent) 55%, var(--ac)) border-box; }
+.desk-board { background: var(--glass) padding-box, linear-gradient(130deg, var(--desk), color-mix(in srgb, var(--story-b) 45%, transparent) 55%, var(--desk)) border-box; }
+.mini { background: linear-gradient(170deg, var(--glass-a), var(--glass-b)) padding-box, linear-gradient(120deg, var(--story), var(--story-b)) border-box; }
+/* the safety net for contrast: a soft dark halo behind the big type */
+.headline, .bc-head, .sw-who, .bc-lbl, .mini-h, .row-name, .cy-line { text-shadow: 0 0 .4vw rgba(0, 0, 0, .6), 0 0 .5vw color-mix(in srgb, var(--story) 40%, transparent); }
+.big-v, .bc-v, .sw-nv, .mini-v, .row-v { text-shadow: 0 0 .4vw rgba(0, 0, 0, .6), 0 0 1vw var(--story), 0 0 2.4vw color-mix(in srgb, var(--story) 55%, transparent); }
+.big-p, .bc-p { color: var(--story); }
+
+/* iPad: cheaper blur (a Safari full-card backdrop over a live WebGL canvas is the expensive thing) */
+body.ipad .card, body.ipad .bigc, body.ipad .desk-board, body.ipad .mini { backdrop-filter: blur(4px) saturate(1.4); -webkit-backdrop-filter: blur(4px) saturate(1.4); }
+@media (hover: none) and (pointer: coarse) {
+  .card, .bigc, .desk-board, .mini { backdrop-filter: blur(4px) saturate(1.4); -webkit-backdrop-filter: blur(4px) saturate(1.4); }
+}
+/* the scene fps guard already shed quality: swap the backdrop blur for a pre-blurred solid tint */
+body.lowfx .card, body.lowfx .bigc, body.lowfx .desk-board, body.lowfx .mini, body.lowfx .cy-t1 { backdrop-filter: none; -webkit-backdrop-filter: none; }
+body.lowfx { --glass-a: color-mix(in srgb, var(--story-a) 20%, rgba(14, 4, 40, .84)); --glass-b: rgba(7, 2, 26, .88); }
+
+/* ---- 3) edge glow (light from the projector washing onto the glass) + slow sheen */
+.card::before { content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 2px; pointer-events: none; z-index: 1;
+  background: linear-gradient(180deg, transparent, var(--story) 18%, var(--story) 82%, transparent); opacity: calc(.55 + .3 * var(--energy)); transition: opacity .25s, width .25s; }
+.mini::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; pointer-events: none; z-index: 1;
+  background: linear-gradient(90deg, transparent, var(--story) 18%, var(--story) 82%, transparent); opacity: calc(.5 + .3 * var(--energy)); transition: opacity .25s; }
+/* the sheen moves a gradient inside the pseudo's own box (no transform: a translated pseudo would grow the card's scrollable overflow and trip fitReport) */
+.card::after, .mini::after { content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background: linear-gradient(100deg, transparent 42%, rgba(255, 255, 255, .9) 50%, transparent 58%) 15% 0 / 300% 100% no-repeat; opacity: calc(.06 + .08 * var(--energy));
+  animation: stSheen 6s linear var(--sheen-d) infinite; }
+@keyframes stSheen { 0% { background-position: 15% 0; } 60%, 100% { background-position: 85% 0; } }
+@keyframes stSheenOnce { 0% { background-position: 15% 0; opacity: .4; } 100% { background-position: 85% 0; opacity: .05; } }
+html.hero-pulse .card::before { width: 4px; opacity: 1; }
+html.hero-pulse .mini::before { opacity: 1; }
+html.hero-pulse .card::after, html.hero-pulse .mini::after { animation: stSheenOnce .6s ease-out both; }
+.card > *, .mini > * { position: relative; z-index: 1; }   /* content above the sheen */
+
+/* ---- 4) connector beam + eye-wall reticle (js/stagelink.js builds #heroLink) */
+#heroLink { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0; transition: opacity .4s; overflow: visible; }
+#heroLink.on { opacity: 1; }
+#heroLink .hl-ret { fill: none; stroke: var(--story); stroke-width: 1.25px; stroke-opacity: .42; stroke-dasharray: 30 20; stroke-linecap: butt;
+  animation: hlRot 44s linear infinite; transition: stroke-opacity .3s; }
+#heroLink.pulse .hl-ret { stroke-opacity: .9; stroke-width: 1.6px; }
+@keyframes hlRot { to { stroke-dashoffset: -100; } }
+#heroLink .hl-conn { transition: opacity .35s; }
+#heroLink.hl-off .hl-conn, #heroLink.hl-hide .hl-conn, body.alerting #heroLink .hl-conn, body.flashing #heroLink .hl-conn { opacity: 0; }
+#heroLink stop:first-child, #heroLink stop:last-child { stop-color: var(--story); }
+#heroLink .hl-glow { fill: none; stroke: var(--story); stroke-width: 6px; stroke-opacity: .1; stroke-linecap: round; }
+#heroLink .hl-line { fill: none; stroke-width: 1.5px; stroke-opacity: .7; stroke-dasharray: 100; stroke-dashoffset: 0; }
+#heroLink.draw .hl-line, #heroLink.draw .hl-glow { animation: hlDraw .5s ease-out both; }
+@keyframes hlDraw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+#heroLink .hl-run { fill: none; stroke: #fff; stroke-width: 2px; stroke-linecap: round; stroke-dasharray: 7 93; stroke-dashoffset: 7; opacity: .9;
+  animation: hlRun calc(2.4s - 1.5s * var(--energy)) linear infinite; }
+@keyframes hlRun { to { stroke-dashoffset: -93; } }
+#heroLink .hl-tab { fill: var(--story); opacity: .9; }
+#heroLink .hl-arc { fill: none; stroke: var(--story); stroke-width: 3px; stroke-linecap: round; opacity: .95; }
+#heroLink .hl-dot { fill: #fff; }
+.hl-spill { position: absolute; pointer-events: none; opacity: 0; transition: opacity .4s; mix-blend-mode: screen;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--story) 30%, transparent), transparent);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(180deg, transparent, #000 22%, #000 78%, transparent); }
+.hl-spill.on { opacity: calc(.45 + .35 * var(--energy)); }
+#heroLink.hl-off ~ .hl-spill, body.alerting .hl-spill, body.flashing .hl-spill { opacity: 0; }
+html.hero-pulse .hl-spill.on { opacity: 1; }
+
+/* ---- 5) frame: the four brackets (they drew a rectangle around the eye) are retired; the label sits above the hero ellipse */
+.frame .c { display: none; }
+.frame-lbl { color: var(--story); background: rgba(7, 2, 26, .55); padding: .2vh .5vw; text-shadow: 0 0 .3vw rgba(0, 0, 0, .9), 0 0 .5vw rgba(0, 0, 0, .7); transition: left .12s linear, top .12s linear; }
+
+/* ---- chyron joins the room: story-tinted lower third and a pool of projector light under the widget */
+.cy-t1 { border-color: color-mix(in srgb, var(--story) 60%, transparent);
+  box-shadow: 0 0 1.4vh color-mix(in srgb, var(--story) 35%, transparent), inset 0 0 2vh color-mix(in srgb, var(--story-b) 20%, transparent); }
+.cy-prog { background: linear-gradient(90deg, var(--story), var(--story-b)); }
+.cy-sub { color: var(--story); }
+#chyron::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 60%; pointer-events: none;
+  background: radial-gradient(ellipse 22vw 100% at var(--hero-x) 0, color-mix(in srgb, var(--story) 26%, transparent), transparent 70%); opacity: calc(.5 + .4 * var(--energy)); }
+html.hero-pulse #chyron::before { opacity: 1; }
+body.alerting #chyron::before { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card::after, .mini::after, #heroLink .hl-run, #heroLink .hl-ret { animation: none; }
+}

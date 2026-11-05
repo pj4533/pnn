@@ -2,7 +2,7 @@
 // full-screen synthwave scenes, beat-synced to card changes, with showy transitions. The former living environment
 // (env/*) now lives on as the `outrunClassic` scene. Public API unchanged: accent, accent2, alert, setTheme, setAlert,
 // event, shockwave, attachPost, resize, setPixelRatio, setQuality, env (= director: getState, cameraBias), tick,
-// dispose; plus beat(info), warm(renderer, camera) and setStageRect(rect).
+// dispose; plus beat(info), warm(renderer, camera), setStageRect(rect) and setHero(hero).
 import * as THREE from '../../vendor/three/three.module.js';
 import { TIME, damp } from './holo.js';
 import { createEnvCtx } from './env/common.js';
@@ -34,6 +34,8 @@ export function createWorld(scene, { renderer, camera, opts = {} } = {}) {
     event(type, data) { director.event(type, data); },
     shockwave(x, z, color) { director.shockwave(x, z, color || new THREE.Color('#00f0ff')); },
     beat(info) { return director.beat(info); },
+    /** Projector stage (stage.js): scenes get ctx.hero / info.hero / heroPulse events; uniforms are shared refs. */
+    setHero(hero) { director.setHero(hero); },
     warm() { return director.warm(); },
     /** Overlay stage rect (viewport fractions, top-down) -> guard rect (bottom-up) + subject point. */
     setStageRect(r) {
