@@ -41,18 +41,35 @@ vec3 done(vec3 c){ float l = dot(c, vec3(.2126, .7152, .0722)); float cap = mix(
 `;
 const accent = 'alertTint(mix(uColA, uColB, uP))';
 
+// Shared by the morph quad and TILE_VS: grid size (lite = coarser), per-tile release time, and the layer gains the
+// director's setK() applies (A out over [pk/2, pk+.1], B in over [pk-.2, pk+.3] with pk = .5) so sampled colors stay lit.
+const MORPH_COMMON = /* glsl */`
+const float M_S = .52;
+vec2 mGrid(float lite){ return lite > .5 ? vec2(112., 63.) : vec2(160., 90.); }
+float mh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float mRel(vec2 id, vec2 G, vec2 org, float asp){
+  vec2 c = (id + .5) / G;
+  float dn = clamp(length((c - org) * vec2(asp, 1.)) / 1.5, 0., 1.);
+  return .02 + .30 * dn + .12 * mh(id) + .03 * sin(c.x * 9. + c.y * 7.);
+}
+float mKA(float p){ float t = clamp((p - .25) / .35, 0., 1.); return 1. - t * t * (3. - 2. * t); }
+float mKB(float p){ float t = clamp((p - .3) / .5, 0., 1.); return t * t * (3. - 2. * t); }
+`;
+
 const FRAG = {
-  // noise-threshold dissolve along the cloud's density, thin accent rim
-  morph: `void main(){
+  // tile shatter: the frame is a 160x90 mosaic; tiles release outward from the origin (bright edges), show a dim ghost
+  // while their glowing particle (TILE_VS) swirls, then land as the incoming frame. Release time = mRel (shared with TILE_VS).
+  morph: MORPH_COMMON + `void main(){
   vec2 uv = vUv; float asp = uRes.x / uRes.y;
-  float n = fbm3(uv * vec2(asp, 1.) * 2.2 + uTime * .03);
-  float d = length((uv - uOrigin) * vec2(asp, 1.));
-  float f = n * .75 + d * .25;
-  float edge = mix(-.08, 1.08, e3((uP - .3) / .45));
-  float m = smoothstep(edge + .035, edge - .035, f);
-  vec3 col = mix(A(uv), B(uv), m);
-  float rim = exp(-abs(f - edge) * 70.) * step(.01, uP) * step(uP, .99);
-  col += ${accent} * rim * 1.6 * guard();
+  vec2 G = mGrid(uLite); vec2 id = floor(uv * G), lc = fract(uv * G);
+  float q = (uP - mRel(id, G, uOrigin, asp)) / M_S;
+  float gA = 1. / max(mKA(uP), .25), gB = 1. / max(mKB(uP), .25);
+  float wA = 1. - smoothstep(0., .1, q), wB = smoothstep(.9, 1., q);
+  vec3 a = A(uv) * gA, b = B(uv) * gB;
+  vec3 col = a * wA + b * wB + mix(a, b, smoothstep(.3, .7, q)) * .07 * max(1. - wA - wB, 0.);
+  float ed = max(max(smoothstep(.14, 0., lc.x), smoothstep(.86, 1., lc.x)), max(smoothstep(.14, 0., lc.y), smoothstep(.86, 1., lc.y)));
+  float fire = step(0., q) * exp(-max(q, 0.) * 14.) + step(0., q) * step(q, 1.) * exp(-(1. - q) * 14.);
+  col += ${accent} * ed * fire * 1.3 * guard();
   gl_FragColor = vec4(done(col), 1.);
 }`,
   // hyperspace: zoom blur + streaks into A, flash + split + ring at the peak, B arrives from over-zoom
@@ -229,7 +246,7 @@ void main(){
   gl_Position = projectionMatrix * mv;
   float flare = exp(-pow((uP - .5) * 7., 2.));
   vCol = mix(uColA, uColB, smoothstep(.3, .7, uP)) * (1. + 1.2 * flare);
-  vA = smoothstep(0., .06, uP) * (1. - smoothstep(.82, 1., uP)) * (.5 + .5 * r.z);
+  vA = smoothstep(0., .06, uP) * (1. - smoothstep(.82, 1., uP)) * (.3 + .3 * r.z);
   gl_PointSize = clamp(uSize * (1. + flare) * uRes.y / 1080., 1., 48.);
 }`;
 const CLOUD_FS = /* glsl */`
@@ -239,6 +256,58 @@ float guard(){ vec2 q = gl_FragCoord.xy / uRes; vec2 m = smoothstep(uGuardRect.x
 void main(){
   vec2 c = gl_PointCoord - .5; float d = dot(c, c);
   float a = smoothstep(.25, .0, d) * vA;
+  vec3 col = vCol; float l = dot(col, vec3(.2126, .7152, .0722));
+  col = mix(col, vec3(1., .12, .05) * l * 1.4, uAlert * .8);
+  gl_FragColor = vec4(col * a * guard(), 1.);
+}`;
+
+
+// One glowing particle per mosaic tile (clip-space, camera independent): sits on its tile, lifts off when the tile
+// releases, swirls around a vortex under curl noise, then lands again carrying the incoming frame's color.
+const TILE_VS = /* glsl */`
+attribute vec2 aCell;
+uniform sampler2D tA, tB;
+uniform float uP, uTime, uLite;
+uniform vec2 uRes, uOrigin;
+uniform vec3 uColA, uColB;
+varying vec3 vCol; varying float vA, vLand;
+const float PI = 3.14159265;
+${MORPH_COMMON}
+void main(){
+  vec2 G = mGrid(uLite);
+  if (aCell.x >= G.x || aCell.y >= G.y) { gl_Position = vec4(2., 2., 2., 1.); gl_PointSize = 0.; vCol = vec3(0.); vA = 0.; vLand = 1.; return; }
+  float asp = uRes.x / uRes.y;
+  vec2 c = (aCell + .5) / G;
+  float h = mh(aCell + 3.7), h2 = mh(aCell + 17.3);
+  float q = (uP - mRel(aCell, G, uOrigin, asp)) / M_S;
+  float u = clamp(q, 0., 1.), env = sin(PI * u);
+  vec2 V0 = mix(uOrigin, vec2(.5), .5);
+  vec2 R = (c - V0) * vec2(asp, 1.);
+  float th = env * (1.2 + 1.6 * h), cs = cos(th), sn = sin(th);
+  vec2 Rr = vec2(cs * R.x - sn * R.y, sn * R.x + cs * R.y) * (1. + env * (.15 + .5 * h2));
+  vec2 curl = vec2(sin(c.y * 9. + uTime * 1.7 + h * 6.2832), cos(c.x * 8. + uTime * 1.3 + h2 * 6.2832)) * .09 * env;
+  vec2 pos = V0 + (Rr + curl) / vec2(asp, 1.);
+  vec3 ca, cb;
+  if (uLite > .5) { ca = texture2D(tA, c).rgb; cb = texture2D(tB, c).rgb; }
+  else {
+    vec2 o = .25 / G, o2 = vec2(o.x, -o.y);
+    ca = (texture2D(tA, c + o).rgb + texture2D(tA, c - o).rgb + texture2D(tA, c + o2).rgb + texture2D(tA, c - o2).rgb) * .25;
+    cb = (texture2D(tB, c + o).rgb + texture2D(tB, c - o).rgb + texture2D(tB, c + o2).rgb + texture2D(tB, c - o2).rgb) * .25;
+  }
+  vec3 col = mix(ca / max(mKA(uP), .25), cb / max(mKB(uP), .25), smoothstep(.35, .65, u));
+  vCol = col * (1. + 1.6 * env) + mix(uColA, uColB, u) * env * (.25 + .6 * h);
+  vA = smoothstep(0., .08, q) * (1. - smoothstep(.9, 1., q));
+  vLand = 1. - env;
+  gl_Position = vec4(pos * 2. - 1., 0., 1.);
+  gl_PointSize = clamp(max(uRes.x / G.x, uRes.y / G.y) * mix(1.03, .4 + .7 * h, env), 1., 64.);
+}`;
+const TILE_FS = /* glsl */`
+uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt, uAlert;
+varying vec3 vCol; varying float vA, vLand;
+float guard(){ vec2 q = gl_FragCoord.xy / uRes; vec2 m = smoothstep(uGuardRect.xy - .08, uGuardRect.xy, q) * (1. - smoothstep(uGuardRect.zw, uGuardRect.zw + .08, q)); return 1. - uGuardAmt * m.x * m.y; }
+void main(){
+  vec2 c = gl_PointCoord - .5;
+  float a = mix(smoothstep(.25, .0, dot(c, c)), 1., vLand * vLand * vLand) * vA;
   vec3 col = vCol; float l = dot(col, vec3(.2126, .7152, .0722));
   col = mix(col, vec3(1., .12, .05) * l * 1.4, uAlert * .8);
   gl_FragColor = vec4(col * a * guard(), 1.);
@@ -277,6 +346,15 @@ export function createTransitions({ res, guardRect, guardAmt, alert, noise, time
   const cloudMat = new THREE.ShaderMaterial({ uniforms: CU, vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false });
   const cloud = new THREE.Points(cg, cloudMat); cloud.frustumCulled = false;
   const cloudScene = new THREE.Scene(); cloudScene.add(cloud);
+  // mosaic particles (morph): 160x90 grid; lite mode draws only the 112x63 sub-grid (see mGrid)
+  const TW = 160, TH = 90, tg = new THREE.BufferGeometry(), cell = new Float32Array(TW * TH * 2);
+  for (let y = 0, i = 0; y < TH; y++) for (let x = 0; x < TW; x++, i++) { cell[i * 2] = x; cell[i * 2 + 1] = y; }
+  tg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TW * TH * 3), 3)); tg.setAttribute('aCell', new THREE.BufferAttribute(cell, 2));
+  const tileMat = new THREE.ShaderMaterial({
+    uniforms: { tA: U.tA, tB: U.tB, uP: U.uP, uTime: U.uTime, uLite: U.uLite, uRes: res, uOrigin: U.uOrigin, uColA: U.uColA, uColB: U.uColB, uGuardRect: guardRect, uGuardAmt: guardAmt, uAlert: alert },
+    vertexShader: TILE_VS, fragmentShader: TILE_FS, transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
+  });
+  const tiles = new THREE.Points(tg, tileMat); tiles.frustumCulled = false; cloudScene.add(tiles);
 
   return {
     U, mats, quad, quadScene, ortho, cloud, cloudScene, cloudU: CU, N, from, to,
@@ -284,7 +362,7 @@ export function createTransitions({ res, guardRect, guardAmt, alert, noise, time
     /** Upload aFrom/aTo once at the start of a morph (n points; the rest are hidden by drawRange). */
     upload(n) { cg.setDrawRange(0, n); aFrom.needsUpdate = true; aTo.needsUpdate = true; },
     setCount(n) { cg.setDrawRange(0, n); },
-    dispose() { geo.dispose(); for (const k in mats) mats[k].dispose(); cg.dispose(); cloudMat.dispose(); },
+    dispose() { geo.dispose(); for (const k in mats) mats[k].dispose(); cg.dispose(); cloudMat.dispose(); tg.dispose(); tileMat.dispose(); },
   };
 }
 

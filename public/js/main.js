@@ -60,11 +60,12 @@ const flashes = createFlashes(document.getElementById('flash'), {
     document.body.classList.add('flashing');
     flashLock = true;
     const st = director.flashStory(f);
-    if (st) { scene.showStory(st, 'focus', true); director.note(st.id, 'flash'); }
+    if (st) { scene.showStory(st, 'focus', true); director.note(st.id, 'flash'); overlay.setFrameLabel(st.eventTitle || st.short || st.headline); }
     scene.envEvent('flash');
   },
   onEnd(f, { cut }) {
     flashLock = false;
+    overlay.setFrameLabel(null);
     document.body.classList.remove('flashing');
     if (!cut) { const st = director.flashStory(f); if (!st || !director.focusStory(st)) director.hold(false); }
     else if (!document.body.classList.contains('alerting')) director.hold(false); // cut by a click (focus follows) or by hand

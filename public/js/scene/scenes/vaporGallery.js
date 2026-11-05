@@ -3,7 +3,9 @@ import * as THREE_ from '../../../vendor/three/three.module.js';
 import * as S from './vaporGallery.glsl.js';
 
 const ease = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
-const BUST = { sx: 0.17, sy: 0.6, z: -170, hf: 0.46 };
+// The left ~47% of the screen is an opaque card and the hologram sits at ~(0.64, 0.62): the bust, columns and windows live in the right half,
+// behind and around the hologram (upper right, far background). The hologram itself spans roughly x 0.39-0.89, y 0.24-0.65: keep clear of it.
+const BUST = { sx: 0.84, sy: 0.83, z: -170, hf: 0.3 };
 
 function atlas(THREE) {
   const c = document.createElement('canvas'); c.width = 1024; c.height = 512; const g = c.getContext('2d');
@@ -67,11 +69,13 @@ export function create(ctx) {
   const part = (k, sig) => (typeof G0[k] === 'string' && !COMMON.includes(sig) ? G0[k] : '');
   const GL = COMMON + part('guard', 'float guard(') + part('alertMix', 'vec3 alertMix(') + part('finish', 'vec3 finish(');
   const FH = GL + S.FHEAD, VH = S.VHEAD;
-  const cam = ctx.camera; cam.updateMatrixWorld(true);
-  const camX0 = cam.position.x, cp = cam.position.clone();
+  const cam = ctx.camera;
+  // Everything is authored in VIEW space and the roots follow the camera each frame, so the layout (right-half composition) holds at any camera pose
+  // (the scene may be created while the rig is parked at the warm-up pose, and each story flies the camera elsewhere).
+  const ref = cam.clone(); ref.position.set(0, 0, 0); ref.quaternion.identity(); ref.scale.set(1, 1, 1); ref.updateProjectionMatrix(); ref.updateMatrixWorld(true);
   const tmp = new THREE.Vector3();
-  // screen fraction -> world point on plane z (create-time only)
-  const at = (sx, sy, z) => { tmp.set(sx * 2 - 1, sy * 2 - 1, 0.5).unproject(cam); const d = tmp.sub(cp); const t = (z - cp.z) / d.z; return new THREE.Vector3(cp.x + d.x * t, cp.y + d.y * t, z); };
+  // screen fraction -> view-space point on plane z (create-time only)
+  const at = (sx, sy, z) => { tmp.set(sx * 2 - 1, sy * 2 - 1, 0.5).unproject(ref); const t = z / tmp.z; return new THREE.Vector3(tmp.x * t, tmp.y * t, z); };
   const uph = (z) => Math.abs(at(0.5, 1, z).y - at(0.5, 0, z).y);
 
   const U = {
@@ -84,8 +88,13 @@ export function create(ctx) {
     blending: o.add ? THREE.AdditiveBlending : THREE.NormalBlending, side: THREE.DoubleSide,
   }));
   const root = new THREE.Group(), sroot = new THREE.Group(); ctx.stage.add(root, sroot);
-  ctx.anchor(root, { parallax: 0.2, y: 0, z: 0 }); ctx.anchor(sroot, { parallax: 0.6, y: 0, z: 0 });
-  const lx = (x) => x - camX0 * 0.8, lxs = (x) => x - camX0 * 0.4;
+  root.matrixAutoUpdate = false; sroot.matrixAutoUpdate = false;
+  const lx = (x) => x, lxs = (x) => x;
+  const sync = (par) => {   // roots ride the camera; a small lateral parallax keeps depth when the rig flies
+    const off = par ? 30 * Math.tanh(par.x / 200) : 0;
+    for (const [g, k] of [[root, 0.4], [sroot, 0.15]]) { g.position.copy(cam.position); g.quaternion.copy(cam.quaternion); g.translateX(-off * k); g.updateMatrix(); g.matrixWorld.copy(g.matrix); }
+  };
+  sync(null);
 
   // ---- backdrop: wall + floor
   const back = ctx.backdrop(ctx.track(new THREE.ShaderMaterial({ vertexShader: S.BACK_VS, fragmentShader: FH + S.BACK_FS, uniforms: { ...uni } })));
@@ -101,7 +110,7 @@ export function create(ctx) {
   // ---- columns (8)
   const lathe = []; for (const [r, y] of [[0.62, -2.05], [0.62, -1.9], [0.44, -1.78], [0.34, -1.6], [0.31, 0.5], [0.3, 1.6], [0.42, 1.75], [0.62, 1.88], [0.62, 2.05]]) lathe.push(new THREE.Vector2(r, y));
   const cg0 = new THREE.LatheGeometry(lathe, 20);
-  const CP = [[0.05, 0.58, -190, 0.3], [0.285, 0.46, -215, 0.24], [0.115, 0.4, -255, 0.22], [0.225, 0.74, -300, 0.17], [0.01, 0.78, -240, 0.2], [0.33, 0.7, -330, 0.13], [0.965, 0.6, -380, 0.15], [0.995, 0.4, -420, 0.13]];
+  const CP = [[0.56, 0.84, -330, 0.13], [0.955, 0.7, -215, 0.19], [0.66, 0.88, -380, 0.12], [0.985, 0.42, -240, 0.19], [0.72, 0.9, -420, 0.11], [0.94, 0.26, -300, 0.13], [0.975, 0.62, -380, 0.15], [0.52, 0.86, -440, 0.1]];
   const mkInst = (base, n, attrs) => { const g = new THREE.InstancedBufferGeometry(); g.index = base.index; for (const k in base.attributes) g.setAttribute(k, base.attributes[k]); g.instanceCount = n;
     for (const [name, arr] of Object.entries(attrs)) g.setAttribute(name, new THREE.InstancedBufferAttribute(arr, 4)); return ctx.track(g); };
   const cA = new Float32Array(32), cB = new Float32Array(32);
@@ -113,14 +122,14 @@ export function create(ctx) {
   const qg = new THREE.PlaneGeometry(1, 1, 1, 10); qg.translate(0, 0.5, 0);
   const wA = new Float32Array(96), wB = new Float32Array(96);
   for (let i = 0; i < 24; i++) {
-    const top = i % 2 === 0, z = -190 - rnd() * 130, sx = top ? 0.04 + rnd() * 0.92 : 0.02 + rnd() * 0.26, sy = top ? 0.8 + rnd() * 0.16 : 0.3 + rnd() * 0.4;
-    const w = at(sx, sy, z), size = (0.12 + rnd() * 0.1) * uph(z) * 1.25;
+    const top = i % 2 === 0, z = -190 - rnd() * 130, sx = top ? 0.5 + rnd() * 0.48 : 0.93 + rnd() * 0.06, sy = top ? 0.84 + rnd() * 0.12 : 0.2 + rnd() * 0.3;
+    const w = at(sx, sy, z), size = (0.09 + rnd() * 0.08) * uph(z) * 1.25;
     wA.set([lx(w.x), w.y, w.z, size], i * 4); wB.set([0.72, rnd(), i / 24, 11 + rnd() * 10], i * 4);
   }
   const wMesh = new THREE.Mesh(mkInst(qg, 24, { iA: wA, iB: wB }), mk(S.QUAD_VS, S.QUAD_FS, { uKind: { value: 0 }, uAtlas: { value: atl } })); wMesh.frustumCulled = false; wMesh.renderOrder = 2; root.add(wMesh);
   const pA = new Float32Array(40), pB = new Float32Array(40);
   for (let i = 0; i < 10; i++) {
-    const z = -230 - rnd() * 120, sx = i < 7 ? 0.9 + rnd() * 0.14 : 0.01 + rnd() * 0.08, w = at(sx, 0.17 + rnd() * 0.1, z);
+    const z = -230 - rnd() * 120, sx = 0.94 + rnd() * 0.1, w = at(sx, 0.17 + rnd() * 0.1, z);
     pA.set([lx(w.x), w.y, w.z, (0.36 + rnd() * 0.28) * uph(z)], i * 4); pB.set([1, rnd(), i / 10, 0], i * 4);
   }
   const pMesh = new THREE.Mesh(mkInst(qg, 10, { iA: pA, iB: pB }), mk(S.QUAD_VS, S.QUAD_FS, { uKind: { value: 1 }, uAtlas: { value: atl } })); pMesh.frustumCulled = false; pMesh.renderOrder = 3; root.add(pMesh);
@@ -128,7 +137,7 @@ export function create(ctx) {
   // ---- orbiting wire polyhedra (2 draws x 10)
   const polyMk = (geo, n, seed) => {
     const oA = new Float32Array(n * 4), oB = new Float32Array(n * 4);
-    for (let i = 0; i < n; i++) { const j = i + seed; oA.set([(85 + rnd() * 50), (0.35 + rnd() * 0.6) * (rnd() < 0.5 ? 1 : -1), rnd() * 6.28, rnd() * 3.1], i * 4); oB.set([(9 + rnd() * 9), rnd(), j / 20, rnd()], i * 4); }
+    for (let i = 0; i < n; i++) { const j = i + seed; oA.set([(30 + rnd() * 20), (0.35 + rnd() * 0.6) * (rnd() < 0.5 ? 1 : -1), rnd() * 6.28, rnd() * 3.1], i * 4); oB.set([(5 + rnd() * 5), rnd(), j / 20, rnd()], i * 4); }
     const m = new THREE.Mesh(mkInst(withBary(THREE, geo), n, { iO: oA, iP: oB }), mk(S.POLY_VS, S.POLY_FS, { uC: { value: bustC } }, { add: true })); m.frustumCulled = false; m.renderOrder = 4; root.add(m); return m;
   };
   const polyA = polyMk(new THREE.IcosahedronGeometry(1, 0), 10, 0), polyB = polyMk(new THREE.OctahedronGeometry(1.1, 0), 10, 10);
@@ -155,6 +164,7 @@ export function create(ctx) {
         if (st.mode === 'enter') { U.uBuild.value = p; U.uBreak.value = 0; U.uFloor.value = ease(p * 1.1); } else { U.uBuild.value = 1; U.uBreak.value = p; U.uFloor.value = 1 - ease(p * 1.1); }
         if (p >= 1) st.mode = st.mode === 'enter' ? 'live' : 'gone'; }
       else { U.uBuild.value = 1; U.uBreak.value = 0; U.uFloor.value = 1; }
+      sync(info && info.par);
       rotY.v += dt * 0.38 * sp_ * (1 + flare); bust.rotation.y = rotY.v; bust.position.y = bustC.y + Math.sin(ph * 0.7) * 3.2;
       if (info && info.par) U.uPar.value.set(info.par.x * 0.0008, 0);
     },
@@ -162,7 +172,7 @@ export function create(ctx) {
     enter(dur) { st.mode = 'enter'; st.t = 0; st.dur = Math.max(0.2, dur); },
     exit(dur) { st.mode = 'exit'; st.t = 0; st.dur = Math.max(0.2, dur); },
     ripple(o) {
-      let sx = 0.4; if (o && o.screen) sx = o.screen.x; else if (o) { v2.set(o.x || 0, 0, o.z || 0).project(cam); sx = Math.min(1, Math.max(0, v2.x * 0.5 + 0.5)); }
+      let sx = 0.7; if (o && o.screen) sx = o.screen.x; else if (o) { v2.set(o.x || 0, 0, o.z || 0).project(cam); sx = Math.min(1, Math.max(0, v2.x * 0.5 + 0.5)); }
       const s = o && o.strength != null ? o.strength : 1; ripAge = 0; U.uRip.value.set(sx, 0, 0.5 + 0.5 * s, 0);
       if (o && o.color && o.color.isColor) U.uRipCol.value.copy(o.color); else U.uRipCol.value.copy(ctx.accent2.value);
       flare = Math.max(flare, 0.4 + 0.6 * s); punch = Math.max(punch, s);
@@ -174,6 +184,7 @@ export function create(ctx) {
       pMesh.visible = v > 0; pMesh.geometry.instanceCount = v > 0 ? 10 : 0; stars.visible = v >= 2;
     },
     morphPoints(out, n) {
+      sync(null); const M = root.matrixWorld, V3 = new THREE.Vector3();
       const P = bg.attributes.position.array, nt = P.length / 9, cy = Math.cos(rotY.v), sy = Math.sin(rotY.v), s = bScale;
       for (let i = 0; i < n; i++) {
         const r = i / n; let x, y, z;
@@ -182,7 +193,7 @@ export function create(ctx) {
           x = bust.position.x + (lxp * cy + lzp * sy) * s; y = bust.position.y + lyp * s; z = bust.position.z + (-lxp * sy + lzp * cy) * s; }
         else if (r < 0.8) { const j = (Math.random() * 8 | 0) * 4; x = cA[j] + (Math.random() - 0.5) * 0.9 * cA[j + 3]; y = cA[j + 1] + (Math.random() - 0.5) * 4 * cA[j + 3]; z = cA[j + 2]; }
         else { const j = (Math.random() * 24 | 0) * 4; x = wA[j] + (Math.random() - 0.5) * wA[j + 3]; y = wA[j + 1] + Math.random() * wA[j + 3] * 0.7; z = wA[j + 2]; }
-        out[i * 3] = x + root.position.x; out[i * 3 + 1] = y; out[i * 3 + 2] = z;
+        V3.set(x, y, z).applyMatrix4(M); out[i * 3] = V3.x; out[i * 3 + 1] = V3.y; out[i * 3 + 2] = V3.z;
       }
       return true;
     },

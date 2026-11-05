@@ -48,6 +48,7 @@ export function createOverlay(root) {
     const b = pendingBeat; pendingBeat = null;
     return b && performance.now() - b.recv < 1500 ? b : null;
   }
+  let frameOverride = null, lastFrameLabel = '';  // flash label override (the 3D shows the flash's story, not the card's)
   function settle(host) {
     for (const a of host.getAnimations({ subtree: true })) {
       const it = a.effect?.getTiming?.().iterations;
@@ -144,7 +145,8 @@ export function createOverlay(root) {
       feeds(state);
       if (fresh) { const b = takeBeat(); swap(left, html, key, b); swap(strip, stripHtml, key, b); countUps(left, true); lastFreshAt = performance.now(); }
       else { left.innerHTML = html; strip.innerHTML = stripHtml; settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
-      frame.querySelector('.frame-lbl').textContent = label ? `LIVE 3D // ${label.toUpperCase()}` : '';
+      lastFrameLabel = label;
+      frame.querySelector('.frame-lbl').textContent = (frameOverride ?? label) ? `LIVE 3D // ${String(frameOverride ?? label).toUpperCase()}` : '';
       frame.classList.toggle('short', seg.id === 'top');
       scheduleFit(root);
     },
@@ -165,6 +167,12 @@ export function createOverlay(root) {
         };
         if (!tryFit(full) && b) tryFit(`<b>NEXT</b>${esc(a)}`);
       });
+    },
+    /** While something other than the card drives the 3D (a news flash), the frame label names that story. null restores. */
+    setFrameLabel(t) {
+      frameOverride = t || null;
+      const l = frameOverride ?? lastFrameLabel;
+      frame.querySelector('.frame-lbl').textContent = l ? `LIVE 3D // ${String(l).toUpperCase()}` : '';
     },
     setConnected(ok) { conn.hidden = !!ok; },
     get stageRect() {

@@ -1,21 +1,22 @@
+export const SIM_N = 384;
 // curlSwarm shaders: GPGPU sim (velocity + position), point draw, nebula layer, backdrop composite.
-// Sim space: 1 unit = 1/4 screen height, origin = attractor centre (screen 0.40, 0.72). uEdge = (xL, xR, yBot, yTop).
+// Sim space: 1 unit = 0.15 screen height, origin = attractor centre (screen 0.77, 0.72, upper right, clear of the left card and framing the hologram). uEdge = (xL, xR, yBot, yTop).
 
 export const SIM_COMMON = /* glsl */`
 uniform sampler2D tPos, tVel;
 uniform float uDt, uSpd, uMorph, uTA, uTB, uAsm, uScat, uInit, uLT, uKick;
 uniform mat3 uRot;
 uniform vec4 uImp, uEdge;
-const float SIMN = 256.0;
+const float SIMN = ${SIM_N}.0;
 float csH(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 `;
 
 // shared with the point vertex shader so class/life seeds agree
 export const SEEDS = /* glsl */`
 float csH2(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-// x: class (<.70 core, <.94 streamer, else comet)  y: life  z,w: misc
+// x: class (<.66 core, <.985 streamer, else comet)  y: life  z,w: misc
 vec4 seeds(vec2 id){ return vec4(csH2(id), csH2(id + 71.3), csH2(id + 143.9), csH2(id * 1.7 + 9.1)); }
-float lifeOf(vec4 s){ return s.x < 0.70 ? 1e4 : (s.x < 0.94 ? 6.0 + 8.0 * s.y : 3.5 + 3.0 * s.y); }
+float lifeOf(vec4 s){ return s.x < 0.66 ? 1e4 : (s.x < 0.985 ? 6.0 + 8.0 * s.y : 3.5 + 3.0 * s.y); }
 `;
 
 export const SIM_VEL = /* glsl */`
@@ -68,29 +69,32 @@ void main(){
   vec3 core = mix(cn * 0.6 - p * 0.35, fa + tether + cn * halo, aw);
   vec3 tgt = core;
   float resp = sd.z < 0.45 ? 8.0 : 28.0;
-  if (sd.x >= 0.70) {
+  if (sd.x >= 0.66) {
     float life = lifeOf(sd), age = P.w;
     // vortices peel off along the top band and travel right
     vec3 sw = vec3(0.0);
     for (int i = 0; i < 3; i++) {
       float fi = float(i);
       float ph = fract(uLT * 0.04 * uSpd + fi / 3.0);
-      vec2 c = vec2(mix(0.6, uEdge.y, ph), mix(uEdge.w - 0.32, uEdge.w - 0.12, fract(fi * 0.618)) + 0.08 * sin(uLT * 0.5 + fi * 2.0));
+      vec2 c = vec2(mix(0.4, -4.0, ph), mix(uEdge.w - 0.62, uEdge.w - 0.3, fract(fi * 0.618)) + 0.1 * sin(uLT * 0.5 + fi * 2.0));
       vec2 d = p.xy - c;
       float w = sin(ph * 3.14159) * (mod(fi, 2.0) < 0.5 ? 4.0 : -4.0);
       sw.xy += vec2(-d.y, d.x) * w * exp(-dot(d, d) / 0.09);
     }
-    if (sd.x < 0.94) {
-      float lane = step(0.5, sd.z);   // two wavy ribbons along the top band
-      float band = uEdge.w - 0.14 - 0.16 * lane - 0.09 * sin(p.x * 1.4 + uLT * 0.5 + lane * 2.4) + (fract(sd.z * 2.0) - 0.5) * 0.08;
-      vec3 wind = vec3(0.7 + 0.8 * sd.w, (band - p.y) * 1.4, -p.z * 0.5) + cn * 0.45 + sw;
-      tgt = mix(core, wind, smoothstep(0.22, 0.5, age / life) * aw);
-      resp = 2.6;
+    if (sd.x < 0.985) {
+      float lane = step(0.5, sd.z);   // lane 0: ribbon along the top flowing left; lane 1: ribbon down the right edge
+      float wob = sin(p.x * 1.6 + p.y * 1.2 + uLT * 0.6 + lane * 2.4), jit = (fract(sd.z * 7.0) - 0.5) * 0.34;
+      vec3 wind;
+      if (lane < 0.5) wind = vec3(-(1.1 + 1.2 * sd.w), (uEdge.w - 0.8 - 0.22 * wob + jit - p.y) * 1.8, -p.z * 0.5);
+      else wind = vec3((uEdge.y - 0.55 - 0.2 * wob + jit - p.x) * 1.8, -(0.9 + 1.0 * sd.w), -p.z * 0.5);
+      wind += cn * 0.55 + sw;
+      tgt = mix(core, wind, smoothstep(0.12, 0.4, age / life) * aw);
+      resp = 3.2;
     } else {
-      float band = mix(uEdge.w - 0.30, uEdge.w - 0.04, sd.z);
-      vec3 jet = vec3(2.6 + 2.2 * sd.w, (band - p.y) * 2.0, -p.z * 0.3) + cn * 0.35 + sw * 0.3;
+      float band = mix(uEdge.w - 1.0, uEdge.w - 0.3, sd.z);
+      vec3 jet = vec3(-(3.0 + 2.6 * sd.w), (band - p.y) * 2.0, -p.z * 0.3) + cn * 0.4 + sw * 0.3;
       tgt = mix(cn * 0.4, jet, aw);
-      resp = 3.0;
+      resp = 3.4;
     }
   }
   // exit: release toward a radial scatter with turbulence
@@ -118,15 +122,15 @@ void main(){
   vec3 p = P.xyz + V.xyz * uDt * uSpd;
   float age = P.w + uDt * uSpd;
   if (uScat < 0.001) {
-    bool gone = sd.x >= 0.70 && (age > lifeOf(sd) || p.x > uEdge.y + 0.4);
+    bool gone = sd.x >= 0.66 && (age > lifeOf(sd) || p.x > uEdge.y + 2.0 || p.x < uEdge.x - 0.4 || p.y < uEdge.z - 0.4);
     gone = gone || length(p) > 12.0;
     if (gone) {
-      if (sd.x < 0.94) {   // reborn on the attractor by stealing a random particle's position
+      if (sd.x < 0.985) {   // reborn on the attractor by stealing a random particle's position
         vec2 o = floor(vec2(h1, h2) * SIMN) + 0.5;
         p = texture2D(tPos, o / SIMN).xyz + (vec3(h1, h2, h3) - 0.5) * 0.06;
         if (length(p) > 2.0) p = (vec3(h1, h2, h3) - 0.5) * 1.2;
-      } else {             // comets enter from the left edge in the top band
-        p = vec3(uEdge.x - 0.3 - h1 * 1.5, mix(uEdge.w - 0.32, uEdge.w - 0.03, h2), (h3 - 0.5) * 1.5);
+      } else {             // comets enter from the right edge in the top band and streak left
+        p = vec3(uEdge.y + 0.3 + h1 * 1.5, mix(uEdge.w - 1.0, uEdge.w - 0.25, h2), (h3 - 0.5) * 1.5);
       }
       age = 0.0;
     }
@@ -136,20 +140,20 @@ void main(){
 
 export const PTS_VERT = /* glsl */`
 uniform sampler2D tPos, tVel;
-uniform vec3 uAnchor; uniform float uScale, uSize, uAsm, uScat; uniform vec4 uEdge; uniform vec2 uHolo;
+uniform vec3 uAnchor; uniform float uScale, uSize, uAsm, uScat; uniform vec4 uEdge; uniform vec2 uHolo, uVis;
 varying vec3 vCol; varying float vA; varying vec2 vDir; varying float vStr;
 void main(){
   vec4 P = texture2D(tPos, position.xy), V = texture2D(tVel, position.xy);
-  vec4 sd = seeds(floor(position.xy * 256.0));
+  vec4 sd = seeds(floor(position.xy * ${SIM_N}.0));
   vec3 vp = uAnchor + P.xyz * uScale;
   vec4 c0 = projectionMatrix * vec4(vp, 1.0);
-  vec4 c1 = projectionMatrix * vec4(vp + V.xyz * uScale * 0.08, 1.0);
+  vec4 c1 = projectionMatrix * vec4(vp + V.xyz * uScale * 0.16, 1.0);
   gl_Position = c0;
   vec2 s0 = c0.xy / c0.w, s1 = c1.xy / c1.w;
   vec2 dpx = (s1 - s0) * uRes * 0.5;
   float dl = length(dpx);
   vDir = dl > 1e-4 ? dpx / dl : vec2(1.0, 0.0);
-  vStr = clamp(dl / 6.0, 0.0, 1.0);
+  vStr = clamp(dl / 7.0, 0.0, 1.0);
   float sp = length(V.xyz);
   float spn = clamp(sp / 2.2, 0.0, 1.0);
   vec3 mag = mix(vec3(1.0, 0.16, 0.78), uAccent, 0.3);
@@ -157,24 +161,26 @@ void main(){
   vec3 amb = vec3(1.0, 0.62, 0.18);
   vec3 col = mix(mag, cya, smoothstep(0.08, 0.45, spn));
   col = mix(col, amb, smoothstep(0.55, 1.0, spn));
-  float a = (0.12 + 0.2 * spn) * (sd.z < 0.45 ? 1.0 : 0.6);
-  bool comet = sd.x >= 0.94, streamer = sd.x >= 0.70 && !comet;
-  if (sd.x >= 0.70) {
+  float a = (0.26 + 0.4 * spn) * (sd.z < 0.45 ? 1.0 : 0.7);
+  bool comet = sd.x >= 0.985, streamer = sd.x >= 0.66 && !comet;
+  float core = 0.0;   // white-hot ribbon core
+  if (sd.x >= 0.66) {
     float life = lifeOf(sd);
     a *= smoothstep(0.0, 0.6, P.w) * (1.0 - smoothstep(life - 1.5, life, P.w));
-    a *= 1.0 - smoothstep(uEdge.y - 1.6, uEdge.y + 0.2, P.x);   // evaporate at the right edge
+    // ribbons leave the visible right half: lane 0 fades past the left bound, lane 1 below the bottom bound
+    a *= sd.z < 0.5 || comet ? smoothstep(uVis.x - 1.8, uVis.x, P.x) : smoothstep(uVis.y - 1.4, uVis.y, P.y);
   }
-  if (comet) { col = mix(cya, vec3(0.8, 0.95, 1.0), 0.35); a = 0.9 * a + 0.35; }
-  if (streamer) a *= 0.6;
+  if (comet) { col = mix(cya, vec3(0.8, 0.95, 1.0), 0.5); a = 0.9 * a + 0.4; core = 0.6; }
+  if (streamer) { a *= 1.15; col = mix(sd.z < 0.5 ? cya : mag, amb, 0.25 * spn); core = 0.1 + 0.2 * sd.y; }
   // thin the flow over the hologram
   vec2 sc = s0 * 0.5 + 0.5;
   vec2 hd = (sc - uHolo) / vec2(0.34, 0.31);
   float hf = 1.0 - 0.72 * smoothstep(1.05, 0.35, length(hd));
   float dust = mix(0.45, 1.0, uAsm);
-  float sz = mix(1.5, 3.0, sd.y * sd.y) * (comet ? 1.25 : 1.0) * dust * hf * (1.0 - 0.4 * uScat);
+  float sz = mix(1.4, 2.6, sd.y * sd.y) * (comet ? 3.4 : streamer ? 1.35 : 1.45) * dust * hf * (1.0 - 0.4 * uScat);
   gl_PointSize = clamp(uSize * sz * uRes.y / 1080.0, 1.0, 48.0);
   vA = a * hf * dust * (1.0 + 0.5 * uPulse);
-  vCol = col * (0.85 + 0.6 * spn);
+  vCol = mix(col, vec3(1.0, 0.97, 1.0), core * smoothstep(0.1, 0.6, spn + 0.25)) * (0.85 + 0.7 * spn);
 }`;
 
 export const PTS_FRAG = /* glsl */`
@@ -182,7 +188,7 @@ varying vec3 vCol; varying float vA; varying vec2 vDir; varying float vStr;
 void main(){
   vec2 c = gl_PointCoord - 0.5; c.y = -c.y;
   float al = dot(c, vDir); vec2 pe = c - vDir * al;
-  float m = exp(-dot(pe, pe) * mix(14.0, 40.0, vStr) - al * al * mix(14.0, 3.5, vStr));
+  float m = exp(-dot(pe, pe) * mix(14.0, 46.0, vStr) - al * al * mix(14.0, 5.5, vStr));
   vec3 col = vCol * m * vA;
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
@@ -203,9 +209,9 @@ vec3 nebula(vec2 uv){
   col = mix(col, uAccent, 0.18) * vec3(0.9, 0.55, 1.0);
   float dens = smoothstep(0.32, 0.85, n) * (0.5 + q.y);
   // lives around the attractor and along the top band; the hologram area stays near black
-  vec2 d = (uv - vec2(0.40, 0.72)) * vec2(uAsp.x, 1.0);
-  float mask = 0.25 + 1.1 * exp(-dot(d, d) * 3.2) + 0.5 * smoothstep(0.62, 1.0, uv.y);
-  return col * dens * mask * 0.085;
+  vec2 d = (uv - vec2(0.77, 0.72)) * vec2(uAsp.x, 1.0);
+  float mask = 0.2 + 1.3 * exp(-dot(d, d) * 3.4) + 0.5 * smoothstep(0.62, 1.0, uv.y) + 0.4 * smoothstep(0.7, 1.0, uv.x) * smoothstep(0.3, 0.7, uv.y);
+  return col * dens * mask * 0.1;
 }`;
 
 export const NEB_FRAG = /* glsl */`varying vec2 vUv; void main(){ gl_FragColor = vec4(nebula(vUv), 1.0); }`;

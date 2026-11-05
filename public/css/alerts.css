@@ -22,9 +22,12 @@
 .al-stage { position: relative; width: 88vw; display: flex; flex-direction: column; align-items: center; gap: 2.4vh; }
 .al-kick { font: 900 max(var(--min), min(2.6vw, 5vh)) var(--font-display); letter-spacing: .3em; color: #fff; padding: 1vh 2.4vw 1vh 3vw; background: var(--breaking);
   clip-path: polygon(1.2vw 0, 100% 0, calc(100% - 1.2vw) 100%, 0 100%); box-shadow: 0 0 1.5vh var(--breaking); white-space: nowrap;
-  animation: al-kick .6s cubic-bezier(.2,1.4,.3,1) .15s both, al-blink .8s steps(2) .8s 4; }
+  animation: al-kick .6s cubic-bezier(.2,1.4,.3,1) .15s both; position: relative; }
+/* blink lives on an overlay, not a second filter animation on the same element: two animations on `filter` crash WebKit's
+   CoreAnimation (CAPresentationModifier: value has more elements than initial value) */
+.al-kick::after { content: ''; position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; animation: al-blink .8s steps(2) .8s 4; }
 @keyframes al-kick { from { transform: scale(2.4) translateY(-4vh); opacity: 0; filter: blur(8px); } to { transform: none; opacity: 1; filter: none; } }
-@keyframes al-blink { 50% { filter: brightness(1.25); } }
+@keyframes al-blink { 50% { opacity: .22; } }
 .al-title { width: 100%; max-height: 26vh; padding-bottom: .8vh; box-sizing: border-box; overflow: hidden; font: 900 max(var(--min), min(4.6vw, 9vh))/1.16 var(--font-display); /* 1.05 clipped Orbitron's last line */ text-transform: uppercase; color: #fff;
   text-shadow: 0 0 .6vh var(--ag), 0 .3vh 0 rgba(0,0,0,.9); overflow-wrap: break-word; animation: al-title .7s cubic-bezier(.2,.9,.2,1) .3s both; }
 @keyframes al-title { from { transform: scale(1.2) skewX(-12deg); opacity: 0; filter: blur(10px); } to { transform: none; opacity: 1; filter: none; } }

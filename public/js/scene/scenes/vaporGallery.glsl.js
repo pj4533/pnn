@@ -24,7 +24,7 @@ void main(){
   float st=step(.985,sh)*step(H+.03,q.y)*(.4+.6*pow(.5+.5*sin(uP*(1.+sh*3.)+sh*60.),2.));
   wall+=vec3(1.,.8,1.)*st*.9*smoothstep(.5,.9,q.y);
   // halftone moon + dashed neon ring
-  vec2 mp=(q-vec2(.19-uPar.x*.5,.64))*vec2(asp,1.); float md=length(mp);
+  vec2 mp=(q-vec2(.68-uPar.x*.5,.74))*vec2(asp,1.)*1.2; float md=length(mp);
   float rr=.5*(.25+.75*clamp(.5+mp.y/.42,0.,1.));
   float dots=smoothstep(rr+.12,rr-.12,length(fract(mp*58.)-.5));
   wall=mix(wall,vec3(.46,.17,.34)*(.5+.5*dots),smoothstep(.215,.205,md)*.8);
@@ -48,7 +48,7 @@ void main(){
     }
     vec3 hz=vec3(.34,.17,.16);
     fc=mix(fc,hz*.8,pow(1.-clamp(fy,0.,1.),2.)*.55);
-    float streak=exp(-pow((q.x-.19)/(.02+.09*(1.-fy)+.01*sin(fy*30.-uP*2.)),2.))*smoothstep(0.,.5,fy)*(1.-smoothstep(.5,1.,fy));
+    float streak=exp(-pow((q.x-.68)/(.02+.09*(1.-fy)+.01*sin(fy*30.-uP*2.)),2.))*smoothstep(0.,.5,fy)*(1.-smoothstep(.5,1.,fy));
     fc+=vec3(.5,.2,.4)*streak*(.5+.5*chk)*.7;
     // ripple ring across the floor
     float cx=(uRip.x-.5)*asp*(1./(H-.13)); float d=length(vec2(xw-cx,(t-1./(H-.13))*.9)); float R=uRip.y*7.;
@@ -106,11 +106,11 @@ void main(){
   p=R*p; n=R*n;
   vec3 c=iA.xyz; c.y+=sin(uP*.55+ph)*3.5+(1.-vbounce(lb))*(260.)+lx*lx*320.;
   vL=lb*(1.-lx); vAl=lb*(1.-smoothstep(.55,1.,lx));
-  vec3 w=c+p; vW=w; vN=n; vUv=uv; gl_Position=projectionMatrix*viewMatrix*vec4(w,1.);
+  vec3 w=c+p; vW=w; vN=n; vUv=uv; gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(w,1.);
 }`;
 export const COL_FS = `varying vec3 vN; varying vec3 vW; varying vec2 vUv; varying float vL; varying float vAl;
 void main(){
-  vec3 N=normalize(vN); vec3 V=normalize(cameraPosition-vW);
+  vec3 N=normalize(vN); vec3 V=normalize(-vW);
   float fl=.55+.45*cos(vUv.x*6.28318*14.); float nz=vnoise(vW*.045);
   float vein=pow(1.-abs(sin((vUv.y*3.+nz*5.)*3.14159)),6.);
   vec3 base=mix(vec3(.82,.72,.88),vec3(.95,.8,.82),nz)*(.86+.14*fl)-vein*.12;
@@ -136,7 +136,7 @@ void main(){
     float sw=sin(uP*.9+iB.y*6.28)*.6+sin(uP*1.7+iB.y*3.)*.4; e=lb*(1.-lx*.9); vX=vec4(sw,iB.y,e,0.);
     p.x*=sz.x*.9; p.y=q.y*sz.y*e*(1.-lx*.5); p.x+=sw*q.y*q.y*sz.y*.1*e; p.x+=lx*q.y*q.y*sz.y*.9*(iB.y-.5)*2.;
   }
-  vec3 w=c+vec3(p.xy,0.); gl_Position=projectionMatrix*viewMatrix*vec4(w,1.);
+  vec3 w=c+vec3(p.xy,0.); gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(w,1.);
 }`;
 export const QUAD_FS = `uniform float uKind; uniform sampler2D uAtlas; varying vec2 vUv; varying vec4 vX;
 float frondField(vec2 p,float sw){ float leaf=0.;
@@ -177,7 +177,7 @@ void main(){
   vec3 p=vrot(ax,uP*(.4+iP.y*.8)+iP.y*20.)*position*s;
   vec3 w=uC+b+p; w.y+=sin(uP*.5+iO.z*3.)*3.; vB=aBary; vAl=lb*(1.-lx);
   float cs=iP.w; vCol=cs<.25?uAccent:(cs<.5?uAccent2:(cs<.75?vec3(.35,1.,.95):vec3(1.,.8,.4)));
-  gl_Position=projectionMatrix*viewMatrix*vec4(w,1.);
+  gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(w,1.);
 }`;
 export const POLY_FS = `varying vec3 vB; varying vec3 vCol; varying float vAl;
 void main(){ vec3 dv=fwidth(vB); vec3 e3=smoothstep(vec3(0.),dv*1.5,vB); float edge=1.-min(e3.x,min(e3.y,e3.z));
@@ -191,7 +191,7 @@ void main(){
   p.xy=ctr+(p.xy-ctr)*(.15+.85*smoothstep(0.,1.,lb))*(1.+lx*lx*3.);
   float tw=pow(.5+.5*sin(uP*(1.5+aS.w*4.)+aS.y*40.),3.); vTw=tw; vK=aS.x;
   vCol=vpal(aS.y*.3+.85)*.5+.5;
-  gl_Position=projectionMatrix*viewMatrix*vec4(p,1.);
+  gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(p,1.);
   gl_PointSize=min(48.,aS.x*(1.+tw*.8)*uRes.y/1080.*lb*(1.-lx));
 }`;
 export const STAR_FS = `varying float vTw; varying float vK; varying vec3 vCol;

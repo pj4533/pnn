@@ -1,14 +1,16 @@
-// curlSwarm: a 65k-particle GPGPU galaxy flowing in analytic curl noise around a morphing strange attractor
-// (Lorenz -> Aizawa -> Thomas every 25 s) in the upper-left sky. Streamers peel off into vortices along the
-// top band and evaporate at the right edge; comets streak across the top; a dim domain-warped nebula sits behind.
-// Draws: 2 sim passes (256² HalfFloat ping-pong) + 1 points + 1 nebula layer + 1 backdrop = 5.
+// curlSwarm: a 147k-particle GPGPU galaxy flowing in analytic curl noise around a morphing strange attractor
+// (Lorenz -> Aizawa -> Thomas every 25 s) in the upper-right sky, behind and around the hologram (the left ~47% is an
+// opaque card). Bright ribbons peel off it: one flows left along the top, one runs down the right edge; comets streak
+// left across the top; a dim domain-warped nebula sits behind.
+// Draws: 2 sim passes (384² HalfFloat ping-pong) + 1 points + 1 nebula layer + 1 backdrop = 5.
 import * as THREE from '../../../vendor/three/three.module.js';
-import { SIM_COMMON, SEEDS, SIM_VEL, SIM_POS, PTS_VERT, PTS_FRAG, FS_VERT, NEB, NEB_FRAG, BACK_FRAG } from './curlSwarm.glsl.js';
+import { SIM_N, SIM_COMMON, SEEDS, SIM_VEL, SIM_POS, PTS_VERT, PTS_FRAG, FS_VERT, NEB, NEB_FRAG, BACK_FRAG } from './curlSwarm.glsl.js';
 
-const N = 256;
-const COUNTS = [16384, 32768, 65536];
+const N = SIM_N;
+const COUNTS = [49152, 98304, N * N];
 const CYCLE = 25, MORPH = 6, ORDER = [0, 1, 2];
-const ANCHOR_NDC = [-0.20, 0.44];   // screen (0.40, 0.72): clear of the opaque left card
+const ANCHOR_NDC = [0.54, 0.44];    // screen (0.77, 0.72): upper right, behind/around the hologram, clear of the opaque left card
+const VIS_L = -0.06, VIS_B = -0.30;  // ribbons fade out past this NDC x (screen 0.47) and y (screen 0.35)
 const DEPTH = 320;
 const HOLO = [0.64, 0.615];         // hologram centre, bottom-up screen
 
@@ -85,7 +87,7 @@ export function create(ctx) {
   pGeo.setAttribute('position', new THREE.BufferAttribute(ref, 3));
   const ptsU = {
     ...common(), tPos: { value: pos[0].texture }, tVel: { value: vel[0].texture }, uAnchor: { value: new THREE.Vector3(0, 0, -DEPTH) },
-    uScale: { value: 40 }, uSize: { value: 1 }, uAsm: simU.uAsm, uScat: simU.uScat, uEdge: simU.uEdge, uHolo: { value: new THREE.Vector2(HOLO[0], HOLO[1]) },
+    uScale: { value: 40 }, uSize: { value: 1 }, uAsm: simU.uAsm, uScat: simU.uScat, uEdge: simU.uEdge, uHolo: { value: new THREE.Vector2(HOLO[0], HOLO[1]) }, uVis: { value: new THREE.Vector2(-4, -3) },
   };
   const ptsMat = track(new THREE.ShaderMaterial({
     uniforms: ptsU, vertexShader: VPRE + SEEDS + PTS_VERT, fragmentShader: PRE + PTS_FRAG,
@@ -103,7 +105,7 @@ export function create(ctx) {
   const ringCol = new THREE.Color(1, 0.3, 0.9);
   const backU = {
     ...nebU, tLayer: { value: layer ? layer.texture : null }, uHasLayer: { value: layer ? 1 : 0 },
-    uRing: { value: new THREE.Vector4(0.40, 0.72, 9, 0) }, uRingCol: { value: ringCol },
+    uRing: { value: new THREE.Vector4(0.77, 0.72, 9, 0) }, uRingCol: { value: ringCol },
   };
   const backMat = track(new THREE.ShaderMaterial({ uniforms: backU, vertexShader: FS_VERT, fragmentShader: PRE + NEB + BACK_FRAG, depthTest: false, depthWrite: false }));
   if (ctx.backdrop) ctx.backdrop(backMat);
@@ -122,9 +124,10 @@ export function create(ctx) {
   function frame(par) {
     viewAt(ANCHOR_NDC[0], ANCHOR_NDC[1], _a);
     viewAt(-1, -1, _b); viewAt(1, 1, _c);
-    const sc = (_c.y - _b.y) * 0.16 * (1 + 0.04 * Math.sin((ctx.localTime?.value || 0) * 0.37));
+    const sc = (_c.y - _b.y) * 0.15 * (1 + 0.04 * Math.sin((ctx.localTime?.value || 0) * 0.37));
     ptsU.uScale.value = sc;
     edge.set((_b.x - _a.x) / sc, (_c.x - _a.x) / sc, (_b.y - _a.y) / sc, (_c.y - _a.y) / sc);
+    ptsU.uVis.value.set((viewAt(VIS_L, 0, _v).x - _a.x) / sc, (viewAt(0, VIS_B, _v).y - _a.y) / sc);
     const px = par ? Math.max(-14, Math.min(14, par.x * 0.025)) : 0, py = par ? Math.max(-6, Math.min(6, par.y * 0.025)) : 0;
     anchor.set(_a.x - px, _a.y - py, _a.z);
     asp.x = (_c.x - _b.x) / (_c.y - _b.y);
@@ -134,7 +137,7 @@ export function create(ctx) {
     const k = Math.floor(lt / CYCLE), ph = lt - k * CYCLE;
     simU.uTA.value = ORDER[k % 3]; simU.uTB.value = ORDER[(k + 1) % 3];
     simU.uMorph.value = ease((ph - (CYCLE - MORPH)) / MORPH);
-    rotE.set(0.32 + 0.12 * Math.sin(lt * 0.05), lt * 0.07, 0.08 * Math.sin(lt * 0.031));
+    rotE.set(0.32 + 0.12 * Math.sin(lt * 0.05), lt * 0.11, 0.08 * Math.sin(lt * 0.031));
     simU.uRot.value.setFromMatrix4(rotM4.makeRotationFromEuler(rotE));
   }
 
