@@ -4,6 +4,7 @@
 // so contracts are roughly dollars of notional; we use it as the USD figure).
 import { getJSON } from '../http.mjs';
 import config from '../config.mjs';
+import { stripRulesText } from '../editorial/text.mjs';
 
 const BASE = 'https://api.elections.kalshi.com/trade-api/v2';
 const PAGE = 200;
@@ -26,7 +27,7 @@ const lc = (s) => String(s).trim().toLowerCase();
 const clean = (s) => String(s || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim(); // Kalshi titles carry markdown bold
 // Kalshi's title templates produce broken grammar ("Will Democratics win ...", "Will Democratic win the House race
 // for NC-03?", "Will Pete Hegseth leaves Secretary of Defense in before 2027?"). Fix the grammar only, never the meaning.
-const fixTitle = (s) => clean(s)
+const fixTitle = (s) => stripRulesText(clean(s))
   .replace(/\bDemocratics\b/g, 'Democrats')
   .replace(/^Will Democratic win\b/, 'Will the Democrat win')
   .replace(/^Will Republican win\b/, 'Will the Republican win')
@@ -98,7 +99,7 @@ export function parseKalshiMarkets(json, seriesByTicker = {}, now = new Date()) 
     // An independent group market often carries only the event's wh-question as its title, with the answer in the
     // sub-title ("Who will run for the Democratic presidential nomination in 2028?" + "Gavin Newsom"): make it the
     // yes/no question it is ("Will Gavin Newsom run for ...?").
-    const sub = clean(m.yes_sub_title);
+    const sub = stripRulesText(clean(m.yes_sub_title));
     const wh = independent && sub && String(m.title || '').match(/^Who will (.+?)\??$/i);
     if (wh) m = { ...m, title: `Will ${sub} ${wh[1]}?` };
     const strike = ladder ? num(/^less/.test(m.strike_type) ? m.cap_strike : m.floor_strike) : null;
@@ -106,7 +107,7 @@ export function parseKalshiMarkets(json, seriesByTicker = {}, now = new Date()) 
       id: `ks:${m.ticker}`,
       source: 'kalshi',
       title: fixTitle(m.title || ev?.title || ''),
-      outcome: multi ? (clean(m.yes_sub_title) || null) : null,
+      outcome: multi ? (stripRulesText(clean(m.yes_sub_title)) || null) : null,
       eventId: independent ? `ks:${m.ticker}` : `ks:${eventTicker}`,
       // Independent group markets ("Who will leave the Trump administration?") air as their own yes/no story, so
       // their own question is the event for matching and display.

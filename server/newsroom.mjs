@@ -52,6 +52,52 @@ const ARCHIVE_HOURS = 72, ARCHIVE_MAX = 20000;
 const THEME = { elections: 'politics', politics: 'politics', geopolitics: 'world', world: 'world', economy: 'economy', courts: 'courts',
   tech: 'tech', science: 'science', health: 'health', culture: 'culture', weather: 'weather' };
 
+// Story of the Day loose matching (module scope so tests can reach it).
+const GENERIC = new Set(['head', 'chief', 'official', 'officials', 'loss', 'lose', 'win', 'rise', 'fall', 'begin', 'control', 'flip', 'say', 'new', 'plan', 'make', 'take', 'after', 'first', 'big',
+  'top', 'high', 'low', 'back', 'more', 'over', 'amid', 'key', 'race', 'vote', 'result', 'day', 'week', 'year', 'news', 'report', 'live', 'update',
+  'what', 'how', 'why', 'who', 'says', 'set', 'get', 'could', 'would', 'still', 'next', 'end', 'state', 'us', 'america', 'american']);
+const EXPAND = {
+  congress: ['house', 'senate', 'midterm', 'congress'], midterm: ['house', 'senate', 'congress', 'midterm'], senate: ['senate', 'midterm'], house: ['house', 'midterm'],
+  democrat: ['democrat', 'democratic', 'dem'], democratic: ['democrat', 'democratic'], republican: ['republican', 'gop'], gop: ['republican', 'gop'],
+  fed: ['fed', 'fomc', 'powell', 'rate'], powell: ['fed', 'powell'], inflation: ['inflation', 'cpi'], cpi: ['inflation', 'cpi'],
+  jobs: ['jobs', 'payroll', 'unemployment'], tariff: ['tariff', 'trade'], ai: ['ai', 'openai', 'anthropic'],
+};
+// Context words say WHERE a story sits (party, chamber, election), never WHAT it is about. "Head of DOJ Civil Rights Division
+// resigns after GOP midterms loss" shares "GOP" + "midterms" with every House race, and those two alone pulled "Republican
+// Eli Crane in AZ-02" into a RESIGNS Story of the Day (2026-11-05). A loose match needs >= 2 key hits, at least one of them a
+// subject word matched literally (never through EXPAND); a cluster with no subject word gets no loose stories.
+const CONTEXT = new Set(['republican', 'republicans', 'gop', 'democrat', 'democrats', 'democratic', 'dem', 'dems', 'house', 'senate',
+  'congress', 'congressional', 'midterm', 'midterms', 'election', 'elections', 'primary', 'governor', 'party', 'trump', 'administration',
+  'white', 'federal', 'national', 'government', 'poll', 'polls', 'voter', 'voters', 'seat', 'seats', 'district']);
+/** The cluster's key words (consensus, not generic) and its subject words: the strongest keys that are not context (weight
+ *  >= 0.7 of the top one), so "Elon Musk's Tesla and SpaceX lose $420B in market cap" is about Elon Musk, not "market cap". */
+export function clusterKeys(cluster) {
+  let a;
+  try { a = analyzeCluster(cluster); } catch { return { keys: [], subject: [] }; }
+  const kw = [...a.tw.entries()].filter(([k, w]) => w >= 0.34 && k.length > 2 && !GENERIC.has(k) && !/^\d+$/.test(k));
+  const sw = kw.filter(([k]) => !CONTEXT.has(k)), top = Math.max(0, ...sw.map(([, w]) => w));
+  return { keys: kw.map(([k]) => k), subject: sw.filter(([, w]) => w >= 0.7 * top - 1e-9).map(([k]) => k) };
+}
+const storyTokens = (st) => tokenSet([st.eventTitle, st.lead?.title, ...(st.markets || []).map((m) => m.outcome || '')].filter(Boolean).join(' '));
+/** Is the story about the cluster's subject: does its text carry >= 1 subject word (or a close synonym from EXPAND)? */
+export function aboutSubject(st, subject) {
+  const tok = storyTokens(st);
+  return subject.some((k) => (EXPAND[k] || [k]).some((x) => tok.has(x)));
+}
+/** Every aired story that shares >= 2 of the cluster's key words, >= 1 of them a subject word. Exported for tests. */
+export function looseStories(cluster, pool) {
+  const { keys, subject } = clusterKeys(cluster);
+  if (keys.length < 2 || !subject.length) return [];
+  const out = [];
+  for (const st of pool) {
+    const tok = storyTokens(st);
+    const hits = keys.filter((k) => (EXPAND[k] || [k]).some((x) => tok.has(x))).length;
+    if (hits >= 2 && aboutSubject(st, subject)) out.push(st);
+  }
+  // A cluster that touches a large share of the whole board is generic, not a topic.
+  return out.length > Math.max(12, pool.length * 0.3) ? [] : out;
+}
+
 export function startNewsroom(store, config, { sim = false, getMarkets, getAliases, rebuild } = {}) {
   const F = { retryEveryMin: 2, retryForMin: 30, dupJaccard: 0.5, dupHours: 6, storyFlashCooldownMin: 90,
     sotdEveryMin: 5, sotdMinStories: 3, sotdMinScore: 9, sotdMaxRows: 8, sotdKeepHours: 12, marksMax: 6,
@@ -298,29 +344,6 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     for (const st of [...(s.stories || []), ...(s.desks || []).flatMap((d) => d.stories || [])]) if (st?.id && !seen.has(st.id)) { seen.add(st.id); out.push(st); }
     return out;
   };
-  const GENERIC = new Set(['win', 'rise', 'fall', 'begin', 'control', 'flip', 'say', 'new', 'plan', 'make', 'take', 'after', 'first', 'big',
-    'top', 'high', 'low', 'back', 'more', 'over', 'amid', 'key', 'race', 'vote', 'result', 'day', 'week', 'year', 'news', 'report', 'live', 'update',
-    'what', 'how', 'why', 'who', 'says', 'set', 'get', 'could', 'would', 'still', 'next', 'end', 'state', 'us', 'america', 'american']);
-  const EXPAND = {
-    congress: ['house', 'senate', 'midterm', 'congress'], midterm: ['house', 'senate', 'congress', 'midterm'], senate: ['senate', 'midterm'], house: ['house', 'midterm'],
-    democrat: ['democrat', 'democratic', 'dem'], democratic: ['democrat', 'democratic'], republican: ['republican', 'gop'], gop: ['republican', 'gop'],
-    fed: ['fed', 'fomc', 'powell', 'rate'], powell: ['fed', 'powell'], inflation: ['inflation', 'cpi'], cpi: ['inflation', 'cpi'],
-    jobs: ['jobs', 'payroll', 'unemployment'], tariff: ['tariff', 'trade'], ai: ['ai', 'openai', 'anthropic'],
-  };
-  function looseStories(cluster, pool) {
-    let a;
-    try { a = analyzeCluster(cluster); } catch { return []; }
-    const keys = [...a.tw.entries()].filter(([k, w]) => w >= 0.34 && k.length > 2 && !GENERIC.has(k) && !/^\d+$/.test(k)).map(([k]) => k);
-    if (keys.length < 2) return [];
-    const out = [];
-    for (const st of pool) {
-      const tok = tokenSet([st.eventTitle, st.lead?.title, ...(st.markets || []).map((m) => m.outcome || '')].filter(Boolean).join(' '));
-      const hits = keys.filter((k) => (EXPAND[k] || [k]).some((x) => tok.has(x))).length;
-      if (hits >= 2) out.push(st);
-    }
-    // A cluster that touches a large share of the whole board is generic, not a topic.
-    return out.length > Math.max(12, pool.length * 0.3) ? [] : out;
-  }
   const deadRow = (m) => !m || ((m.yesPrice < 0.03 || m.yesPrice > 0.97) && Math.abs(m.change1d || 0) < 0.03);
   let sotdRunning = false;
   async function refreshSotd(simClusters = null) {
@@ -356,7 +379,10 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
         // The flash matcher is strict (one best market); a Story of the Day is a topic: also take every aired story
         // that shares >= 2 of the cluster's (expanded) key words.
         for (const st of looseStories(c, pool)) if (!stories.has(st.id) && !SG.has(st.category)) { addMark(st.id, c); stories.set(st.id, { st, m: st.lead }); }
-        for (const [id, x] of stories) if (deadRow(x.m)) stories.delete(id);
+        // every row is about the headline's subject (2026-11-05: a "DOJ civil rights chief resigns after GOP midterms loss" Story of
+        // the Day carried House races through "GOP" + "midterms"): the matcher's rows too, not just the loose ones
+        const { subject } = clusterKeys(c);
+        for (const [id, x] of stories) if (deadRow(x.m) || !aboutSubject(x.st, subject)) stories.delete(id);
         if (stories.size < F.sotdMinStories) continue;
         const outlets = c.outlets?.length || c.independentOutlets || 1;
         const score = stories.size * 10 + outlets;

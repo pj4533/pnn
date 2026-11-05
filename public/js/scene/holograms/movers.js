@@ -134,7 +134,7 @@ export function createMovers(ctx, markets) {
       const key = `${Math.round(r.pts * e)}|${r.now == null ? '' : Math.round((r.prev + (r.now - r.prev) * e) * 100)}`;
       if (key !== r.last) {
         r.last = key;
-        r.chip.set(`${r.up ? '▲' : '▼'} ${Math.round(r.pts * e)} PTS`, r.now == null ? null : `NOW ${Math.round((r.prev + (r.now - r.prev) * e) * 100)}%`);
+        r.chip.set(`${r.up ? '▲' : '▼'} ${Math.round(r.pts * e)} ${Math.round(r.pts * e) === 1 ? 'PT' : 'PTS'}`, r.now == null ? null : `NOW ${Math.round((r.prev + (r.now - r.prev) * e) * 100)}%`);
       }
       r.chip.sprite.position.x = r.bx + len + 0.6;
       r.chip.bright = clamp01((ts - r.t0) * 5);

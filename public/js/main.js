@@ -128,7 +128,7 @@ connect({
 });
 
 // Dev hooks for tests and the console.
-window.__pnn = { fitAll, fitReport, director, alerts, pops, get airLog() { return director.airLog; }, flashes, chyron, fixture: FIXTURE, get state() { return latest; }, get sceneLoaded() { return !!sceneImpl; } };
+window.__pnn = { fitAll, fitReport, director, overlay, alerts, pops, get airLog() { return director.airLog; }, flashes, chyron, fixture: FIXTURE, get state() { return latest; }, get sceneLoaded() { return !!sceneImpl; } };
 
 // Heartbeat so the server log shows the screen is alive.
 let frames = 0; (function f() { frames++; requestAnimationFrame(f); })();

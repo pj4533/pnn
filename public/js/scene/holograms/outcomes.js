@@ -164,7 +164,7 @@ export function createOutcomes(ctx, story, opts = {}) {
     // the bracket's arrowhead mesh is for the leaderboard only: the column board's bracket label already starts with the same ▲/▼ glyph (they read as a double ▲ side by side)
     if (horiz) { swHead = new THREE.Mesh(new THREE.CircleGeometry(0.5, 3), holo.mat(dcol, { flat: 1, glow: 2, alpha: 1, side: THREE.DoubleSide, depthWrite: false })); swHead.rotation.z = up ? 0 : Math.PI; swHead.visible = false; root.add(swHead); }
     if (!horiz) {
-      brLbl = holo.label(`${up ? '▲' : '▼'} ${Math.abs(Math.round(feat.d * 100))} PTS`, { w: 384, h: 96, height: 1.7, font: '700 76px Rajdhani', color: dc, glow: dc, align: 'left' });
+      brLbl = holo.label(`${up ? '▲' : '▼'} ${Math.abs(Math.round(feat.d * 100))} ${Math.abs(Math.round(feat.d * 100)) === 1 ? 'PT' : 'PTS'}`, { w: 384, h: 96, height: 1.7, font: '700 76px Rajdhani', color: dc, glow: dc, align: 'left' });
       brLbl.sprite.position.z = 0.7; brLbl.bright = 0;
     }
     // pulsing gold ring on the feature bar when it is not the leader
@@ -182,7 +182,7 @@ export function createOutcomes(ctx, story, opts = {}) {
   if (sw && fb && Math.abs(feat.d) >= 0.005) {
     const up = feat.d > 0, dcol = up ? GREEN : RED, flipped = !!sw.flipped, nP = Math.round(Math.abs(feat.d) * 100);
     const shapeTxt = sw.shape === 'longshot' ? 'LONGSHOT SURGES' : sw.shape === 'slipping' ? 'FAVORITE SLIPPING' : up ? 'BIG JUMP' : 'BIG DROP';
-    const bMain = flipped ? 'FLIPPED' : shapeTxt, bSub = flipped ? (sw.shape === 'swing' ? 'CROSSED 50%' : shapeTxt) : `${nP} PTS ${sw.window === '1h' ? 'IN AN HOUR' : 'IN 24 HOURS'}`;
+    const bMain = flipped ? 'FLIPPED' : shapeTxt, bSub = flipped ? (sw.shape === 'swing' ? 'CROSSED 50%' : shapeTxt) : `${nP} ${nP === 1 ? 'PT' : 'PTS'} ${sw.window === '1h' ? 'IN AN HOUR' : 'IN 24 HOURS'}`;
     let bx = 0, by = 0, bh = 2.2, ok = true;
     if (horiz) { bx = X0 + LEN * 0.8; by = ROW0; ok = items[n - 1].p / AX < 0.5; bh = 1.9; }
     else if (n >= 2) { bx = cross(items[1]); by = LEN + 2.0; bh = Math.min(2.2, (Math.abs(cross(items[0]) - cross(items[1])) - T - 0.2) / 3.2); }

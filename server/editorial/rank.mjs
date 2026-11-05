@@ -515,6 +515,7 @@ function qualifies(s, now) {
 }
 
 // Sports, video games and esports share one small board allowance (user, 2026-11-05: "don't overdo it").
+export const MOVER_LABEL_MAX = 80;
 export const SPORTS_GAMES = new Set(['sports', 'games', 'esports']);
 // News gate build 2026-11-05: caps come from config.limits / config.movingFirst (defaults here so tests and SIM work).
 const SG_BOARD_MAX = 4;
@@ -1032,6 +1033,12 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     moverSeen.add(m.storyId);
     const st = storyById.get(m.storyId);
     if (newsStats.gated && !st?.news?.length && !isMF(st)) continue;   // a mover card carries its story's headline (or MOVING FIRST)
+    // a ticker name is a short subject: a label that still reads as a rules sentence falls back to the story's short title, else drops
+    if (String(m.label || '').length > MOVER_LABEL_MAX || /\b(defined as|as defined)\b/i.test(m.label || '')) {
+      const alt = st?.short || st?.eventTitle || '';
+      if (!alt || alt.length > MOVER_LABEL_MAX || /\(/.test(alt)) continue;
+      m.label = alt; m.context = '';
+    }
     if (SPORTS_GAMES.has(st?.category) && uniq.filter((x) => SPORTS_GAMES.has(x.st?.category)).length >= C.sgMovers) continue;
     // a moving-first ticker entry is the story's own lead (the guarded market), never a far rung of its event
     if (isMF(st) && (m.id !== st.lead?.id || uniq.filter((x) => isMF(x.st)).length >= C.mfMovers)) continue;

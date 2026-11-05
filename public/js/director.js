@@ -12,7 +12,7 @@
 // ?fast=1 runs the clock 10x for testing; window.__pnn.airLog lists what aired. Client 'air'/'draw' logs go to the server.
 // Keys: → next card, Space pause, 1–8 force top/focus/movers/week/desk/sotd/countdown/markets now; t/w/y/x/p force toss-up / week swings / steady / exchanges disagree / package.
 import { report, pct, money, exchangeName, ago, newsOf, isMovingFirst } from './util.js';
-import { pointsText, VARIETY_TITLES } from './cards.js';
+import { pointsText } from './cards.js';
 import { finCards, finItems, finStory } from './finance.js';
 
 // The kinds of card in the mix (weights: how often each kind is picked; never the same kind twice in a row).
@@ -25,7 +25,7 @@ const RUNDOWN = [
   { id: 'sotd', ms: 13000, w: 0 },           // scheduled
   { id: 'countdown', ms: 10000, w: 0 },      // scheduled
   { id: 'markets', ms: 11000, w: 0 },        // scheduled: at most one per 5-6 cards (a price chart needs the time)
-  // variety segments (2026-11-05): the same data another way. They ride on overlay id 'focus' (seg.kind says which card); each
+  // variety segments (2026-11-05): the same data another way. Each is its own overlay segment (seg.id === seg.kind); each
   // needs `gap` cards since its last airing (about 1 per 8, packages about 1 per 6), and is skipped when state has no data for it.
   { id: 'tossup', ms: 9000, w: 1 },
   { id: 'swings', ms: 9000, w: 1 },
@@ -221,7 +221,11 @@ export function createDirector({ overlay, chyron, scene }) {
       .map((p) => { const id = pkgId(p); return { id, pkg: p, story: pkgStory(p, id), settling: false }; });
   }
   const varietyEntries = (kind) => (kind === 'package' ? packageList() : varietyList(kind));
-  const varietySeg = (kind, e) => ({ id: 'focus', kind, story: e.story, ...(kind === 'package' ? { pkg: e.pkg } : { item: e.item }) });
+  // a variety card is its own overlay segment (id === kind: header, sub line, layout); the 3D shows it like STORY FOCUS (sceneArgs)
+  const varietySeg = (kind, e) => {
+    const list = varietyEntries(kind), i = list.findIndex((x) => x.id === e.id);
+    return { id: kind, kind, story: e.story, index: Math.max(0, i), count: Math.max(1, list.length), ...(kind === 'package' ? { pkg: e.pkg } : { item: e.item }) };
+  };
 
   // NEWS MEETS MARKETS: the aired story for a flash (by storyId, then by any matched market/event), else a minimal
   // story built from the flash's own market rows (same shape as moverStory) so the 3D and STORY FOCUS can show it.
@@ -412,6 +416,14 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.kind && VTEASE[seg.kind]) return `${VTEASE[seg.kind]}: ${seg.story?.short || seg.story?.eventTitle || ''}`.trim();
     return seg.story?.short || seg.story?.eventTitle || seg.story?.headline || '';
   };
+  // the short NEXT tease when the full one does not fit the top bar: the card's kind, never a cut subject
+  const teaseShort = (seg) => {
+    if (!seg) return '';
+    if (seg.kind && VTEASE[seg.kind]) return VTEASE[seg.kind];
+    if (seg.id === 'sotd') return 'Story of the Day';
+    if (seg.id === 'desk') return seg.desk?.title ? String(seg.desk.title).toLowerCase().replace(/^./, (c) => c.toUpperCase()) : 'The desk';
+    return { focus: 'Story focus', movers: 'Biggest movers', week: 'This week', markets: 'Markets', top: 'Top stories', countdown: 'Countdown desk' }[seg.id] || '';
+  };
   const onScreen = (seg) => new Set([seg?.story?.id, ...(seg?.minis || []).map((x) => x.id), ...(seg?.sotd?.markets || []).map((x) => x.storyId), ...(seg?.pkg?.markets || []).map((x) => x.storyId)].filter(Boolean));
   function alsoFor(seg) {
     const ids = onScreen(seg);
@@ -449,8 +461,7 @@ export function createDirector({ overlay, chyron, scene }) {
     logAir(seg);
     try { overlay.render(seg, seg.id === 'top' ? topState(seg) : state); } catch (e) { report('overlay.render', e); }
     try { chyron.setLower(SEGNAME(seg), seg.story, { durationMs, tag: seg.desk ? DESK_TAG[seg.desk.id] || 'DESK' : undefined, alt }); } catch (e) { report('chyron.setLower', e); }
-    try { overlay.setNext?.(teaseOf(plan[0]), teaseOf(plan[1])); } catch (e) { report('overlay.setNext', e); }
-    if (seg.kind && VARIETY_TITLES[seg.kind]) { const t = document.querySelector('.seg-t'); if (t && t.textContent !== VARIETY_TITLES[seg.kind]) t.textContent = VARIETY_TITLES[seg.kind]; } // top-bar title (overlay.js only knows 'focus')
+    try { overlay.setNext?.(teaseOf(plan[0]), teaseOf(plan[1]), teaseShort(plan[0])); } catch (e) { report('overlay.setNext', e); }
     sceneShow(seg);
   }
 

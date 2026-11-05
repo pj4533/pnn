@@ -713,3 +713,61 @@ function localNormalize(evs) {
   console.log(`  samples (ungated): ${Object.entries(o.segments).map(([k, v]) => `${k} ${v.length}`).join(', ')}`);
   for (const s of Object.values(o.segments).flat().slice(0, 6)) console.log(`    ${s.segment.type}: ${s.segment.line}`);
 }
+
+// ---- rules text never airs as a ticker / card subject (2026-11-05: "Any member of the Cabinet (defined as: the Vice President, ...")
+console.log('\n== rules text in subjects ==');
+{
+  const { stripRulesText } = await import('../server/editorial/text.mjs');
+  const { moverName } = await import('../server/editorial/copy.mjs');
+  const { parseKalshiMarkets } = await import('../server/sources/kalshi.mjs');
+  const RULES = 'Any member of the Cabinet (defined as: the Vice President, Secretary of State, Secretary of the Treasury, Secretary of Defense, Attorney General)';
+  eq(stripRulesText(RULES), 'Any member of the Cabinet', 'strip defined-as parenthetical');
+  eq(stripRulesText('Will any member of the Cabinet (defined as: the Vice President, Secretary of State) be impeached?'), 'Will any member of the Cabinet be impeached?', 'strip mid-question');
+  eq(stripRulesText('Scott Colom (D)'), 'Scott Colom (D)', 'short party parenthetical stays');
+  eq(stripRulesText('Any member of the Cabinet (defined as: the Vice President, Secretary of State, ...'), 'Any member of the Cabinet', 'unclosed rules parenthetical dropped');
+  const evs = [{ event_ticker: 'KXIMPEACH', series_ticker: 'KXIMPEACH', title: 'Who will be impeached before 2027?', mutually_exclusive: false,
+    markets: [{ ticker: 'KXIMPEACH-CAB', event_ticker: 'KXIMPEACH', title: 'Who will be impeached before 2027?', yes_sub_title: RULES, status: 'active', market_type: 'binary',
+      last_price_dollars: '0.38', previous_price_dollars: '0.30', yes_bid_dollars: '0.37', yes_ask_dollars: '0.39', volume_24h_fp: '50000', close_time: '2027-01-01T15:00:00Z' },
+    { ticker: 'KXIMPEACH-VP', event_ticker: 'KXIMPEACH', title: 'Who will be impeached before 2027?', yes_sub_title: 'JD Vance', status: 'active', market_type: 'binary',
+      last_price_dollars: '0.08', previous_price_dollars: '0.07', yes_bid_dollars: '0.07', yes_ask_dollars: '0.09', volume_24h_fp: '20000', close_time: '2027-01-01T15:00:00Z' }] }];
+  const ks = parseKalshiMarkets(evs, {}, new Date(NOW));
+  for (const m of ks) {
+    const nm = moverName(m);
+    const all = `${m.title} ${m.outcome || ''} ${m.eventTitle} ${nm.label} ${nm.context}`;
+    eq(/defined as|Vice President|Secretary/.test(all), false, `kalshi subject clean: ${nm.label} | ${m.title}`);
+    eq(nm.label.length <= 80, true, `mover label short: ${nm.label}`);
+  }
+  // a raw over-long label never reaches the ticker: falls back to the story's short title or drops
+  const long = { id: 'pm:long', source: 'polymarket', title: 'Will it?', eventId: 'pm:ev-long', eventTitle: 'Cabinet impeachment', outcome: 'X'.repeat(30) + ' ' + 'Y'.repeat(60),
+    category: 'politics', tags: ['politics'], yesPrice: 0.4, change1d: 0.1, volume24h: 90000, updatedAt: new Date(NOW).toISOString(), closesAt: '2027-01-01T00:00:00Z' };
+  const o = buildStories([long], config, { now: NOW });
+  for (const m of o.movers || []) eq((m.label || '').length <= 80, true, `ticker label short: ${m.label}`);
+}
+
+// ---- Story of the Day: loose rows must be about the headline's subject (2026-11-05: "Head of DOJ Civil Rights Division resigns
+// after GOP midterms loss" pulled in "Republican Eli Crane in AZ-02" and "Greg Murphy NC-03" through "GOP" + "midterms")
+console.log('\n== Story of the Day relevance ==');
+{
+  const { looseStories } = await import('../server/newsroom.mjs');
+  const cluster = { id: 'wc:test', title: 'Head of DOJ Civil Rights Division resigns after GOP midterms loss', items: [
+    { title: 'Head of DOJ Civil Rights Division resigns after GOP midterms loss', outlet: 'NBC News' },
+    { title: 'DOJ civil rights chief resigns days after Republicans lose House in midterms', outlet: 'CBS News' },
+    { title: 'Justice Department civil rights head steps down after GOP midterm defeat', outlet: 'AP' },
+  ] };
+  const story = (id, eventTitle, title, outcome) => ({ id, eventTitle, category: 'elections', lead: { id: `m:${id}`, title, outcome, yesPrice: 0.6, change1d: 0.1 }, markets: [] });
+  const pool = [
+    story('az02', 'AZ-02 House race', 'Will the Republican win the House race for AZ-02?', 'Eli Crane'),
+    story('nc03', 'NC-03 House race', 'Will the Republican win the House race for NC-03?', 'Greg Murphy'),
+    story('house', 'Which party wins the House in the 2026 midterms?', 'Will Republicans win the House?', 'Republicans'),
+    story('doj', 'Who will leave the DOJ before 2027?', 'Will the head of the DOJ Civil Rights Division resign before 2027?', null),
+  ];
+  const ids = looseStories(cluster, pool).map((s) => s.id);
+  eq(ids.some((x) => ['az02', 'nc03', 'house'].includes(x)), false, `party/midterm words alone do not join: ${ids.join(',')}`);
+  eq(ids.includes('doj'), true, `subject story joins: ${ids.join(',')}`);
+  const ctxOnly = { id: 'wc:ctx', title: 'GOP midterms loss', items: [{ title: 'GOP midterms loss' }, { title: 'Republicans react to midterm loss' }] };
+  eq(looseStories(ctxOnly, pool).length, 0, 'a cluster of context words only has no loose stories');
+  // the matcher's rows pass the same subject check (refreshSotd drops rows not about the headline's subject)
+  const { clusterKeys, aboutSubject } = await import('../server/newsroom.mjs');
+  const { subject } = clusterKeys(cluster);
+  eq(pool.filter((st) => aboutSubject(st, subject)).map((st) => st.id).join(','), 'doj', `only the subject story is about the headline: ${subject.join(',')}`);
+}

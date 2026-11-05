@@ -1,6 +1,6 @@
 // HTML builders for the segment panels. Pure functions of (data, now) → HTML string.
 import { outcomeSubtitle } from './cards.js';
-import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta, newsAge, newsOld, storyNewsHtml, isMovingFirst, movingFirstLine } from './util.js';
+import { esc, pct, pctNum, moveText, moveShort, moveCls, ptsOf, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta, newsAge, newsOld, storyNewsHtml, isMovingFirst, movingFirstLine } from './util.js';
 
 const KIND = { mover: 'ON THE MOVE', favorite: 'THE FAVORITE', closing: 'RESOLVING SOON', news: 'IN THE NEWS' };
 
@@ -116,7 +116,7 @@ export function moversBoard(movers, now, updatedAt) {
   return `<section class="card board movers-board">
     <div class="board-h"><span class="board-t">BIGGEST MOVERS</span><span class="board-s fit">Largest 24-hour swings in market odds</span></div>
     <div class="rows">${rows.map((m, i) => `<div class="row" data-story="${esc(m.storyId || m.eventId || '')}" ${i >= 5 ? `data-drop="${i >= 6 ? 1 : 2}"` : ''}>
-      <div class="row-mv ${moveCls(m.change1d)}"><span>${esc(moveShort(m.change1d))}</span><small>PTS</small></div>
+      <div class="row-mv ${moveCls(m.change1d)}"><span>${esc(moveShort(m.change1d))}</span><small>${Math.abs(ptsOf(m.change1d) ?? 0) === 1 ? 'PT' : 'PTS'}</small></div>
       <div class="row-main">
         <div class="row-name fit" data-fit-h>${esc(m.label != null ? (m.context ? `${m.label}: ${m.context}` : m.label) : m.outcome ? `${m.outcome}: ${m.eventTitle}` : m.eventTitle || m.title)}</div>
         <div class="row-meta fit"><b>${esc(exchangeName(m.source))}</b> · ${esc(ago(m.updatedAt, now))} · ${esc(money(m.volume24h))} traded in 24 hrs</div>
@@ -162,7 +162,7 @@ export function deskBoard(desk, on, now, updatedAt) {
       const m = s.lead;
       const ex = (s.sources?.length ? s.sources : [m.source]).map(exchangeName).join(' + ');
       return `<div class="row dk${i === on ? ' on' : ''}" data-story="${esc(s.id)}" ${i >= 4 && i !== on ? `data-drop="${i >= 5 ? 1 : 2}"` : ''}>
-      <div class="row-mv ${moveCls(m.change1d)}"><span>${esc(moveShort(m.change1d) || 'NEW')}</span><small>${m.change1d == null ? '&nbsp;' : 'PTS'}</small></div>
+      <div class="row-mv ${moveCls(m.change1d)}"><span>${esc(moveShort(m.change1d) || 'NEW')}</span><small>${m.change1d == null ? '&nbsp;' : Math.abs(ptsOf(m.change1d) ?? 0) === 1 ? 'PT' : 'PTS'}</small></div>
       <div class="row-main">
         <div class="row-name fit" data-fit-h>${esc(s.short || s.headline)}</div>
         <div class="row-meta fit"><b>${esc(ex)}</b> · ${esc(ago(m.updatedAt, now))} · ${esc(storyVolume(s))} traded in 24 hrs</div>

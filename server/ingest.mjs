@@ -36,6 +36,11 @@ export function startIngest(store, config, { sim = false } = {}) {
   let pending = [];
   let coverage = { onAir: 0, withNews: 0, pct: null, pending: 0 };
   const historyCache = new Map();   // marketId -> {points, at}
+  // Week-change fallback (steady favorites, week swings): Kalshi markets carry no 1-week change. refreshWeek reads ~8 days of
+  // the same exchange price history refreshHistory uses (Kalshi daily candlesticks, Polymarket CLOB 1w) for aired story
+  // leads with no change1w and keeps the price about 7 days ago; rebuild fills change1w = now - then.
+  const weekCache = new Map();      // marketId -> {t, p, at} (t epoch sec of the ~7-day-old point; p NaN = no honest week point)
+  const weekStats = { passes: 0, candidates: 0, fetched: 0, failed: 0, filled: 0, lastAt: null };
   const timers = [];
   let built = false;
   let lastAliases = {};
@@ -137,6 +142,13 @@ export function startIngest(store, config, { sim = false } = {}) {
     const nowSec = now.getTime() / 1000;
     const tm = Date.now();
     for (const m of airable) Object.assign(m, store.motion ? store.motion(m.id, nowSec) : { change1h: null, change15m: null, flatMin: null });
+    let weekFilled = 0;
+    for (const m of airable) {
+      if (m.change1w != null || !Number.isFinite(m.yesPrice)) continue;
+      const w = weekCache.get(m.id);
+      if (w && Number.isFinite(w.p)) { m.change1w = Math.round((m.yesPrice - w.p) * 10000) / 10000; m.change1wFrom = 'history'; weekFilled++; }
+    }
+    weekStats.filled = weekFilled;
     const motionMs = Date.now() - tm;
     const tb = Date.now();
     let out;
@@ -338,6 +350,41 @@ export function startIngest(store, config, { sim = false } = {}) {
     if (!ok && lastErr) throw lastErr;
   }
 
+  // Candidates: aired story leads (board, desks, this week; all news-gated) with no exchange week change, well traded and
+  // priced 8-97%, biggest first; at most maxPerPass per pass, each cached ttlMin.
+  async function refreshWeek() {
+    const W = config.weekFallback || {};
+    if (W.enabled === false) return;
+    const ttl = (W.ttlMin ?? 180) * 60_000, max = W.maxPerPass ?? 30, minVol = W.minVolume ?? 50_000;
+    const now = Date.now();
+    for (const [k, v] of weekCache) if (now - v.at > 2 * ttl) weekCache.delete(k);
+    const s = store.getState(), seen = new Set();
+    const cands = [...(s.stories || []), ...(s.closing || []), ...(s.desks || []).flatMap((d) => d.stories || [])].map((st) => st?.lead)
+      .filter((m) => m?.id && !seen.has(m.id) && seen.add(m.id) && (m.change1w == null || m.change1wFrom === 'history'))
+      .filter((m) => (m.volume24h || 0) >= minVol && m.yesPrice >= 0.08 && m.yesPrice <= 0.97 && ((m.source === 'polymarket' && m.tokenId) || m.source === 'kalshi'))
+      .filter((m) => !weekCache.has(m.id) || now - weekCache.get(m.id).at > ttl)
+      .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0)).slice(0, max);
+    weekStats.passes++; weekStats.candidates = cands.length; weekStats.lastAt = new Date(now).toISOString();
+    let got = 0, lastErr = null;
+    const target = now / 1000 - 7 * 86400;
+    for (const m of cands) {
+      try {
+        const pts = m.source === 'kalshi' ? await fetchKalshiHistory(m.id, { hours: 8 * 24, periodMin: 1440 })
+          : await fetchPriceHistory(m.tokenId, { interval: '1w', fidelity: 360 });
+        // the point nearest 7 days ago, accepted only 6-8 days back (a younger market has no honest week change)
+        let best = null;
+        for (const x of pts || []) if (Number.isFinite(x?.p) && Number.isFinite(x?.t) && (!best || Math.abs(x.t - target) < Math.abs(best.t - target))) best = x;
+        if (best && Math.abs(best.t - target) <= 86400) { weekCache.set(m.id, { t: best.t, p: best.p, at: now }); got++; }
+        else weekCache.set(m.id, { t: null, p: NaN, at: now });
+        weekStats.fetched++;
+      } catch (e) { lastErr = e; weekStats.failed++; }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (got) rebuild('week');
+    if (!got && cands.length && lastErr) throw lastErr;
+  }
+  store.weekHealth = () => ({ ...weekStats, cached: [...weekCache.values()].filter((v) => Number.isFinite(v.p)).length });
+
   async function refreshHistory() {
     const leads = enrichTargets(store.getState(), P.historyTopN ?? 8).map((s) => s.lead)
       .filter((m) => m && ((m.source === 'polymarket' && m.tokenId) || m.source === 'kalshi'));
@@ -430,6 +477,7 @@ export function startIngest(store, config, { sim = false } = {}) {
       schedule('polymarket-tags', config.sources.polymarket.tagSweepSec ?? 900, sweepPolymarketTagsTask, { initialDelayMs: 8000 });
     }
     schedule('history', P.historySec, refreshHistory, { initialDelayMs: 15_000 });
+    schedule('week', config.weekFallback?.everySec ?? 600, refreshWeek, { initialDelayMs: 120_000 });   // after Kalshi's first poll; cheap once cached (ttl 3 h)
     // MONEY MOVING: big Polymarket trades on the top board/desk stories (one data-api request per 20 markets).
     schedule('money', config.moments?.moneyPollSec ?? 120, () => moments.pollMoney(), { initialDelayMs: 60_000 });
   }

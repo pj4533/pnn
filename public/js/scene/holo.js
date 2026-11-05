@@ -490,7 +490,7 @@ export function pctSeq(a, b) {
   for (let n = x; n !== y + s; n += s) out.push(`${n}%`);
   return out;
 }
-export const ptsText = (d) => { const n = Math.round(Math.abs(d) * 100); return n === 0 ? 'flat today' : `${d > 0 ? '▲' : '▼'} ${n} pts today`; };
+export const ptsText = (d) => { const n = Math.round(Math.abs(d) * 100); return n === 0 ? 'flat today' : `${d > 0 ? '▲' : '▼'} ${n} ${n === 1 ? 'pt' : 'pts'} today`; };
 
 export function disposeTree(obj) {
   obj.traverse((o) => {

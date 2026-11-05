@@ -1,11 +1,15 @@
 // Overlay layer: top bar (PNN bug, LIVE, segment title, ET clock), left column, bottom strip, stage frame.
 import { etClock, etDate } from './util.js';
 import { leadCard, miniCard, focusCard, standbyCard } from './panels.js';
-import { segmentCard, sotdCard, countdownCard, marketsCard } from './cards.js';
+import { segmentCard, sotdCard, countdownCard, marketsCard, VARIETY_TITLES } from './cards.js';
 import { esc } from './util.js';
 import { scheduleFit } from './fit.js';
 
-export const SEG_TITLES = { top: 'TOP STORIES', focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK', desk: 'DESK', sotd: 'STORY OF THE DAY', countdown: 'COUNTDOWN DESK', markets: 'MARKETS', standby: 'STANDING BY' };
+export const SEG_TITLES = { top: 'TOP STORIES', focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK', desk: 'DESK', sotd: 'STORY OF THE DAY', countdown: 'COUNTDOWN DESK', markets: 'MARKETS', standby: 'STANDING BY', ...VARIETY_TITLES };
+// Variety segments (2026-11-05) are overlay segments of their own (seg.id === seg.kind): full-screen card layout, own header and sub line.
+const VARIETY_IDS = new Set(Object.keys(VARIETY_TITLES));
+const VARIETY_SUBS = { tossup: 'Priced close to even', swings: 'The biggest moves over seven days', steady: 'Favorites holding steady for a week',
+  disagree: 'Kalshi and Polymarket price it differently', package: 'One news story, several markets' };
 
 export function createOverlay(root) {
   root.innerHTML = `
@@ -50,6 +54,7 @@ export function createOverlay(root) {
   }
   let lastNext = [null, null];   // re-fit the NEXT tease on resize / iPad rotation (its shrink is width-dependent)
   window.addEventListener('resize', () => { if (lastNext[0]) api.setNext(...lastNext); });
+  let nextSeq = 0;
   function settle(host) {
     for (const a of host.getAnimations({ subtree: true })) {
       const it = a.effect?.getTiming?.().iterations;
@@ -132,7 +137,7 @@ export function createOverlay(root) {
     // viewport fractions of the open 3D area for the current layout
     const seg = document.body.dataset.segment;
     if (seg === 'top') return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.63 };
-    if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown' || seg === 'markets') return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
+    if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown' || seg === 'markets' || VARIETY_IDS.has(seg)) return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
     return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.78 };
   }
   const api = {
@@ -153,6 +158,10 @@ export function createOverlay(root) {
       } else if (seg.id === 'focus') {
         html = segmentCard(seg, now);   // full-height card like desk/movers/week (user: the compact focus card left half the column empty)
         label = seg.story.eventTitle; sub = seg.story.eventTitle;
+      } else if (VARIETY_IDS.has(seg.id) && seg.story) {
+        html = segmentCard(seg, now);
+        label = seg.story.eventTitle || '';
+        sub = seg.id === 'package' && seg.pkg?.credit ? `Reported by ${seg.pkg.credit}` : `${VARIETY_SUBS[seg.id]}${seg.count > 1 ? ` · #${(seg.index ?? 0) + 1} of ${seg.count}` : ''}`;
       } else if (seg.id === 'movers' && seg.story) {
         html = segmentCard(seg, now);
         label = seg.story.eventTitle || 'Biggest movers'; sub = `Largest 24-hour swings · #${seg.index + 1} of ${seg.count}`;
@@ -187,15 +196,18 @@ export function createOverlay(root) {
       // the connector beam (stagelink.js) re-measures the card once the fit pass has resized it (fit runs 2 frames after this; this fires on the 3rd)
       requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => document.dispatchEvent(new Event('pnn:cardfit')))));
     },
-    /** Top-bar tease: "NEXT: <a> · then <b>". The "then" part drops when the pair doesn't fit. */
-    setNext(a, b) {
-      lastNext = [a, b];
+    /** Top-bar tease: "NEXT: <a> · then <b>". The "then" part drops when the pair doesn't fit; then a long subject gives way to
+     *  aShort (the card's kind: "Biggest movers"); if even that does not fit at the .7vw floor, the tease is dropped (never cut). */
+    setNext(a, b, aShort) {
+      lastNext = [a, b, aShort];
       if (!a) { nx.innerHTML = ''; top.classList.remove('has-next'); return; }
       top.classList.add('has-next');
       const full = `<b>NEXT</b>${esc(a)}${b ? `<i> · then ${esc(b)}</i>` : ''}`;
       nx.dataset.html = full; // refit every time: the room changes when the top-bar title shows/hides
       // one line, never wrapped: full pair, else the pair shrunk (floor .7vw), else just the next card (shrunk if needed)
+      const seq = ++nextSeq;
       requestAnimationFrame(() => {
+        if (seq !== nextSeq) return;
         const floor = window.innerWidth * 0.007;
         const tryFit = (html) => {
           nx.innerHTML = html; nx.style.fontSize = '';
@@ -203,7 +215,8 @@ export function createOverlay(root) {
           while (nx.scrollWidth > nx.clientWidth + 1 && size > floor && g++ < 30) { size = Math.max(floor, size * 0.93); nx.style.fontSize = `${size}px`; }
           return nx.scrollWidth <= nx.clientWidth + 1;
         };
-        if (!tryFit(full) && b) tryFit(`<b>NEXT</b>${esc(a)}`);
+        if (tryFit(full) || (b && tryFit(`<b>NEXT</b>${esc(a)}`)) || (aShort && aShort !== a && tryFit(`<b>NEXT</b>${esc(aShort)}`))) return;
+        nx.innerHTML = ''; nx.style.fontSize = ''; top.classList.remove('has-next');
       });
     },
     /** While something other than the card drives the 3D (a news flash), the frame label names that story. null restores. */

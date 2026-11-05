@@ -414,6 +414,10 @@ export default {
 
   // Variety segments (2026-11-05): the same news-gated stories shown as toss-ups, week swings, steady favorites and
   // exchange disagreements (rank.mjs buildSegments -> state.segments). Probabilities, not points of view.
+  // Week-change fallback (ingest.mjs refreshWeek): Kalshi markets carry no 1-week change; read ~8 days of exchange history for
+  // aired story leads and keep the price ~7 days ago (6-8 days back, else none).
+  weekFallback: { enabled: true, everySec: 600, ttlMin: 180, maxPerPass: 30, minVolume: 50_000 },
+
   segments: {
     max: 8,                 // stories per list
     minVolume: 25_000,      // 24h USD on the lead market

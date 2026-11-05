@@ -110,4 +110,15 @@ export function sharedCount(a, b) {
   return n;
 }
 
-export default { decodeEntities, tokens, tokenSet, jaccard, overlapCoef, sharedCount, STOP };
+// Exchange titles sometimes paste rules text into the question or outcome: "Any member of the Cabinet (defined as: the Vice
+// President, Secretary of State, ...)". A parenthetical that defines, lists or explains (or is simply long) is rules text,
+// never on-air copy: drop it. Short ones ("(D)", "(AZ-02)") stay. An unclosed "(defined as: ..." cut upstream is dropped too.
+const RULES_PAREN = /\s*\((?:[^()]*\b(?:defined as|as defined|i\.e\.|e\.g\.|including|includes|excluding|see rules|for the purposes? of|refers? to|means)\b[^()]*|[^()]{48,})\)/gi;
+export function stripRulesText(s) {
+  let out = String(s ?? '');
+  if (!out.includes('(')) return out;
+  out = out.replace(RULES_PAREN, '').replace(/\s*\((?:defined as|as defined|i\.e\.|e\.g\.|including)\b[^)]*$/i, '');
+  return out.replace(/\s+([?,.!:;])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+}
+
+export default { stripRulesText, decodeEntities, tokens, tokenSet, jaccard, overlapCoef, sharedCount, STOP };

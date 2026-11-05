@@ -1,6 +1,7 @@
 // Polymarket (Gamma + CLOB, public, no auth) -> normalized Market[] (see docs/ARCHITECTURE.md).
 import { getJSON } from '../http.mjs';
 import config from '../config.mjs';
+import { stripRulesText } from '../editorial/text.mjs';
 
 const GAMMA = 'https://gamma-api.polymarket.com';
 const CLOB = 'https://clob.polymarket.com';
@@ -61,10 +62,10 @@ export function parsePolymarketEvents(json, now = new Date()) {
       out.push({
         id: `pm:${m.id}`,
         source: 'polymarket',
-        title: m.question || ev.title || '',
-        outcome: multi ? (m.groupItemTitle || null) : null,
+        title: stripRulesText(m.question || ev.title || ''),
+        outcome: multi ? (stripRulesText(m.groupItemTitle) || null) : null,
         eventId: `pm:${ev.id}`,
-        eventTitle: ev.title || m.question || '',
+        eventTitle: stripRulesText(ev.title || m.question || ''),
         category: '',
         tags,
         yesPrice: Math.min(1, Math.max(0, yes)),

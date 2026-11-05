@@ -101,7 +101,7 @@ export function createSotd(ctx, story) {
       sub: l2, subColor: lead ? '#ffffff' : '#dfe8ff', subFont: '900 66px Orbitron', mainY: l2 ? 0.3 : 0.5, subY: 0.72 }, NAME_X, y, 0.5);
     const pct = lab(`${Math.round(prev * 0)}%`, { w: 380, h: 128, height: 1.7, font: '900 104px Orbitron', color: '#ffffff', glow: lead ? pal.hexA : pal.hexB, align: 'right' }, PCT_X, y, 0.5);
     const pts = Math.round(Math.abs(d) * 100);
-    const chip = lab(pts ? `${d > 0 ? '▲' : '▼'} ${pts} PTS` : 'FLAT', { w: 400, h: 192, height: 2.0, font: '800 84px Rajdhani', color: colHex, glow: colHex, align: 'left',
+    const chip = lab(pts ? `${d > 0 ? '▲' : '▼'} ${pts} ${pts === 1 ? 'PT' : 'PTS'}` : 'FLAT', { w: 400, h: 192, height: 2.0, font: '800 84px Rajdhani', color: colHex, glow: colHex, align: 'left',
       sub: `WAS ${Math.round(prev * 100)}%`, subColor: '#dfe8ff', subFont: '700 76px Rajdhani', mainY: 0.32, subY: 0.78 }, CHIP_X, y, 0.5);
     pct.warm([...pctSeq(0, prev), ...pctSeq(prev, value)]);   // prewarm: 0 -> yesterday -> today
     rows.push({ g, bar, dbar, tick, nm, pct, chip, value, prev, delay: 0.45 + i * 0.1, lead, y, shown: -1, done: false });

@@ -17,6 +17,8 @@
 //
 // Config keys read: none.
 
+import { stripRulesText } from './text.mjs';
+
 const HEADLINE_MAX = 90;
 
 // ---------- numbers ----------
@@ -57,7 +59,7 @@ const BPS = [
   [/\b(\d+)\s*bps\b/gi, '$1 basis points'],
 ];
 export function dejargon(s) {
-  let out = String(s || '');
+  let out = stripRulesText(String(s || ''));
   for (const [re, rep] of BPS) out = out.replace(re, rep);
   return out
     .replace(/(\d+(?:\.\d+)?)\s*¢/g, (_, n) => `${Math.round(Number(n))}%`)

@@ -3,6 +3,10 @@
 body[data-segment="desk"] .ov-left, body[data-segment="movers"] .ov-left, body[data-segment="week"] .ov-left, body[data-segment="focus"] .ov-left { width: 47vw; }
 body[data-segment="desk"] .frame, body[data-segment="movers"] .frame, body[data-segment="week"] .frame, body[data-segment="focus"] .frame { left: 49vw; }
 body.flashing[data-segment="desk"] .frame, body.flashing[data-segment="movers"] .frame, body.flashing[data-segment="week"] .frame, body.flashing[data-segment="focus"] .frame { left: 49vw; }
+/* variety segments (toss-up, week swings, steady, exchanges disagree, story package): their own overlay ids, same full-screen layout */
+body[data-segment="tossup"] .ov-left, body[data-segment="swings"] .ov-left, body[data-segment="steady"] .ov-left, body[data-segment="disagree"] .ov-left, body[data-segment="package"] .ov-left { width: 47vw; }
+body[data-segment="tossup"] .frame, body[data-segment="swings"] .frame, body[data-segment="steady"] .frame, body[data-segment="disagree"] .frame, body[data-segment="package"] .frame { left: 49vw; }
+body.flashing[data-segment="tossup"] .frame, body.flashing[data-segment="swings"] .frame, body.flashing[data-segment="steady"] .frame, body.flashing[data-segment="disagree"] .frame, body.flashing[data-segment="package"] .frame { left: 49vw; }
 
 .bigc { --ac: var(--cyan); --ag: rgba(0,240,255,.5); height: 100%; gap: 1.4vh; padding: 1.6vh 1.6vw 1.4vh;
   background: linear-gradient(160deg, rgba(26,8,66,.74), rgba(7,2,26,.8)) padding-box, linear-gradient(130deg, var(--ac), rgba(255,43,214,.5) 55%, var(--ac)) border-box; }

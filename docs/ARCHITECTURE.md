@@ -226,10 +226,12 @@ segments: { tossups: Story[], weekSwings: Story[], quietFavorites: Story[], disa
 // clientstate.mjs sends them as pool refs and data.js hydrate() turns them back into stories.
 packages: [{ id: 'pkg:<cluster>', title, headline, credit, url, newsAt, outlets, count, sotd, category, thin, updatedAt,
              markets: [{ storyId, label, outcome, yesPrice, change1d, source, marketId, volume24h, updatedAt, thin, news: {title, outlet} }] }]
+// Kalshi markets carry no change1w: ingest.mjs refreshWeek (config.weekFallback, every 10 min, <= 30 aired leads per pass, 3h cache) reads ~8 days of
+// exchange history and fills change1w (change1wFrom: 'history') from the point 6-8 days back. Health: weekFallback, segments (list sizes).
 // newsroom.mjs refreshPackages: a fresh (<= 6h) wire cluster with >= 3 outlets that strictly (exact-tier matcher) covers >= 2 aired stories; 2-4 rows; <= 6 kept, 12h lifetime.
 ```
-New card kinds (cards.js `varietyCard`, director.js): TOSS-UP, THIS WEEK'S SWINGS, STEADY FAVORITE, EXCHANGES DISAGREE, STORY BEHIND THE ODDS. They ride on overlay id `focus`
-with `seg.kind` = tossup | swings | steady | disagree | package; the director weights them (1, 1, 1, 1, 2), with per-kind cooldowns and never the same kind twice in a row. Dev keys t, w, y, x, p.
+New card kinds (cards.js `varietyCard`, director.js): TOSS-UP, THIS WEEK'S SWINGS, STEADY FAVORITE, EXCHANGES DISAGREE, STORY BEHIND THE ODDS. Each is its own overlay
+segment (`seg.id === seg.kind` = tossup | swings | steady | disagree | package: own top-bar title, sub line, full-screen layout; the 3D shows it as `focus`); the director weights them (1, 1, 1, 1, 2), with per-kind cooldowns and never the same kind twice in a row. Dev keys t, w, y, x, p.
 
 ### New SSE events (each also kept as the last ~10 in state: moves, listed, money)
 ```js

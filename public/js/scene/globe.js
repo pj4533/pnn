@@ -128,7 +128,7 @@ export function createGlobe(scene, station) {
     return [a, w.slice(i).join(' ')];
   }
   const shortName = (s) => { const w = String(s || '').trim().split(/\s+/); while (w.length > 1 && w.join(' ').length > 14) w.shift(); return w.join(' '); };
-  const ptsShort = (d) => { const n = Math.round(Math.abs(d) * 100); return n === 0 ? 'FLAT' : `${d > 0 ? '▲' : '▼'} ${n} PTS`; };
+  const ptsShort = (d) => { const n = Math.round(Math.abs(d) * 100); return n === 0 ? 'FLAT' : `${d > 0 ? '▲' : '▼'} ${n} ${n === 1 ? 'PT' : 'PTS'}`; };
   function subjectOf(subject) { return String(subject || '').replace(/\?+\s*$/, '').replace(/^\s*will\s+/i, '').trim().toUpperCase(); }
 
   function setRegion(region, prob, pal, seed, info = {}) {

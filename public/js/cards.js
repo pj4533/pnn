@@ -226,8 +226,8 @@ export function marketsCard(seg, now = Date.now()) {
   </section>`;
 }
 
-// ---- variety segments (2026-11-05): the same data shown another way. seg = {id: 'focus', kind: 'tossup'|'swings'|'steady'|'disagree'|'package', story, item?, pkg?}.
-// They ride on seg.id 'focus' so overlay.render() lays them out like a STORY FOCUS card; seg.kind picks the card here.
+// ---- variety segments (2026-11-05): the same data shown another way. seg = {id: kind, kind: 'tossup'|'swings'|'steady'|'disagree'|'package', story, item?, pkg?}.
+// Each is its own overlay segment (overlay.js: header, sub line, full-screen layout); seg.kind picks the card here.
 const durText = (d) => (d <= 1 ? 'a day' : d === 7 ? 'a week' : d === 14 ? 'two weeks' : d === 21 ? 'three weeks' : d >= 28 && d <= 31 ? 'a month' : `${d} days`);
 const vHead = (s, title, now, tag = '') => `<div class="bc-h"><span class="bc-seg fit">${esc(title)}</span>${tag}${s.settling ? '<span class="bc-tag">SETTLING</span>' : ''}</div>
     <div class="bc-kick fit">${s.flash ? '<b class="bc-news">IN THE NEWS</b> · ' : ''}${esc(categoryName(s.category).toUpperCase())} · ${esc(s.eventTitle || '')}</div>
