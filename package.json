@@ -3,8 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "description": "PNN: Pre News Network. A 24-hour broadcast of what prediction markets are pricing.",
+  "license": "MIT",
+  "author": "PJ Gray",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pj4533/pnn.git"
+  },
+  "keywords": [
+    "prediction-markets",
+    "polymarket",
+    "kalshi",
+    "news",
+    "threejs",
+    "synthwave",
+    "broadcast"
+  ],
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node server/index.mjs",
     "sim": "SIM=1 node server/index.mjs",
