@@ -24,14 +24,35 @@ export const nonLatin = (s) => /[Ͱ-ϿЀ-ԯ֐-ۿऀ-෿฀-໿぀-鿿가-힯]/.t
 // Independence (CLAUDE.md "Stay independent", user 2026-11-05): PNN reports what markets price, so a prediction-market
 // operator's own "news" (Kalshi News, Polymarket, Robinhood prediction markets, sportsbook odds pages) is never the
 // independent news item. Social posts, hyperlocal rewrites and scraper farms are not broadcast sources either.
-const EXCHANGE_OUTLET = /\b(kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|bet365|caesars|prizepicks|underdog fantasy|novig|manifold|metaculus|predictit|crypto\.com|coinbase|action network|oddsshark|vegasinsider|sportsbook ?review|covers\.com|bookies\.com|sportsbook|prediction markets?)\b/i;
+const EXCHANGE_OUTLET = /\b(kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|bet365|caesars|prizepicks|underdog fantasy|novig|manifold|metaculus|predictit|crypto\.com|coinbase|public\.com|action network|oddsshark|vegasinsider|sportsbook ?review|covers\.com|bookies\.com|sportsbook|prediction markets?)\b/i;
 const SOCIAL_OUTLET = /^(facebook|instagram|x|twitter|x \(formerly twitter\)|tiktok|reddit|youtube|threads|linkedin|pinterest|quora|telegram|bluesky|mastodon|medium|substack|tumblr|truth social)$|\b(facebook|instagram|tiktok|reddit)\b/i;
 const SCRAPER_OUTLET = /\b(just jared|tmz|radar ?online|ok! magazine|okmagazine|perez hilton|hollywoodlife|daily star|rotten tomatoes|wikipedia|metacritic|box office mojo|newztodays?|newscord|newsbreak|dailyhunt|devdiscourse|opoyi|bignewsnetwork|indexbox|patch|breaking ?news ?today|latestly|newsx|menafn|bharat express)\b/i;
 const BLOCK_DOMAINS = /(^|\.)(kalshi\.com|polymarket\.com|robinhood\.com|draftkings\.com|fanduel\.com|betmgm\.com|prizepicks\.com|predictit\.org|manifold\.markets|metaculus\.com|facebook\.com|fb\.com|fb\.watch|instagram\.com|x\.com|twitter\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|threads\.net|linkedin\.com|pinterest\.com|quora\.com|t\.me|bsky\.app|medium\.com|substack\.com|newztodays\.com|newscord\.com|newsbreak\.com|patch\.com|actionnetwork\.com|oddsshark\.com|vegasinsider\.com|covers\.com|bookies\.com)$/i;
 // Promo / betting-odds / exchange-coverage headlines: the news item must not be about the markets themselves.
-const PROMO_TITLE = /\((photos?|pics|video|slideshow)\)|\|\s*(rotten tomatoes|imdb|wikipedia|metacritic)$|\b(kalshi|polymarket|predictit|prediction markets?|betting (odds|sites?|apps?|promos?)|sportsbooks?|promo codes?|bonus bets?|sign-?up bonus|best bets?|parlays?|odds (boost|today)|dfs|draftkings|fanduel|betmgm)\b/i;
+const PROMO_TITLE = /\((photos?|pics|video|slideshow)\)|\|\s*(rotten tomatoes|imdb|wikipedia|metacritic)$|\b(kalshi|polymarket|predictit|prediction markets?|betting (odds|sites?|apps?|promos?|markets?)|bettors|punters|gamblers|wagers?|odds (&|and) predictions|sportsbooks?|promo codes?|bonus bets?|sign-?up bonus|best bets?|parlays?|odds (boost|today)|dfs|draftkings|fanduel|betmgm)\b/i;
 // Sensitive (CLAUDE.md, DECISIONS D4): the news item next to a market never carries graphic death / violence wording.
 const SENSITIVE_TITLE = /\b(dead|dies|died|killed|kills|killing|murders?|murdered|manslaughter|assassinat\w*|massacre|genocide|suicide|shooting|shot dead|stabbed|stabbing|bomb(s|ing|ed)?|terror\w*|beheaded|hostages?|death toll|corpses?|bodies)\b/i;
+// Reference / evergreen / SEO pages (2026-11-05 relevance pass): an encyclopedia or database page ("2026 Iran war | Oil,
+// Explained, United States, Israel, Strait of Hormuz, Map, & Conflict" from Britannica), an explainer, a listicle, a
+// prompt list or a ticker-tagged stock SEO piece is not news, so it never airs as a story's headline.
+const REFERENCE_OUTLET = /\b(britannica|encyclop(a)?edia|wikipedia|wikiwand|imdb|fandom|investopedia|merriam-webster|dictionary\.com|statista|worldometers?|ballotpedia|wikihow|howstuffworks|timeanddate|the-?numbers\.com|kalkine|marketbeat|benzinga pro|ainvest|stocktitan|stock titan|tipranks|simply wall st|zacks|gurufocus|techgenyz)\b/i;
+const REFERENCE_DOMAINS = /(^|\.)(britannica\.com|wikipedia\.org|wikiwand\.com|imdb\.com|fandom\.com|investopedia\.com|ballotpedia\.org|statista\.com|worldometers\.info|kalkine\w*\.com|marketbeat\.com|ainvest\.com|stocktitan\.net|tipranks\.com|simplywall\.st|zacks\.com|gurufocus\.com|techgenyz\.com)$/i;
+const EVERGREEN_TITLE = new RegExp([
+  '\\bexplained\\b', '\\bexplainer\\b', 'everything (you need to|we) know', '\\bthings (you need )?to know\\b', 'what you need to know', '\\bhow to\\b',
+  '\\b(a|the|complete|ultimate|beginner\'?s) guide\\b', '\\bfaqs?\\b', 'copy-?paste', '\\bprompts\\b', 'cheat ?sheet', '\\bnet worth\\b', '\\bbiography\\b',
+  '^what (is|are) (a|an|the)\\b', '^\\d+ (things|ways|reasons|facts|tips|signs|questions|takeaways|best)\\b', ',\\s*&\\s',
+  '\\((nyse|nasdaq|nysearca|nyseamerican|otc|tsx|lse|asx)\\s*:\\s*[a-z.]+\\)',
+].join('|'), 'i');
+/** 'reference' | 'evergreen' | null: encyclopedia / database outlets and explainer, listicle or ticker-SEO headlines. */
+export function evergreen(it) {
+  const outlet = String(it?.outlet || it?.source || '');
+  if (REFERENCE_OUTLET.test(outlet)) return 'reference';
+  const d = domainOf(it?.sourceUrl) || (/news\.google\.com/.test(String(it?.url || '')) ? '' : domainOf(it?.url));
+  if (d && REFERENCE_DOMAINS.test(d)) return 'reference';
+  if (/\|\s*[^|]{0,40}$/.test(String(it?.title || '')) && /\|.*,.*,/.test(String(it?.title || ''))) return 'reference';
+  if (EVERGREEN_TITLE.test(String(it?.title || ''))) return 'evergreen';
+  return null;
+}
 // "russian diesel imports blocked by new jersey despite trump": a feed that lowercases every headline is a scraper.
 export function garbledTitle(title) {
   const t = String(title || '').trim();
@@ -54,6 +75,8 @@ export function badNewsSource(it) {
   const d = domainOf(it.sourceUrl) || (/news\.google\.com/.test(String(it.url || '')) ? '' : domainOf(it.url));
   if (d && BLOCK_DOMAINS.test(d)) return /kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|prizepicks|predictit|manifold|metaculus|actionnetwork|oddsshark|vegasinsider|covers|bookies/.test(d) ? 'exchange' : 'social';
   if (PROMO_TITLE.test(String(it.title || ''))) return 'promo';
+  const ev = evergreen(it);
+  if (ev) return ev;
   if (SENSITIVE_TITLE.test(String(it.title || ''))) return 'sensitive';
   if (garbledTitle(it.title)) return 'garbled';
   return null;

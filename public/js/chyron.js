@@ -1,10 +1,11 @@
 // Chyron: persistent lower third (current story headline), scrolling ticker, data/disclaimer strip.
-// The ticker alternates MOVERS (45s) and NEWS WIRE (30s, state.wire: outlet + headline + age) with a quick crossfade.
-// The wire is skipped while it has fewer than 3 headlines.
+// The ticker cycles MOVERS (45s), PRICES (25s, state.finance: delayed stock / index / yield / oil / gold quotes) and NEWS WIRE (30s, state.wire:
+// outlet + headline + age) with a quick crossfade. The wire is skipped while it has fewer than 3 headlines, PRICES while there are fewer than 3 quotes.
 import { el, esc, pct, moveShort, moveCls, money, exchangeName, ago, storyVolume } from './util.js';
 import { fitText } from './fit.js';
+import { finItems, fmtVal, moveShortFin, finDir, finMeta } from './finance.js';
 
-const TAGS = { top: 'TOP STORY', focus: 'IN FOCUS', movers: 'MOVERS', week: 'THIS WEEK', desk: 'DESK', standby: 'PNN', alert: 'BREAKING' };
+const TAGS = { top: 'TOP STORY', focus: 'IN FOCUS', movers: 'MOVERS', week: 'THIS WEEK', desk: 'DESK', markets: 'MARKETS', standby: 'PNN', alert: 'BREAKING' };
 
 export function createChyron(root) {
   root.innerHTML = `
@@ -23,6 +24,7 @@ export function createChyron(root) {
   const tag = $('.cy-tag'), line = $('.cy-line'), sub = $('.cy-sub'), prog = $('.cy-prog');
   const track = $('.cy-track'), view = $('.cy-view'), upd = $('.cy-upd'), lbl = $('.cy-lbl'), t2 = $('.cy-t2');
 
+  const srcEl = $('.cy-src'), SRC_BASE = srcEl.innerHTML, SRC_FIN = `${SRC_BASE} &nbsp; <b>QUOTES:</b> delayed stock and bond prices`;
   let state = null;
   let lastHeadline = ''; let lastStoryKey = '';
 
@@ -58,7 +60,8 @@ export function createChyron(root) {
     } else if (h !== lastHeadline) {      // same story, numbers ticked: update quietly
       lastHeadline = h; line.textContent = h;
     }
-    if (story?.lead) {
+    if (story?.fin) sub.textContent = finMeta(story.fin);
+    else if (story?.lead) {
       const m = story.lead;
       sub.innerHTML = `${esc(story.sources?.map(exchangeName).join(' + ') || exchangeName(m.source))} · updated ${esc(ago(m.updatedAt))} · ${esc(storyVolume(story))} traded in 24 hrs${story.thin ? ' · <span class="thin sm">THIN MARKET</span>' : ''}`;
     } else sub.textContent = 'Odds are market prices, not facts or forecasts of record.';
@@ -85,17 +88,26 @@ export function createChyron(root) {
   function wireFor(s) {
     return (s?.wire || []).slice(0, 30).map((w) => `<span class="cy-item wi"><span class="ol">${esc(String(w.outlet || 'NEWS').toUpperCase())}</span><span class="nm">${esc(w.title)}</span><span class="ag">${esc(ago(w.publishedAt))}</span></span>`).join('');
   }
-  const MODE_MS = { movers: 45000, wire: 30000 };
+  // PRICES: delayed quotes (facts), never mixed into the odds items. Indices first, then yields, oil / gold, then stocks.
+  const KIND_ORDER = { index: 0, yield: 1, commodity: 2, currency: 3, stock: 4 };
+  function quotesFor(s) {
+    return finItems(s).slice().sort((a, b) => (KIND_ORDER[a.kind] ?? 5) - (KIND_ORDER[b.kind] ?? 5)).slice(0, 14).map((q) => `<span class="cy-item fq" data-story="${esc(q.id)}"><span class="nm">${esc(q.name)}</span><span class="v">${esc(fmtVal(q, q.price))}</span><span class="mv ${finDir(q) > 0 ? 'up' : finDir(q) < 0 ? 'down' : 'flat'}">${esc(moveShortFin(q))}</span><span class="ex">DELAYED</span></span>`).join('');
+  }
+  const MODE_MS = { movers: 45000, quotes: 25000, wire: 30000 };
+  const MODE_LBL = { movers: 'MOVERS', quotes: 'PRICES', wire: 'NEWS WIRE' };
+  const ORDER = ['movers', 'quotes', 'wire'];
   let mode = 'movers', modeAt = Date.now(), swapping = false;
-  const htmlFor = (s) => (mode === 'wire' ? wireFor(s) : itemsFor(s));
+  const modeOk = (m, s = state) => m === 'movers' || (m === 'wire' && (s?.wire || []).length >= 3) || (m === 'quotes' && finItems(s).length >= 3);
+  const htmlFor = (s) => (mode === 'wire' ? wireFor(s) : mode === 'quotes' ? quotesFor(s) : itemsFor(s));
   function setMode(m) {
     if (m === mode || swapping) return;
     swapping = true;
     view.classList.add('swap');
     setTimeout(() => {
       mode = m; modeAt = Date.now(); pendingItems = null;
-      lbl.textContent = m === 'wire' ? 'NEWS WIRE' : 'MOVERS';
+      lbl.textContent = MODE_LBL[m] || 'MOVERS';
       t2.classList.toggle('wire', m === 'wire');
+      t2.classList.toggle('quotes', m === 'quotes');
       x = 0; mount(htmlFor(state));
       view.classList.remove('swap');
       swapping = false;
@@ -103,9 +115,10 @@ export function createChyron(root) {
   }
   setInterval(() => {
     if (!state) return;
-    const wireOk = (state.wire || []).length >= 3;
-    if (mode === 'wire' && !wireOk) return setMode('movers');
-    if (Date.now() - modeAt >= MODE_MS[mode]) setMode(mode === 'movers' && wireOk ? 'wire' : 'movers');
+    if (!modeOk(mode)) return setMode('movers');
+    if (Date.now() - modeAt >= MODE_MS[mode]) {
+      for (let i = 1; i <= ORDER.length; i++) { const n = ORDER[(ORDER.indexOf(mode) + i) % ORDER.length]; if (modeOk(n)) return setMode(n); }
+    }
   }, 1000);
   function mount(html) {
     items = html;
@@ -138,6 +151,8 @@ export function createChyron(root) {
       if (!items) mount(html);
       else if (html !== items) pendingItems = html;
       upd.textContent = `DATA UPDATED ${ago(s.generatedAt).toUpperCase()}`;
+      const src = finItems(s).length ? SRC_FIN : SRC_BASE;
+      if (srcEl.innerHTML !== src) srcEl.innerHTML = src;
       requestAnimationFrame(() => root.querySelectorAll('.cy-t3 .fit').forEach(fitText));
     },
     setLower,

@@ -16,6 +16,7 @@ import { filterHeadlinesForStory } from './editorial/match.mjs';
 import { startNewsroom } from './newsroom.mjs';
 import { createNewsdesk } from './newsdesk.mjs';
 import { createMoments } from './moments.mjs';
+import { createFinance } from './finance.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const errMsg = (e) => String(e?.message || e).slice(0, 300);
@@ -344,6 +345,19 @@ export function startIngest(store, config, { sim = false } = {}) {
     log('error', 'newsroom start failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) });
   }
 
+  // Stock and bond moves (finance.mjs, QUEUED-FIXES item 12): its own market-hours poller publishes state.finance.
+  // Headlines come from the newsroom's wire archive; paired markets from the airable index, else fetched by slug/series.
+  let finance = null;
+  if (!sim && config.finance?.enabled !== false) {
+    try {
+      finance = createFinance(store, config, { getArchive: () => newsroom?.archive?.() || [], getMarkets: () => latest.airable });
+      store.financeHealth = () => finance.stats();
+      finance.start({ initialDelayMs: 6000 });
+    } catch (e) {
+      log('error', 'finance start failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) });
+    }
+  } else store.setState({ finance: { moves: [], quotes: [], session: null, asOf: null, note: sim ? 'SIM: no market quotes' : 'finance off', stats: null } });
+
   if (sim) { startSim(); moments.startSim(); }
   else {
     schedule('polymarket', P.polymarketSec, pollPolymarket, { initialDelayMs: 0 });
@@ -460,7 +474,8 @@ export function startIngest(store, config, { sim = false } = {}) {
     rebuild,
     newsroom: () => newsroom,
     moments: () => moments,
-    stop() { saveSearch(); newsroom?.stop(); moments.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
+    finance: () => finance,
+    stop() { saveSearch(); newsroom?.stop(); moments.stop(); finance?.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
   };
 }
 

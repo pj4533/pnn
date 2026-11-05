@@ -97,7 +97,7 @@ export function createWeekBoard(ctx, story) {
       const l = holo.label(t, { w: 256, h: 96, height: 1.2, font: '700 72px Rajdhani', color: SOFT, glow: pal.hexB, align: 'right' });
       l.sprite.position.set(-L / 2 + 2.2, yOf(f) + (f === 0 ? 0.45 : 0), 0.3); l.yFrac = 0.05; l.bright = 0.9;
     }
-    const yl = holo.label('CHANCE', { w: 288, h: 160, height: 1.7, font: '700 66px Rajdhani', color: '#9ff6ff', glow: pal.hexB, sub: 'OF YES', subColor: '#9ff6ff', subFont: '700 66px Rajdhani', align: 'right', mainY: 0.3, subY: 0.74 });
+    const yl = holo.label('CHANCE', { w: 288, h: 160, height: 2.4, font: '700 66px Rajdhani', color: '#9ff6ff', glow: pal.hexB, sub: 'OF YES', subColor: '#9ff6ff', subFont: '700 66px Rajdhani', align: 'right', mainY: 0.3, subY: 0.74 });
     yl.sprite.position.set(-L / 2 + 2.2, yOf(0.75), 0.3); yl.yFrac = 0.05; yl.bright = 0.9;   // between 100% and 50%, clear of the first lollipop's label stack
   }
 
@@ -164,7 +164,7 @@ export function createWeekBoard(ctx, story) {
     it.nl.yFrac = xFrac(it.x);
     it.chip = it.pts === 0 ? (Number.isFinite(it.m.change1d) ? 'FLAT TODAY' : '') : `${it.d > 0 ? '▲' : '▼'} ${it.pts} ${it.pts === 1 ? 'PT' : 'PTS'} TODAY`;
     it.chipCol = it.pts === 0 ? FLAT : it.d > 0 ? UP : DOWN;
-    it.pl = holo.label('0%', { w: 704, h: 256, height: 2.6, font: '900 170px Orbitron', color: '#ffffff', glow: it.hex, sub: '', subColor: it.chipCol, subFont: '800 92px Rajdhani' });
+    it.pl = holo.label('0%', { w: 704, h: 330, height: 3.35, font: '900 170px Orbitron', color: '#ffffff', glow: it.hex, sub: '', subColor: it.chipCol, subFont: '800 96px Rajdhani', mainY: 0.32, subY: 0.85 });
     it.pl.yFrac = xFrac(it.x); it.lastTxt = '0%'; it.lastSub = '';
     it.wl = it.pts >= 2 ? holo.label(`WAS ${Math.round(it.was * 100)}%`, { w: 384, h: 96, height: 1.2, font: '700 70px Rajdhani', color: '#ffe27a', glow: GOLD, align: 'left' }) : null;
     if (it.wl) { it.wl.yFrac = xFrac(it.x); it.wl.sprite.position.set(it.x + 0.95, yOf(it.was), 0.9); }
@@ -172,7 +172,7 @@ export function createWeekBoard(ctx, story) {
     it.cl.sprite.position.set(it.x, Y0 - 3.6, 0.9); it.cl.yFrac = xFrac(it.x);
     it.nl.bright = it.pl.bright = it.cl.bright = 0; if (it.wl) it.wl.bright = 0;
     if (it === soon) {
-      it.tag = holo.label('NEXT TO CLOSE', { w: 512, h: 112, height: 1.35, font: '900 62px Orbitron', color: '#ffe27a', glow: GOLD });
+      it.tag = holo.label('NEXT TO CLOSE', { w: 512, h: 112, height: 1.85, font: '900 62px Orbitron', color: '#ffe27a', glow: GOLD });
       it.tag.yFrac = xFrac(it.x); it.tag.bright = 0;
     }
     // timeline: pop-in at the moment the NOW marker arrives
@@ -238,9 +238,9 @@ export function createWeekBoard(ctx, story) {
       }
       // labels ride above the lollipop head (whichever of yesterday / today is higher)
       const top = Y0 + hi * H + 0.7;
-      it.pl.sprite.position.set(it.x, top + 2.2, 0.9);
+      it.pl.sprite.position.set(it.x, top + 2.35, 0.9);
       it.nl.sprite.position.set(it.x, top + 3.8 + it.nameH / 2, 0.9);
-      if (it.tag) it.tag.sprite.position.set(it.x, top + 3.8 + it.nameH + 0.8, 0.9);
+      if (it.tag) it.tag.sprite.position.set(it.x, top + 3.8 + it.nameH + 1.1, 0.9);
       const txt = `${Math.round(vF * 100)}%`, sub = a > 0.45 ? it.chip : '';
       if (txt !== it.lastTxt || sub !== it.lastSub) { it.lastTxt = txt; it.lastSub = sub; it.pl.set(txt, sub, '#ffffff', it.hex); }
       it.pl.bright = clamp01(a / 0.25); it.nl.bright = clamp01((a - 0.05) / 0.25);

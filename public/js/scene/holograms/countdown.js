@@ -172,7 +172,7 @@ export function createCountdown(ctx, story, { cluster = false } = {}) {
   const title = holo.label(titleTxt, { w: 2048, h: 160, height: 2.1, font: '900 108px Orbitron', color: '#ffffff', glow: pal.hexA, align: 'left' });
   title.sprite.position.set(X0 - 0.4, Y_TITLE, 0.9); title.yFrac = yOfFrac(Y_TITLE); title.bright = 1;
   if (hasClose) {
-    const rt = holo.label(etClose(closeMs, now), { w: 1024, h: 192, height: 2.4, font: '900 100px Orbitron', color: '#ffe27a', glow: GOLD, align: 'right', sub: 'RESOLVES', subColor: '#cfd8ff', subFont: '700 60px Rajdhani', mainY: 0.4, subY: 0.82 });
+    const rt = holo.label(etClose(closeMs, now), { w: 1024, h: 192, height: 2.4, font: '900 100px Orbitron', color: '#ffe27a', glow: GOLD, align: 'right', sub: 'RESOLVES', subColor: '#e4eaff', subFont: '700 74px Rajdhani', mainY: 0.36, subY: 0.84 });
     rt.sprite.position.set(X1 + 0.4, Y_TITLE, 0.9); rt.yFrac = yOfFrac(Y_TITLE); rt.bright = 1;
   }
 

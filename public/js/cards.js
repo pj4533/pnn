@@ -7,6 +7,7 @@
 //   - story.exchanges (both exchanges price it): "KALSHI 92% · POLYMARKET 93% · both exchanges agree" badge.
 // Also: sotdCard (Story of the Day board) and countdownCard (COUNTDOWN DESK, next 3 decisions).
 import { countText } from './countdown.js';
+import { fmtVal, finDir, moveSize, moveWords, changeAbs, finHeadline, finKindLabel } from './finance.js';
 import { esc, pct, pctNum, ptsOf, moveCls, money, exchangeName, ago, until, etShort, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsMeta } from './util.js';
 
 /** "up 45 points today" / "down 1 point this week" / "" (plain English, whole points). */
@@ -177,5 +178,46 @@ export function countdownCard(items, now = Date.now(), newsFor = null) {
         </div></div>`;
     }).join('')}</div>
     <div class="meta bc-meta"><span class="fit meta-t"><b>${esc([...new Set(list.map((c) => c.source).filter(Boolean))].map(exchangeName).join(' + ') || 'Prediction markets')}</b> · odds are market prices, not forecasts of record</span></div>
+  </section>`;
+}
+
+/** MARKETS: one stock / index / bond yield / commodity. The price and its day move are facts (delayed quotes); the paired prediction-market rows
+ *  below are odds and carry their own source, size and thin-market flag. seg = {id: 'markets', story: finStory(fi)}. */
+export function marketsCard(seg, now = Date.now()) {
+  const fi = seg.story?.fin;
+  if (!fi) return '';
+  const d = finDir(fi), cls = d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
+  const abs = changeAbs(fi);
+  const sym = /^[\^=]|[=.]/.test(fi.symbol) || fi.kind !== 'stock' ? '' : ` · ${fi.symbol}`;
+  const mw = fi.market && { open: 'MARKET OPEN', closed: 'MARKET CLOSED', pre: 'BEFORE THE OPEN', post: 'AFTER HOURS' }[fi.market];
+  const nw = newsOf(seg.story);
+  const prevTxt = Number.isFinite(fi.prev) ? `${fi.market === 'open' || !fi.market ? 'Yesterday\'s close' : 'Previous close'} ${fmtVal(fi, fi.prev)}` : '';
+  const rows = fi.pairs.map((m) => {
+    const n = ptsOf(m.change1d) || 0;
+    return `<div class="fin-r" ${m.storyId ? `data-story="${esc(m.storyId)}"` : ''}>
+      <span class="fin-l fit">${esc(m.label)}</span>
+      <span class="fin-tr"><u style="width:${Math.max(1, m.yesPrice * 100)}%"></u></span>
+      <span class="fin-p">${esc(pct(m.yesPrice))}</span>
+      <span class="fin-d ${n > 0 ? 'up' : n < 0 ? 'down' : 'flat'}">${n ? esc(`${n > 0 ? '▲' : '▼'} ${Math.abs(n)}`) : '0'}</span>
+      ${m.thin ? '<i class="thin sm">THIN</i>' : ''}</div>`;
+  }).join('');
+  const ex = [...new Set(fi.pairs.map((m) => exchangeName(m.source)))].join(' + ');
+  const vol = fi.pairs.reduce((a, m) => a + (m.volume24h || 0), 0);
+  return `<section class="card bigc bc-markets fin-${cls}" data-story="${esc(fi.id)}">
+    <div class="bc-h"><span class="bc-seg fit">MARKETS · ${esc(finKindLabel(fi))}</span>${fi.delayed ? '<span class="bc-tag">PRICES DELAYED</span>' : ''}</div>
+    <div class="bc-kick fit">${esc(fi.name.toUpperCase())}${esc(sym)}${mw ? ` · ${esc(mw)}` : ''}</div>
+    <h1 class="bc-head fit" data-fit-h>${esc(finHeadline(fi))}</h1>
+    ${newsLineHtml(nw, now)}
+    <div class="fin-num">
+      <div class="fin-px"><span class="fin-v fit">${esc(fmtVal(fi, fi.price))}</span>${fi.per ? `<span class="fin-per">${esc(fi.per)}</span>` : ''}</div>
+      <div class="fin-side">
+        <div class="fin-mv ${cls}"><span class="fin-ar">${d > 0 ? '▲' : d < 0 ? '▼' : '●'}</span><span class="fin-mvn">${esc(d ? moveSize(fi).replace(/\s.*$/, '').replace(/%$/, '') : '0')}</span><span class="fin-mvu">${esc(d ? (fi.kind === 'yield' ? 'POINTS' : '%') : '')}</span></div>
+        <div class="fin-mvt fit">${esc(moveWords(fi))}${abs && fi.kind !== 'yield' ? esc(` · ${abs}`) : ''}</div>
+        ${prevTxt ? `<div class="fin-prev fit" data-drop="3">${esc(prevTxt)}</div>` : ''}
+      </div>
+    </div>
+    ${rows ? `<div class="fin-odds" data-drop="2"><div class="fin-oh fit">WHAT THE MARKETS ARE PRICING · ODDS TODAY, POINTS CHANGED</div>${rows}</div>` : ''}
+    <div class="meta bc-meta fin-meta"><span class="fit meta-t"><b>${esc(fi.delayed ? 'Prices delayed' : 'Prices')}</b>${fi.source ? ` · ${esc(fi.source)}` : ''} · updated ${esc(ago(fi.updated, now))}</span></div>
+    ${rows ? `<div class="meta bc-meta fin-meta2" data-drop="4"><span class="fit meta-t"><b>${esc(ex)}</b> · odds, not facts${vol > 0 ? ` · ${esc(money(vol))} traded in 24 hrs` : ''}</span></div>` : ''}
   </section>`;
 }

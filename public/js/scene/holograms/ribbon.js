@@ -105,8 +105,8 @@ export function createRibbon(ctx, story, opts = {}) {
     for (let p = Math.ceil(lo / pStep) * pStep; p <= hi + 1e-9; p += pStep) {
       const y = yOf(p);
       hl.push(-L / 2 - 1, y, 0.2, L / 2 + 1, y, 0.2);
-      const al = holo.label(pctText(p), { w: 256, h: 128, height: 1.6, font: '800 92px Rajdhani', color: '#f4f7ff', glow: pal.hexB, align: 'right', plate: false });
-      al.sprite.position.set(-L / 2 - 1.4, y, 0.3); al.yFrac = 0.02;
+      const al = holo.label(pctText(p), { w: 256, h: 128, height: 2.3, font: '800 92px Rajdhani', color: '#f4f7ff', glow: pal.hexB, align: 'right' });
+      al.sprite.position.set(-L / 2 - 1.1, y, 0.3); al.yFrac = 0.02;
     }
     root.add(lineSeg(new Float32Array(hl), holo.line(COL.white, { alpha: 0.16 })));
     // floor frame
@@ -127,22 +127,22 @@ export function createRibbon(ctx, story, opts = {}) {
     r.position.copy(last); r.userData.phase = i / 2; root.add(r); rings.push(r);
   }
   const delta = (lead.change1d || 0);
-  const lblNow = holo.label(pctText(lead.yesPrice ?? last.y), { w: 900, h: 300, height: 3.5, font: '900 150px Orbitron', color: '#ffffff', glow: pal.hexA, sub: ptsText(delta), subColor: delta >= 0 ? '#3dff8a' : '#ff2e55', subFont: '800 118px Rajdhani', mainY: 0.3, subY: 0.77 });
+  const lblNow = holo.label(pctText(lead.yesPrice ?? last.y), { w: 900, h: 350, height: 4.1, font: '900 150px Orbitron', color: '#ffffff', glow: pal.hexA, sub: ptsText(delta), subColor: delta >= 0 ? '#3dff8a' : '#ff2e55', subFont: '800 118px Rajdhani', mainY: 0.3, subY: 0.8, plate: true });
   lblNow.sprite.position.set(last.x - 2.5, Math.min(Y0 + H + 3.2, last.y + 3.8), 0.5); lblNow.yFrac = 0.96;
-  const lblStart = holo.label(pctText(hist[0].p), { w: 512, h: 256, height: 1.6, font: '700 120px Orbitron', color: '#dfe8ff', glow: pal.hexB, sub: spanLabel(span), subColor: pal.hexB, subFont: '600 76px Rajdhani' });
-  lblStart.sprite.position.set(first.x + 1.6, first.y + 2.3, 0.5); lblStart.yFrac = 0.04;
+  const lblStart = holo.label(pctText(hist[0].p), { w: 512, h: 256, height: 2.5, font: '700 120px Orbitron', color: '#dfe8ff', glow: pal.hexB, sub: spanLabel(span), subColor: '#cfe8ff', subFont: '700 82px Rajdhani', mainY: 0.34, subY: 0.8 });
+  lblStart.sprite.position.set(first.x + 2.2, first.y + 3.0, 0.5); lblStart.yFrac = 0.04;
   // what is measured: the lead outcome (or the question) as a chip over the top-left of the chart
   {
     const evt = String(story.eventTitle || story.headline || lead.title || '').replace(/\s+/g, ' ').trim();
     const oc = String(lead.outcome || '').trim();
     const useOc = oc && !/^(yes|no)$/i.test(oc) && oc.toUpperCase() !== evt.toUpperCase();
     const main = (useOc ? oc : evt || 'THE CHANCE').toUpperCase(), sub = useOc ? evt.toUpperCase() : 'CHANCE OF YES';
-    const tl = holo.label(main, { w: 1600, h: 200, height: 3.3, font: '900 88px Orbitron', color: '#ffffff', glow: pal.hexA, sub, subColor: '#eef3ff', subFont: '700 72px Rajdhani', align: 'left', mainY: 0.3, subY: 0.76 });
-    tl.sprite.position.set(-L / 2 - 1.6, Y0 + H + 4.0, 0.5); tl.yFrac = 0.98;
+    const tl = holo.label(main, { w: 1600, h: 230, height: 4.4, font: '900 88px Orbitron', color: '#ffffff', glow: pal.hexA, sub, subColor: '#eef3ff', subFont: '700 84px Rajdhani', align: 'left', mainY: 0.3, subY: 0.77 });
+    tl.sprite.position.set(-L / 2 - 1.6, Y0 + H + 4.6, 0.5); tl.yFrac = 0.98;
     // a zoomed axis must say so, or a 6-point wobble reads like a landslide
     if (hi - lo < 0.4) {
-      const zl = holo.label(`ZOOMED IN: ${Math.round(lo * 100)}-${Math.round(hi * 100)}% SHOWN`, { w: 768, h: 96, height: 0.95, font: '700 66px Rajdhani', color: '#ffe28a', glow: '#ffd23f', align: 'left' });
-      zl.sprite.position.set(-L / 2 - 0.6, Y0 + H + 1.55, 0.4); zl.yFrac = 0.9;
+      const zl = holo.label(`ZOOMED IN: ${Math.round(lo * 100)}-${Math.round(hi * 100)}% SHOWN`, { w: 768, h: 96, height: 1.35, font: '700 66px Rajdhani', color: '#ffe28a', glow: '#ffd23f', align: 'left' });
+      zl.sprite.position.set(-L / 2 - 0.6, Y0 + H + 1.3, 0.4); zl.yFrac = 0.9;
     }
     const vol = Number(lead.volume24h), vtxt = !Number.isFinite(vol) || vol <= 0 ? '' : vol >= 1e6 ? `$${(vol / 1e6).toFixed(1).replace(/\.0$/, '')}M` : vol >= 1e3 ? `$${Math.round(vol / 1e3)}K` : `$${Math.round(vol)}`;
     const thin = !!story.thin;
@@ -178,7 +178,7 @@ export function createRibbon(ctx, story, opts = {}) {
     if (span >= 5400) {
       const p1h = pAt(t1 - 3600), y1h = yOf(p1h);
       ghostLine(y1h, COL.gold, 0.6);
-      const gl = holo.label(`1H AGO ${pctText(p1h)}`, { w: 640, h: 128, height: 1.5, font: '900 84px Orbitron', color: '#fff0a8', glow: '#ffd23f' });
+      const gl = holo.label(`1H AGO ${pctText(p1h)}`, { w: 640, h: 128, height: 1.9, font: '900 84px Orbitron', color: '#fff0a8', glow: '#ffd23f' });
       gl.sprite.position.set(L / 2 - 11, y1h + (y1h <= last.y ? -1.2 : 1.2), 0.4); gl.yFrac = 0.5;
     }
     // news markers: a pulsing diamond on the curve where each wire headline landed
@@ -190,7 +190,7 @@ export function createRibbon(ctx, story, opts = {}) {
       const ly = Y0 + 1.1 + (i % 2) * 2.0;
       root.add(lineSeg(new Float32Array([x, ly + 0.5, 0.3, x, y, 0.3]), holo.line(COL.gold, { alpha: 0.45 })));
       const ago = Math.max(0, (t1 - m.t) / 3600);
-      const lb = holo.label(String(m.outlet || 'NEWS').toUpperCase(), { w: 512, h: 192, height: 1.9, font: '900 84px Orbitron', color: '#fff3c4', glow: '#ffd23f', sub: ago < 1 ? `${Math.max(1, Math.round(ago * 60))} MIN AGO` : `${Math.round(ago)}H AGO`, subColor: '#ffd23f', subFont: '700 64px Rajdhani' });
+      const lb = holo.label(String(m.outlet || 'NEWS').toUpperCase(), { w: 512, h: 210, height: 2.5, font: '900 84px Orbitron', color: '#fff3c4', glow: '#ffd23f', mainY: 0.34, subY: 0.8, sub: ago < 1 ? `${Math.max(1, Math.round(ago * 60))} MIN AGO` : `${Math.round(ago)}H AGO`, subColor: '#ffd23f', subFont: '700 78px Rajdhani' });
       lb.sprite.position.set(x, ly, 0.5); lb.yFrac = 0.3; lb.bright = 0;
       marks.push({ x, dm, rg, lb, passed: true, pulse: -1 });
     });
@@ -249,7 +249,7 @@ export function createRibbon(ctx, story, opts = {}) {
   };
   holo.pose = function () {
     const tgt = this.station.clone().add(new THREE.Vector3(0, Y0 + H * 0.45, -2));
-    return { target: tgt, position: tgt.clone().add(new THREE.Vector3(-3, 2.5, 44)), orbit: 0.07, box: boxAt(this.station, -L / 2 - 4.6, -2, -echoes * 1.9 - 1.5, L / 2 + 2, Y0 + H + 5.8, 2.5) };
+    return { target: tgt, position: tgt.clone().add(new THREE.Vector3(-3, 2.5, 44)), orbit: 0.07, box: boxAt(this.station, -L / 2 - 4.6, -2, -echoes * 1.9 - 1.5, L / 2 + 2, Y0 + H + 7.0, 2.5) };
   };
   return holo;
 }

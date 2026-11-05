@@ -837,5 +837,19 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
   };
 }
 
+// MARKETS stories (stock and bond moves, server/finance.mjs, QUEUED-FIXES item 12). Moves arrive already gated
+// (threshold + headline + paired market). They are a modest slice of the stream, so only the strongest few air:
+// one per symbol class first (a yield, an index and a stock beat three stocks), by severity (move / threshold), and a
+// move whose paired markets are all thin ranks below one with real money. Ties go to the newer fire.
+export function rankFinanceMoves(moves, { max = 3 } = {}) {
+  // the VIX is a derived gauge: on a selloff the S&P 500 itself is the better story
+  const w = (m) => (m.severity || 0) * (m.markets?.some((x) => !x.thin) ? 1 : 0.6) * (m.symbol === '^VIX' ? 0.7 : 1);
+  const sorted = [...(moves || [])].sort((a, b) => w(b) - w(a) || Date.parse(b.at) - Date.parse(a.at));
+  const out = [], kinds = new Set();
+  for (const m of sorted) if (!kinds.has(m.kind) && out.length < max) { kinds.add(m.kind); out.push(m); }
+  for (const m of sorted) if (!out.includes(m) && out.length < max) out.push(m);
+  return out.sort((a, b) => w(b) - w(a));
+}
+
 export { familyOf };
-export default { buildStories, inferRegion, airedSet, swingOf, isSettling };
+export default { buildStories, inferRegion, airedSet, swingOf, isSettling, rankFinanceMoves };

@@ -14,6 +14,8 @@ import { createRibbon } from './holograms/ribbon.js';
 import { createCountdown } from './holograms/countdown.js';
 import { createMovers } from './holograms/movers.js';
 import { createSotd } from './holograms/sotd.js';
+import { createFinance } from './holograms/finance.js';
+import { perf } from '../perf.js';
 
 // Where holograms sit on screen (viewport fractions). Overlay panels take the left ~30% and bottom ~30%.
 export const STAGE_RECT = { x0: 0.30, x1: 0.985, y0: 0.07, y1: 0.70 };
@@ -44,6 +46,16 @@ export function createScene(canvas, opts = {}) {
   const fx = createFx(scene);
   const post = createPost(renderer, scene, camera, { samples: pixelRatio < 1.5 ? 4 : 0 });
   world.attachPost(post);
+  // perf telemetry (item 11): GL compile/upload timing + per-frame scene / transition / widget attribution (perf.js)
+  perf.attachScene({
+    renderer, director: () => world.env,
+    widget: () => {
+      const c = current && !current.dead ? current : null;
+      if (!c) return outgoing.length ? { vis: 'none', phase: 'out' } : null;
+      const phase = (c.reveal ?? 1) < 0.999 ? 'reveal' : rig.k < 1 ? 'fly' : outgoing.length ? 'out' : 'hold';
+      return { vis: c._pvis || 'dial', phase };
+    },
+  });
   const globe = createGlobe(scene, GLOBE_STATION);
   // the projector stage: anchor + story + pulses shared by the widget, the rig under it, every scene and the post pass
   const hero = createHeroStage({ THREE, scene, camera, fx, post, sh: world.director.sh });
@@ -260,6 +272,7 @@ export function createScene(canvas, opts = {}) {
     let holo;
     switch (vis) {
       case 'sotd': holo = createSotd(ctx, story, o); break;
+      case 'finance': holo = story.finance ? createFinance(ctx, story, o) : createDial(ctx, story, o); break;
       case 'outcomes': holo = (story.markets?.length || 0) >= 2 ? createOutcomes(ctx, story, o) : dialOrReplay(); break;
       case 'ribbon': holo = createRibbon(ctx, story, o); break;
       case 'globe': holo = story.visual?.region ? globeHolo(ctx, story) : dialOrReplay(); break;
@@ -269,6 +282,7 @@ export function createScene(canvas, opts = {}) {
       default: holo = createDial(ctx, story, o);
     }
     holoRef = holo;
+    if (holo) holo._pvis = vis;
     return { holo, pal, station, vis, storyId: story?.id ?? null, signals: storySignals(story, seg, pal) };
   }
   function pickTheme(cat) { return ['politics', 'economy', 'courts', 'tech', 'science', 'health', 'culture', 'weather', 'world'].includes(cat) ? cat : null; }
@@ -299,6 +313,8 @@ export function createScene(canvas, opts = {}) {
   let fpsAcc = 0, fpsN = 0, fpsCheckAt = 8;
   const NO_FPS_GUARD = new URLSearchParams(location.search).get('fpsguard') === '0';   // tests: keep quality fixed
   let envQ = world.env.getState().quality, goodChecks = 0, lastQChange = 0;
+  let lapT = 0;
+  function lap(i) { const s1 = performance.now(); perf.sec(i, s1 - lapT); lapT = s1; }   // no per-frame closure (GC)
   function frame(now) {
     if (!running) return;
     raf = requestAnimationFrame(frame);
@@ -306,20 +322,25 @@ export function createScene(canvas, opts = {}) {
     const dt = Math.min(0.1, raw);           // simulation step (clamped so a stall doesn't explode physics)
     if (api.timing.frames.length < 12) api.timing.frames.push(+raw.toFixed(3));
     t += dt; TIME.value = t;
+    // perf sections (perf.SECTIONS order): cam, hero, widget, outgoing, globe, fx, world, post, other
+    const f0 = performance.now(); lapT = f0;
     try {
-      tickCamera(dt, t, now);
+      tickCamera(dt, t, now); lap(0);
       const live = current && !current.dead ? current : null;
-      hero.tick(dt, t, { pose: live ? live.pose() : null, rect: RECT, cssW: W, cssH: Hh, visible: !!live && live.visible !== false });
+      hero.tick(dt, t, { pose: live ? live.pose() : null, rect: RECT, cssW: W, cssH: Hh, visible: !!live && live.visible !== false }); lap(1);
       if (current) current.tick(dt, t);
       if (live && !live._heroRevealed && (live.reveal ?? 1) >= 0.999 && live.visible) { live._heroRevealed = true; hero.emit('reveal', 0.6); }
+      lap(2);
       for (let i = outgoing.length - 1; i >= 0; i--) {
         const h = outgoing[i]; h.tick(dt, t);
-        if (h.dead) { try { h.dispose(); } catch (e) { reportErr('dispose', e); } outgoing.splice(i, 1); }
+        if (h.dead) { const d0 = performance.now(); try { h.dispose(); } catch (e) { reportErr('dispose', e); } outgoing.splice(i, 1); perf.ev('widget.dispose', performance.now() - d0, h._pvis); }
       }
-      globe.tick(dt, t);
-      fx.tick(dt);
-      world.tick(dt, t, camera);
-      post.render(dt);
+      lap(3);
+      globe.tick(dt, t); lap(4);
+      fx.tick(dt); lap(5);
+      world.tick(dt, t, camera); lap(6);
+      post.render(dt); lap(7);
+      perf.passes(post.perf.names, post.perf.ms);
     } catch (e) { if (errCount++ < 5) reportErr('frame', e); }
     // chip appears / changes size after a story starts: refit (cheap; once a second)
     if ((api._chipT = (api._chipT || 0) + dt) > 1) {
@@ -339,6 +360,9 @@ export function createScene(canvas, opts = {}) {
       else goodChecks = 0;
       api.envQ = envQ;
     }
+    lap(8);
+    perf.cpu(performance.now() - f0);
+    perf.setQuality(envQ, pixelRatio);
   }
   // Warm-up: build one of every hologram far below the floor and compile all shader programs now, so the first
   // real story doesn't stall for seconds mid-flight while programs link.
@@ -364,6 +388,7 @@ export function createScene(canvas, opts = {}) {
     } catch (e) { reportErr('warmup', e); }
     for (const h of built) { try { h.dispose(); } catch {} }
     api.timing.warmupMs = Math.round(performance.now() - t0);
+    perf.ev('scene.warmup', api.timing.warmupMs, 'holograms');
   }
 
   const api = {
@@ -382,7 +407,12 @@ export function createScene(canvas, opts = {}) {
         if (key === curKey && current && !current.dead) return;
         if (!story && seg !== 'movers') return;
         curKey = key;
-        swapTo(build(story, seg));
+        const b0 = performance.now();
+        const built = build(story, seg);
+        const b1 = performance.now();
+        swapTo(built);
+        perf.ev('widget.build', b1 - b0, built.vis);
+        perf.ev('widget.swap', performance.now() - b1, built.vis);
       } catch (e) { reportErr('showStory', e); }
     },
     showAlert(alert) {
@@ -402,8 +432,10 @@ export function createScene(canvas, opts = {}) {
         let holoRef = null;
         const ctx = { scene, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed: pal.seed, rnd: pal.rnd, globe, hero };
         const story = { id: alert.storyId, lead: { yesPrice: alert.to, change1d: alert.to - alert.from } };
+        const a0 = performance.now();
         const holo = createDial(ctx, story, { alert: { from: alert.from, to: alert.to, minutes: alert.minutes || 0, label: alert.short || alert.label || alert.headline || '' } });
-        holoRef = holo;
+        holoRef = holo; holo._pvis = 'alert';
+        perf.ev('widget.build', performance.now() - a0, 'alert');
         curKey = 'alert:' + (alert.id || '');
         const mv = (alert.to ?? 0) - (alert.from ?? 0);
         swapTo({ holo, pal, station, vis: 'alert', signals: { move: mv, dir: mv > 0 ? 1 : mv < 0 ? -1 : 0, energy: 1, swing: false, alert: true, colorA: COL.alert, colorB: COL.amber, theme: 'alert' } });

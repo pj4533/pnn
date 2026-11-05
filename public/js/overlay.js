@@ -1,11 +1,11 @@
 // Overlay layer: top bar (PNN bug, LIVE, segment title, ET clock), left column, bottom strip, stage frame.
 import { etClock, etDate } from './util.js';
 import { leadCard, miniCard, focusCard, standbyCard } from './panels.js';
-import { segmentCard, sotdCard, countdownCard } from './cards.js';
+import { segmentCard, sotdCard, countdownCard, marketsCard } from './cards.js';
 import { esc } from './util.js';
 import { scheduleFit } from './fit.js';
 
-export const SEG_TITLES = { top: 'TOP STORIES', focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK', desk: 'DESK', sotd: 'STORY OF THE DAY', countdown: 'COUNTDOWN DESK', standby: 'STANDING BY' };
+export const SEG_TITLES = { top: 'TOP STORIES', focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK', desk: 'DESK', sotd: 'STORY OF THE DAY', countdown: 'COUNTDOWN DESK', markets: 'MARKETS', standby: 'STANDING BY' };
 
 export function createOverlay(root) {
   root.innerHTML = `
@@ -92,7 +92,7 @@ export function createOverlay(root) {
   // The stage link, one per card kind: a port on the card's stage-facing edge at the height of the card's key row (lit row, big %, dial,
   // board...), with a pulse running out of it. The long connector beam (stagelink.js) only fits where the free gap is wide (TOP STORIES);
   // the dock is the equivalent link everywhere else, so every card visibly feeds the widget.
-  const LINK_ROWS = ['.row.on', '.big', '.bc-num', '.sw', '.bc-dl', '.sotd-board', '.cd-i.first', '.headline', '.bc-head'];
+  const LINK_ROWS = ['.row.on', '.big', '.bc-num', '.fin-num', '.sw', '.bc-dl', '.sotd-board', '.cd-i.first', '.headline', '.bc-head'];
   function addLink(host) {
     const card = host.querySelector('.card');
     if (!card || card.querySelector(':scope > .lk')) return;
@@ -124,7 +124,7 @@ export function createOverlay(root) {
     // viewport fractions of the open 3D area for the current layout
     const seg = document.body.dataset.segment;
     if (seg === 'top') return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.63 };
-    if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown') return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
+    if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown' || seg === 'markets') return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
     return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.78 };
   }
   const api = {
@@ -157,6 +157,9 @@ export function createOverlay(root) {
       } else if (seg.id === 'countdown') {
         html = countdownCard(state?.countdown, now, (id) => [...(state.stories || []), ...(state.closing || []), ...(state.desks || []).flatMap((d) => d.stories || [])].find((x) => x.id === id)?.news);
         label = seg.story?.eventTitle || 'Next big decisions'; sub = 'Next scheduled decisions';
+      } else if (seg.id === 'markets' && seg.story?.fin) {
+        html = marketsCard(seg, now);
+        label = seg.story.eventTitle || 'Markets'; sub = 'Stocks, bonds and what the markets are pricing';
       } else if (seg.id === 'desk') {
         html = segmentCard(seg, now);
         label = seg.story.eventTitle; title = seg.desk.title || `${seg.desk.id.toUpperCase()} DESK`;
@@ -204,11 +207,14 @@ export function createOverlay(root) {
     setConnected(ok) { conn.hidden = !!ok; },
     get stageRect() {
       const r = baseStage();
-      // the NEXT BIG DECISION chip sits in the stage's lower-right corner: frame the hologram above it
+      // the NEXT BIG DECISION chip (position: fixed, lower-right) sits over the stage: frame the hologram above it. offsetParent is null for
+      // every fixed element, so the old `chip.offsetParent !== null` test never passed; measure the box and the computed style instead.
       const chip = document.getElementById('chip');
-      if (chip && chip.offsetParent !== null && chip.childElementCount) {
-        const c = chip.getBoundingClientRect(), top = c.top / window.innerHeight;
-        if (c.width > 0 && top > r.y0 + 0.25 && top < r.y1) r.y1 = top - 0.01;
+      if (chip && chip.childElementCount) {
+        const cs = getComputedStyle(chip), c = chip.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+        const shown = cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) > 0.05 && c.width > 0 && c.height > 0;
+        const top = c.top / H;
+        if (shown && c.right / W > r.x0 && c.left / W < r.x1 && top > r.y0 + 0.25 && top < r.y1) r.y1 = top - 0.01;
       }
       return r;
     },

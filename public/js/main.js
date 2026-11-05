@@ -11,6 +11,7 @@ import { startAutoFit, fitAll, fitReport } from './fit.js';
 import { createPops } from './pops.js';
 import { createCountdownChip } from './countdown.js';
 import { createStageLink, watchFx } from './stagelink.js';
+import { initPerf } from './perf.js';
 
 window.addEventListener('error', (e) => report('window.error', e.error || e.message, { src: e.filename, line: e.lineno }));
 window.addEventListener('unhandledrejection', (e) => report('unhandledrejection', e.reason));
@@ -56,6 +57,8 @@ const scene = {
 window.addEventListener('resize', () => scene.resize(window.innerWidth, window.innerHeight));
 
 const director = createDirector({ overlay, chyron, scene });
+// Perf telemetry (item 11): frame times + hitch attribution every 30 s to /api/client-log; ?perf=1 shows a HUD.
+safe('perf', () => initPerf({ send: !FIXTURE || new URLSearchParams(location.search).has('perflog'), segment: () => director.current?.id, wrap: [[overlay, 'render', 'overlay.render'], [chyron, 'update', 'chyron.update'], [director, 'update', 'director.update']] }));
 // NEWS MEETS MARKETS: holds the rundown, shows the matched story in 3D, then cuts to STORY FOCUS on it.
 const flashes = createFlashes(document.getElementById('flash'), {
   onStart(f) {

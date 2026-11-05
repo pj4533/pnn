@@ -256,6 +256,94 @@ export default {
     ],
   },
 
+  // STOCK AND BOND MOVES (QUEUED-FIXES item 12, research/financial-data.md; server/finance.mjs + sources/finance.mjs).
+  // Yahoo /v8/finance/chart is the quote source (no key; one request per symbol, spaced), Treasury.gov XML gives the
+  // official daily curve and the 2Y. A move airs (state.finance.moves) only when it crosses its threshold AND a wire
+  // headline matches AND at least one paired prediction market from `pairings` is well traded; otherwise ticker only.
+  finance: {
+    enabled: true,
+    userAgent: 'PNN/0.1 (local news display)',
+    spacingMs: 220,                 // gap between Yahoo requests in a sweep (~30 symbols)
+    // Sweep cadence by US market hours (ET): regular 9:30-16:00 weekdays, extended 4:00-9:30 and 16:00-20:00,
+    // overnight/weekends only the futures/FX in `overnightSymbols`.
+    cadenceSec: { regular: 60, extended: 300, overnight: 1800 },
+    overnightSymbols: ['CL=F', 'GC=F', 'DX-Y.NYB'],
+    historyTtlSec: 1200,            // 5d/15m and 1mo/1d sparkline history, fetched only for symbols that are big
+    treasurySec: 3600,              // Treasury.gov daily curve (hourly is plenty: it posts once a day ~3:30-6pm ET)
+    pairingTtlSec: 300,             // paired prediction-market events fetched by slug/series (hourly S&P lines go stale fast)
+    maxMoves: 3,                    // rank.mjs rankFinanceMoves keeps the strongest few
+    marketsPerMove: 3,
+    minPairVolume: { polymarket: 1000, kalshi: 500 },   // per paired market, 24h (USD / contracts): well-traded only
+    headlineHours: { open: 6, closed: 16 },             // wire archive window for the "In the news" headline
+    // Big-move thresholds: stocks/indices/commodities in % (day), yields in points (day). `swing` = move within 60 min.
+    thresholds: {
+      top5: { day: 2, swing: 2 }, stock: { day: 3, swing: 2 }, index: { day: 1.5 }, ndx: { day: 2 }, vix: { day: 15 },
+      yield: { day: 0.10, swing: 0.07 }, oil: { day: 3 }, gold: { day: 2 }, dollar: { day: 1 },
+    },
+    // Hysteresis: a live move re-airs only when it grows 1.5x or after 4h; it leaves when it shrinks under 80% of threshold.
+    hysteresis: { grow: 1.5, reairHours: 4, exit: 0.8 },
+    // Watchlist (user, 2026-11-05: top ~20 mega-caps, indices incl. VIX, Treasury 2Y/5Y/10Y/30Y, oil, gold, dollar).
+    // `strong` aliases name the thing outright; `broad` ones (sector words, "stocks") need a market/move word too.
+    watchlist: [
+      { symbol: 'NVDA', name: 'NVIDIA', kind: 'stock', tier: 'top5', company: 'nvidia', strong: ['nvidia', 'nvda', 'jensen huang'], broad: ['chipmakers?', 'chip stocks', 'chip selloff', 'chip sell-off', 'ai stocks', 'ai trade', 'semiconductors?'], pair: ['lcDec', 'lcNov'] },
+      { symbol: 'AAPL', name: 'Apple', kind: 'stock', tier: 'top5', company: 'apple', strong: ['apple', 'aapl', 'tim cook', 'iphone'], pair: ['lcDec', 'lcNov'] },
+      { symbol: 'MSFT', name: 'Microsoft', kind: 'stock', tier: 'top5', company: 'microsoft', strong: ['microsoft', 'msft', 'satya nadella'], pair: ['lcDec', 'lcNov'] },
+      { symbol: 'GOOGL', name: 'Alphabet', kind: 'stock', tier: 'top5', company: 'alphabet|google', strong: ['alphabet', 'googl', 'google'], pair: ['lcDec', 'lcNov'] },
+      { symbol: 'AMZN', name: 'Amazon', kind: 'stock', tier: 'top5', company: 'amazon', strong: ['amazon', 'amzn', 'andy jassy'], pair: ['lcDec', 'lcNov'] },
+      { symbol: 'META', name: 'Meta', kind: 'stock', company: 'meta', strong: ['meta platforms', 'zuckerberg', '(?<!\\w)meta(?! ?data)'], pair: ['lcDec'] },
+      { symbol: 'AVGO', name: 'Broadcom', kind: 'stock', company: 'broadcom', strong: ['broadcom', 'avgo'], broad: ['chipmakers?', 'chip stocks'], pair: ['lcDec'] },
+      { symbol: 'TSLA', name: 'Tesla', kind: 'stock', company: 'tesla', strong: ['tesla', 'tsla'], broad: ['musk.s stocks', 'musk stocks'], pair: ['lcDec'] },
+      { symbol: 'TSM', name: 'TSMC', kind: 'stock', company: 'tsmc|taiwan semiconductor', strong: ['tsmc', 'taiwan semiconductor'], broad: ['chipmakers?'], pair: [] },
+      { symbol: 'BRK-B', name: 'Berkshire Hathaway', kind: 'stock', company: 'berkshire', strong: ['berkshire', 'buffett'], pair: [] },
+      { symbol: 'LLY', name: 'Eli Lilly', kind: 'stock', company: 'lilly', strong: ['eli lilly', 'lilly'], pair: [] },
+      { symbol: 'JPM', name: 'JPMorgan', kind: 'stock', company: 'jpmorgan', strong: ['jpmorgan', 'jamie dimon'], broad: ['bank stocks'], pair: [] },
+      { symbol: 'WMT', name: 'Walmart', kind: 'stock', company: 'walmart', strong: ['walmart'], pair: [] },
+      { symbol: 'V', name: 'Visa', kind: 'stock', company: 'visa', strong: ['visa inc', 'visa shares', 'visa stock', 'visa earnings'], pair: [] },
+      { symbol: 'ORCL', name: 'Oracle', kind: 'stock', company: 'oracle', strong: ['oracle', 'larry ellison'], pair: [] },
+      { symbol: 'MA', name: 'Mastercard', kind: 'stock', company: 'mastercard', strong: ['mastercard'], pair: [] },
+      { symbol: 'NFLX', name: 'Netflix', kind: 'stock', company: 'netflix', strong: ['netflix'], pair: [] },
+      { symbol: 'XOM', name: 'Exxon Mobil', kind: 'stock', company: 'exxon', strong: ['exxon'], pair: [] },
+      { symbol: 'COST', name: 'Costco', kind: 'stock', company: 'costco', strong: ['costco'], pair: [] },
+      { symbol: 'PLTR', name: 'Palantir', kind: 'stock', company: 'palantir', strong: ['palantir'], pair: [] },
+      { symbol: '^GSPC', name: 'S&P 500', kind: 'index', tier: 'index', strong: ['s&p 500', 's&p', 'spx'], broad: ['stocks', 'stock market', 'wall street', 'equities', 'dow'], pair: ['kInxu', 'kInxy', 'pmRecession'] },
+      { symbol: '^NDX', name: 'Nasdaq-100', kind: 'index', tier: 'ndx', strong: ['nasdaq'], broad: ['tech stocks', 'chip stocks', 'chipmakers?', 'ai stocks', 'ai trade', 'stocks', 'wall street'], pair: ['kNdxU', 'kNdx', 'lcDecLeader'] },
+      { symbol: '^DJI', name: 'Dow', kind: 'index', tier: 'index', strong: ['dow jones', 'the dow', 'dow'], broad: ['blue.chips?', 'stocks', 'wall street'], pair: ['kInxu', 'pmRecession', 'kRecession'] },
+      { symbol: '^VIX', name: 'VIX volatility index', kind: 'index', tier: 'vix', strong: ['vix', 'fear gauge', 'volatility index'], broad: ['volatility', 'selloff', 'sell-off', 'stocks', 'wall street'], pair: ['kInxu', 'pmRecession'] },
+      { symbol: '^FVX', name: '5-year Treasury yield', short: '5-year yield', kind: 'yield', tier: 'yield', treasury: 'BC_5YEAR', strong: ['5-year', 'five-year'], broad: ['treasur(y|ys|ies)', 'yields?', 'bonds?', 'rates'], pair: ['pmFedDec', 'kFedDecision', 'pmHike2026'] },
+      { symbol: '^TNX', name: '10-year Treasury yield', short: '10-year yield', kind: 'yield', tier: 'yield', treasury: 'BC_10YEAR', strong: ['10-year', 'ten-year', 'treasury yields?', 'treasurys'], broad: ['treasur(y|ies)', 'yields?', 'bonds?', 'rates'], pair: ['kUst10', 'pm10yHigh', 'pmFedDec'] },
+      { symbol: '^TYX', name: '30-year Treasury yield', short: '30-year yield', kind: 'yield', tier: 'yield', treasury: 'BC_30YEAR', strong: ['30-year', 'long bond'], broad: ['treasur(y|ys|ies)', 'yields?', 'bonds?'], pair: ['pmFedDec', 'kFedRate', 'pmHike2026'] },
+      // 2Y: Yahoo has no 2Y series, so it comes from Treasury.gov (daily close vs the previous close).
+      { symbol: 'UST2Y', name: '2-year Treasury yield', short: '2-year yield', kind: 'yield', tier: 'yield', treasury: 'BC_2YEAR', source: 'treasury', strong: ['2-year', 'two-year'], broad: ['treasur(y|ys|ies)', 'yields?', 'fed'], pair: ['pmFedDec', 'kFedDecision', 'pmHike2026'] },
+      { symbol: 'CL=F', name: 'WTI oil', kind: 'commodity', tier: 'oil', unit: '$', strong: ['crude', 'wti', 'opec', 'brent', 'oil prices?', 'oil futures'], broad: ['(?<!olive )oil'], pair: ['kWti'] },
+      { symbol: 'GC=F', name: 'Gold', kind: 'commodity', tier: 'gold', unit: '$', strong: ['gold prices?', 'gold futures', 'bullion', 'precious metals'], broad: ['gold'], pair: ['pmGoldBest'] },
+      { symbol: 'DX-Y.NYB', name: 'Dollar index', short: 'Dollar', kind: 'commodity', tier: 'dollar', strong: ['dollar index', 'greenback', 'u\\.?s\\. dollar'], broad: ['dollar'], pair: ['pmFedDec', 'pmHike2026'] },
+    ],
+    // EXPLICIT pairing table: move -> prediction markets (user 2026-11-05: well-traded pairings only, no thin single-stock
+    // earnings). pick: 'company' (the move's company outcome, then the leader), 'leader' (highest %), 'line' (ladder rung
+    // nearest 50% on the soonest event), 'topvol' (busiest market), 'single'. phrase: a noun phrase that reads after
+    // "N% chance of" ({o} = cleaned outcome, {when} = from the Kalshi event date). Verified by curl 2026-11-05.
+    pairings: {
+      lcDec: { source: 'polymarket', slug: 'largest-company-end-of-december-2026', pick: 'company', phrase: "{o} being the world's largest company at the end of December" },
+      lcDecLeader: { source: 'polymarket', slug: 'largest-company-end-of-december-2026', pick: 'leader', phrase: "{o} being the world's largest company at the end of December" },
+      lcNov: { source: 'polymarket', slug: 'largest-company-end-of-november-2026', pick: 'company', phrase: "{o} being the world's largest company at the end of November" },
+      pmFedDec: { source: 'polymarket', slug: 'fed-decision-in-december-20260729232808632', pick: 'leader', phrase: '{fed} at the December meeting' },
+      pmHike2026: { source: 'polymarket', slug: 'another-fed-rate-hike-in-2026', pick: 'single', phrase: 'another Fed rate hike in 2026' },
+      pm10yHigh: { source: 'polymarket', slug: 'how-high-will-10-year-treasury-yield-go-before-2027', pick: 'topvol', phrase: 'the 10-year yield hitting {o} before 2027' },
+      pmRecession: { source: 'polymarket', slug: 'us-recession-by-end-of-2026', pick: 'single', phrase: 'a US recession by the end of 2026' },
+      pmGoldBest: { source: 'polymarket', slug: 'bitcoin-vs-gold-vs-sp-500-in-2026', pick: 'outcome', outcome: 'gold', phrase: 'gold beating bitcoin and the S&P 500 in 2026' },
+      kInxu: { source: 'kalshi', series: 'KXINXU', pick: 'line', phrase: 'the S&P 500 at {o} {when}' },
+      kInxy: { source: 'kalshi', series: 'KXINXY', pick: 'leader', phrase: 'the S&P 500 ending 2026 {o}' },
+      kNdxU: { source: 'kalshi', series: 'KXNASDAQ100U', pick: 'line', phrase: 'the Nasdaq-100 at {o} {when}' },
+      kNdx: { source: 'kalshi', series: 'KXNASDAQ100', pick: 'leader', phrase: 'the Nasdaq-100 closing {o} {when}' },
+      kUst10: { source: 'kalshi', series: 'KXUST10A', pick: 'line', phrase: 'the 10-year yield at {o} {when}' },
+      k10y550: { source: 'kalshi', series: 'KX10YR550PCT', pick: 'single', phrase: 'the 10-year yield hitting 5.50%' },
+      kWti: { source: 'kalshi', series: 'KXWTI', pick: 'line', phrase: 'WTI oil {o} {when}' },
+      kFedDecision: { source: 'kalshi', series: 'KXFEDDECISION', pick: 'leader', phrase: '{fed} at the {month} meeting' },
+      kFedRate: { source: 'kalshi', series: 'KXFED', pick: 'topvol', phrase: 'the Fed funds rate {o} after the {month} meeting' },
+      kRecession: { source: 'kalshi', series: 'KXRECSSNBER', pick: 'single', phrase: 'a US recession starting in 2026', event: 'KXRECSSNBER-26' },
+    },
+  },
+
   thinVolume: 25_000,       // USD 24h volume below this is flagged "thin"
 
   breaking: {

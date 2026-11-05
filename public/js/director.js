@@ -2,7 +2,7 @@
 //   a row… it needs to be different each time"). Each step picks a card kind different from the last one
 //   (STORY FOCUS / BIGGEST MOVERS / THIS WEEK / a DESK story), and a story whose category group differs from the last
 //   card's. Scheduled resets: TOP STORIES every ~6–8 cards, STORY OF THE DAY every ~9–11 (when state.sotd), COUNTDOWN DESK
-//   every ~11–13 (when state.countdown). Stories come from per-list shuffle bags (draw()): every list airs all its items
+//   every ~11–13 (when state.countdown), MARKETS (a stock / index / bond yield with its paired odds, when state.finance) every ~5–6 cards. Stories come from per-list shuffle bags (draw()): every list airs all its items
 //   before any repeats, then reshuffles; random start on page load.
 // Watchability (2026-11-04):
 //   - the director plans two cards ahead, so the top bar can tease "NEXT: <short> · then <short>";
@@ -10,9 +10,10 @@
 //   - a settling story (>=95% / <=5% after a big move) airs once, then leaves every bag until it stops settling;
 //   - the chyron carries "ALSO MOVING: …" (a mover not on screen) or the tease instead of repeating the card's headline.
 // ?fast=1 runs the clock 10x for testing; window.__pnn.airLog lists what aired. Client 'air'/'draw' logs go to the server.
-// Keys: → next card, Space pause, 1–7 force top/focus/movers/week/desk/sotd/countdown now.
+// Keys: → next card, Space pause, 1–8 force top/focus/movers/week/desk/sotd/countdown/markets now.
 import { report, pct, money, exchangeName, ago } from './util.js';
 import { pointsText } from './cards.js';
+import { finCards, finItems, finStory } from './finance.js';
 
 // The kinds of card in the mix (weights: how often each kind is picked; never the same kind twice in a row).
 const RUNDOWN = [
@@ -23,10 +24,11 @@ const RUNDOWN = [
   { id: 'desk', ms: 9000, w: 3 },
   { id: 'sotd', ms: 13000, w: 0 },           // scheduled
   { id: 'countdown', ms: 10000, w: 0 },      // scheduled
+  { id: 'markets', ms: 11000, w: 0 },        // scheduled: at most one per 5-6 cards (a price chart needs the time)
 ];
 const DEF = Object.fromEntries(RUNDOWN.map((d) => [d.id, d]));
-const SCHED = { top: [6, 8], sotd: [9, 11], countdown: [11, 13] }; // after a random a–b cards
-const SCHED_ORDER = ['top', 'sotd', 'countdown'];
+const SCHED = { top: [6, 8], sotd: [9, 11], countdown: [11, 13], markets: [4, 5] }; // after a random a–b cards
+const SCHED_ORDER = ['top', 'sotd', 'countdown', 'markets'];
 const RECENT_MS = 5 * 60000; // no story twice within 5 minutes, under any banner
 // category groups for "no two similar stories in a row"
 const GROUP = { elections: 'politics', courts: 'politics', geopolitics: 'world', science: 'tech', health: 'tech', weather: 'culture', games: 'sports' };
@@ -37,7 +39,7 @@ const T0 = Date.now();
 const clock = () => T0 + (Date.now() - T0) * SPEED; // scaled "now" for freshness
 const ms$ = (ms) => ms / SPEED;
 const MINI_POOL = 12;         // TOP STORIES minis draw from board ranks 2..12
-const KEYS = ['top', 'focus', 'movers', 'week', 'desk', 'sotd', 'countdown'];
+const KEYS = ['top', 'focus', 'movers', 'week', 'desk', 'sotd', 'countdown', 'markets'];
 const DESK_TAG = { economy: 'ECONOMY', tech: 'TECH', world: 'WORLD', culture: 'CULTURE', politics: 'POLITICS', sports: 'SPORTS & GAMES' };
 const DESK_ORDER = ['economy', 'tech', 'world', 'culture', 'politics', 'sports'];
 const rand = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
@@ -52,7 +54,7 @@ export function createDirector({ overlay, chyron, scene }) {
   let plan = [];           // the next two cards, already drawn (for the NEXT tease)
   // plan-time bookkeeping (the last PLANNED card, which airs after everything already planned)
   let pLast = null, pGroup = null;
-  const since = { top: 0, sotd: 0, countdown: 0 }, after = { top: rand(SCHED.top), sotd: rand([4, 6]), countdown: rand([6, 8]) };
+  const since = { top: 0, sotd: 0, countdown: 0, markets: 0 }, after = { top: rand(SCHED.top), sotd: rand([4, 6]), countdown: rand([6, 8]), markets: rand([2, 4]) };
   const note = (id, seg) => {
     if (!id) return;
     const at = clock();
@@ -118,16 +120,20 @@ export function createDirector({ overlay, chyron, scene }) {
     desk: (s) => desksOf(s).length > 0,
     sotd: (s) => Array.isArray(s.sotd?.markets) && s.sotd.markets.length > 0 && !!s.sotd.title,
     countdown: (s) => futureCountdown(s).length >= 2, // one lone entry is a thin card; the corner chip still shows it
+    markets: (s) => finCards(s).length > 0,
   };
+  const finStoryFor = (id) => { const fi = typeof id === 'string' && id.startsWith('fin:') ? finItems(state).find((x) => x.id === id) : null; return fi ? finStory(fi) : null; }; // a clicked ticker quote
   const deskStory = (eventId) => { for (const d of desksOf(state)) { const x = d.stories.find((s) => s.id === eventId); if (x) return x; } return null; };
-  const storyFor = (eventId) => state.stories.find((s) => s.id === eventId) || state.closing?.find((s) => s.id === eventId) || deskStory(eventId) || null;
+  const storyFor = (eventId) => state.stories.find((s) => s.id === eventId) || state.closing?.find((s) => s.id === eventId) || deskStory(eventId) || finStoryFor(eventId) || null;
   // A mover whose event didn't make the board (clicked in the ticker or movers list): a minimal one-market story.
   // 'TN-04 House winner?' -> 'the TN-04 House race'; other contexts pass through without the '?'
   const place = (w) => { const t = w.replace(/\?$/, '').trim(); return /\s+winner$/i.test(t) ? `the ${t.replace(/\s+winner$/i, '')} race` : t; };
   function moverHeadline(m) {
     const p = Math.round(m.yesPrice * 100), pctTxt = p < 1 ? 'under 1%' : p > 99 ? 'over 99%' : `${p}%`;
     const who = m.label || m.outcome || m.eventTitle || m.title;
-    const where = m.context || (m.outcome ? m.eventTitle : '');
+    // never "… in Who will win …" (QUEUED-FIXES 3): a server label is already self-contained, and a raw question is never a place
+    const raw = m.label ? '' : m.context || (m.outcome ? m.eventTitle : '');
+    const where = /^(will|who|what|which|when|how|is|are|does|do|can)\b/i.test(raw || '') ? '' : raw;
     const n = Math.round((m.change1d ?? 0) * 100), verb = n > 0 ? 'climbs to' : n < 0 ? 'slips to' : 'holds at';
     return `${who} ${verb} ${pctTxt}${where ? ` in ${place(where)}` : ''}`;
   }
@@ -222,6 +228,12 @@ export function createDirector({ overlay, chyron, scene }) {
       return picked[0] ? withRank({ id, story: picked[0] }) : null;
     }
     if (id === 'top') return topSeg();
+    if (id === 'markets') {
+      const list = finCards(state).map(finStory);
+      const picked = draw('markets', list, 1, null);
+      logDraw('markets', list, picked);
+      return picked[0] ? { id: 'markets', story: picked[0] } : null;
+    }
     if (id === 'sotd') return has.sotd(state) ? { id: 'sotd', sotd: state.sotd, story: sotdStory(state.sotd) } : null;
     if (id === 'countdown') {
       const c = futureCountdown(state).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -249,6 +261,7 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.id === 'sotd') return has.sotd(state) ? { ...seg, sotd: state.sotd, story: sotdStory(state.sotd) } : null;
     if (seg.id === 'countdown') return has.countdown(state) ? build('countdown') : null;
     if (seg.id === 'standby') return seg;
+    if (seg.id === 'markets') { const fi = finCards(state).find((x) => x.id === seg.story?.id); return fi ? { ...seg, story: finStory(fi) } : null; }
     const desk = seg.desk ? desksOf(state).find((d) => d.id === seg.desk.id) : null;
     if (seg.id === 'desk' && !desk) return null;
     const list = candidates(seg.id, seg.desk?.id);
@@ -294,6 +307,7 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.id === 'top') return 'Top stories';
     if (seg.id === 'sotd') return `Story of the Day: ${seg.sotd?.title || ''}`.trim();
     if (seg.id === 'countdown') return 'Countdown desk';
+    if (seg.id === 'markets') return `Markets: ${seg.story?.short || ''}`.trim();
     return seg.story?.short || seg.story?.eventTitle || seg.story?.headline || '';
   };
   const onScreen = (seg) => new Set([seg?.story?.id, ...(seg?.minis || []).map((x) => x.id), ...(seg?.sotd?.markets || []).map((x) => x.storyId)].filter(Boolean));
@@ -436,7 +450,7 @@ export function createDirector({ overlay, chyron, scene }) {
       if (!s) { if (!manual) advance(); return false; }
       clearTimeout(timer);
       const pool = state.stories, i = pool.findIndex((x) => x.id === s.id);
-      const seg = { id: 'focus', cut: true, story: s, index: i >= 0 ? i : pool.length, count: i >= 0 ? pool.length : pool.length + 1 };
+      const seg = s.fin ? { id: 'markets', cut: true, story: s } : { id: 'focus', cut: true, story: s, index: i >= 0 ? i : pool.length, count: i >= 0 ? pool.length : pool.length + 1 };
       const ms = manual ? 20000 : 12000; // a clicked story holds a little longer
       if (current?.story?.settling && current.id !== 'top' && current.story.id !== s.id) settled.add(current.story.id);
       onAir = seg; plan = plan.filter((p) => p.story?.id !== s.id); fillPlan();

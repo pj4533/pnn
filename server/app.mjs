@@ -103,6 +103,7 @@ export function health(store, config) {
     money: s.money?.length ?? 0,
     sotd: s.sotd ? { id: s.sotd.id, title: s.sotd.title, stories: s.sotd.count ?? s.sotd.markets?.length ?? 0, credit: s.sotd.credit } : null,
     countdown: (s.countdown || []).map((c) => `${c.title} ${c.at} ${Math.round((c.yesPrice || 0) * 100)}% ${c.label}`),
+    finance: (() => { try { const f = s.finance; return { moves: (f?.moves || []).map((m) => `${m.symbol} ${m.copy?.headline || ''}`.trim()), quotes: f?.quotes?.length ?? 0, session: f?.session ?? null, asOf: f?.asOf ?? null, note: f?.note ?? null, stats: store.financeHealth?.() ?? null }; } catch { return null; } })(),
     sampledMarkets: store.sampleCount?.() ?? null,
     memory: (() => { const u = process.memoryUsage(); return { rssMB: Math.round(u.rss / 1e6), heapUsedMB: Math.round(u.heapUsed / 1e6) }; })(),
     feeds,

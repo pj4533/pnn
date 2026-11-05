@@ -119,11 +119,20 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   // so text keeps one look on every scene (its glow is designed into the label texture)
   composer.addPass(new LabelPass(scene, camera));
   composer.addPass(new OutputPass());
+  // perf counters (item 11): CPU ms each pass spends submitting this frame (a first-draw pipeline build, a canvas
+  // texture upload or a sync readback stalls inside the pass that triggered it). Read by scene/index.js -> perf.js.
+  const passNames = ['backdrop', 'main', 'bloom', 'final', 'label', 'output'];
+  const passMs = new Float32Array(composer.passes.length);
+  composer.passes.forEach((pass, i) => {
+    const r = pass.render;
+    pass.render = function (...a) { const t = performance.now(); try { return r.apply(pass, a); } finally { passMs[i] += performance.now() - t; } };
+  });
   const base = { strength: 0.55 };
   const U = fin.uniforms;
   let flash = 0, ca = 0, glitch = 0, alert = 0, alertTarget = 0;
   return {
     composer, bloom, backdrop,
+    perf: { names: passNames, ms: passMs },
     get readBuffer() { return composer.readBuffer; },
     getTransRT() { return { a: tRA, b: tRB }; },
     setBackdrop(fn) { backdrop.draw = fn || null; },
@@ -170,6 +179,7 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
       fin.uniforms.uGlitch.value = glitch;
       fin.uniforms.uAlert.value = alert;
       bloom.strength = base.strength + flash * 0.5 + alert * 0.25;
+      passMs.fill(0);
       composer.render(dt);
     },
     dispose() { backdrop.draw = null; composer.dispose?.(); rt.dispose(); tRA.dispose(); tRB.dispose(); bloom.dispose?.(); },

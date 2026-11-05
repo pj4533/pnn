@@ -57,7 +57,7 @@ export function createDial(ctx, story, opts = {}) {
   // Reserved slots (relative to the hub). The track spans ~230-250 deg, so its ends sit ~3.4 below the hub and the
   // needle only ever sweeps above them: everything below SLOT_FLOOR is free of the arc, ticks and needle sweep.
   // The big % + FROM line, then the points/badge line, own that wedge; the footer sits under the floor ring.
-  const SLOT_BIG = -4.0, SLOT_PTS = -7.3, FOOT_Y = -1.6;
+  const SLOT_BIG = -3.7, SLOT_PTS = -7.7, FOOT_Y = -1.6;
   const TOP = CY + R + 8.0;
   const holo = new Holo(ctx, { height: TOP });
   const root = holo.root;
@@ -136,12 +136,12 @@ export function createDial(ctx, story, opts = {}) {
   const useOutcome = oc && !/^(yes|no)$/i.test(oc) && oc.toUpperCase() !== evt.toUpperCase();
   let chip;
   if (useOutcome) {
-    chip = holo.label(oc.toUpperCase(), { w: 1400, h: 200, height: 2.4, font: '900 86px Orbitron', color: '#ffffff', glow: accentHex, sub: evt.toUpperCase(), subColor: '#dfe8ff', subFont: '700 76px Rajdhani', mainY: 0.3, subY: 0.76 });
+    chip = holo.label(oc.toUpperCase(), { w: 1400, h: 200, height: 3.0, font: '900 86px Orbitron', color: '#ffffff', glow: accentHex, sub: evt.toUpperCase(), subColor: '#dfe8ff', subFont: '700 76px Rajdhani', mainY: 0.3, subY: 0.76 });
   } else {
     const [l1, l2] = twoLines(evt || 'THE CHANCE');
-    chip = holo.label(l1, { w: 1400, h: 200, height: 2.4, font: '900 80px Orbitron', color: '#ffffff', glow: accentHex, sub: l2, subColor: '#ffffff', subFont: '900 80px Orbitron', mainY: l2 ? 0.28 : 0.5, subY: 0.74 });
+    chip = holo.label(l1, { w: 1400, h: 200, height: 3.0, font: '900 80px Orbitron', color: '#ffffff', glow: accentHex, sub: l2, subColor: '#ffffff', subFont: '900 80px Orbitron', mainY: l2 ? 0.28 : 0.5, subY: 0.74 });
   }
-  chip.sprite.position.set(0, CY + R + 6.6, 0.5);   // clear of a WAS/NOW label at the top of the rim chip.yFrac = 0.86;
+  chip.sprite.position.set(0, CY + R + 6.9, 0.5);   // clear of a WAS/NOW label at the top of the rim chip.yFrac = 0.86;
   // (B) scale labels, 0 / 25 / 50 / 75 / 100
   const scaleLbls = [0, 0.25, 0.5, 0.75, 1].map((v) => {
     // swings name the 50% line (crossing it is the story); the rest stay plain
@@ -150,7 +150,6 @@ export function createDial(ctx, story, opts = {}) {
       : holo.label(`${Math.round(v * 100)}%`, { w: 256, h: 128, height: 1.7, font: '700 84px Rajdhani', color: '#eef3ff', glow: pal.hexB });
     const [x, y] = at(v, R + (sw && v === 0.5 ? 2.5 : 2.05)); l.sprite.position.set(x, y, 0.3); l.yFrac = 0.1; l.bright = 0; l.v = v;
     if (hasDelta && Math.abs(v - prev) < (sw ? 0.06 : 0.04)) { l.hidden = true; }   // the WAS label sits right there
-    if (sw && hasDelta && Math.abs(v - value) < 0.06) { l.hidden = true; }           // ... and the NOW label here
     if (isAlert && Math.abs(v - value) < 0.04) { l.hidden = true; }
     return l;
   });
@@ -182,13 +181,11 @@ export function createDial(ctx, story, opts = {}) {
   let swNow = null, swBadge = null, swBadgeScale = null, swNews0 = null, swHead = null, swMark = null, swFlipRing = null, swCross = null;
   if (sw && hasDelta) {
     const dcol = up ? '#3dff8a' : '#ff2e55';
-    { const cx = Math.cos(angOf(value)), align = cx > 0.4 ? 'left' : cx < -0.4 ? 'right' : 'center';
-      swNow = holo.label(`NOW ${pctText(value)}`, { w: 400, h: 160, height: 2.1, font: '900 88px Rajdhani', color: '#ffffff', glow: dcol, sub: sw.window === '1h' ? 'LAST HOUR' : 'TODAY', subColor: up ? '#b6ffd2' : '#ffc0cc', subFont: '700 62px Rajdhani', align, mainY: 0.32, subY: 0.76 });
-      const [x, y] = at(value, R + 3.5); swNow.sprite.position.set(x + (align === 'left' ? -0.4 : align === 'right' ? 0.4 : 0), y, 0.4); swNow.yFrac = 0.1; swNow.bright = 0; }
+    // (no NOW label at the needle: the centre readout already says where it landed; only the WAS ghost is drawn)
     // badge: FLIPPED (crossed 50%) beats the shape word
     const shapeTxt = sw.shape === 'longshot' ? 'LONGSHOT SURGES' : sw.shape === 'slipping' ? 'FAVORITE SLIPPING' : up ? 'BIG JUMP' : 'BIG DROP';
     const ptsW = `${up ? '+' : '-'}${nPts} PTS`, bMain = swFlip ? 'FLIPPED' : shapeTxt, bSub = swFlip ? `${ptsW} · ${sw.shape === 'swing' ? 'CROSSED 50%' : shapeTxt}` : `${ptsW} ${sw.window === '1h' ? 'IN AN HOUR' : 'IN 24 HOURS'}`;
-    swBadge = holo.label(bMain, { w: 1100, h: 230, height: 2.9, font: '900 96px Orbitron', color: '#ffffff', glow: swFlip ? '#ffd23f' : dcol, sub: bSub, subColor: swFlip ? '#ffe28a' : '#e6ecff', subFont: '700 74px Rajdhani', mainY: 0.3, subY: 0.77 });
+    swBadge = holo.label(bMain, { w: 1100, h: 230, height: 2.9, font: '900 96px Orbitron', color: '#ffffff', glow: swFlip ? '#ffd23f' : dcol, sub: bSub, subColor: swFlip ? '#ffe28a' : '#e6ecff', subFont: '700 74px Rajdhani', mainY: 0.3, subY: 0.77, plate: true });
     swBadge.sprite.position.set(0, CY + SLOT_PTS, 0.7); swBadge.yFrac = 0.6; swBadge.bright = 0; swBadgeScale = swBadge.sprite.scale.clone();
     // 50% line across the track (flashes when the needle crosses it) + crossing ring
     swMark = new THREE.Mesh(new THREE.BoxGeometry(0.14, 3.2, 0.1), holo.mat(new THREE.Color('#ffe28a'), { flat: 1, alpha: 0.7, glow: 1.4, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -211,7 +208,7 @@ export function createDial(ctx, story, opts = {}) {
     }
   }
   // (D) centre readout: big %, FROM line, then the change in points
-  const big = holo.label(pctText(isAlert || sw ? prev : value), { w: 1024, h: 256, height: 3.2, font: '900 190px Orbitron', color: '#ffffff', glow: accentHex, sub: hasDelta ? `FROM ${pctText(prev)} ${thenWord}` : 'UNCHANGED TODAY', subColor: '#dfe8ff', subFont: '700 84px Rajdhani', mainY: 0.4, subY: 0.86 });
+  const big = holo.label(pctText(isAlert || sw ? prev : value), { w: 1024, h: 340, height: 4.25, font: '900 190px Orbitron', color: '#ffffff', glow: accentHex, sub: hasDelta ? `FROM ${pctText(prev)} ${thenWord}` : 'UNCHANGED TODAY', subColor: '#dfe8ff', subFont: '700 84px Rajdhani', mainY: 0.33, subY: 0.87, plate: true });
   big.sprite.position.set(0, CY + SLOT_BIG, 0.6); big.yFrac = 0.3;
   const ptsTxt = hasDelta ? `${up ? '▲' : '▼'} ${nPts} pts ${whenTxt}` : 'flat today';
   const ptsLbl = holo.label(ptsTxt.toUpperCase(), { w: 900, h: 150, height: 2.0, font: '800 96px Rajdhani', color: hasDelta ? (up ? '#3dff8a' : '#ff2e55') : '#dfe8ff', glow: hasDelta ? (up ? '#3dff8a' : '#ff2e55') : pal.hexB });
@@ -272,7 +269,6 @@ export function createDial(ctx, story, opts = {}) {
     // phase 4: settled -> delta label scales in, the needle quivers
     const ks = clamp01((ts - T_SW1) / 0.45);
     if (nowLbl) nowLbl.bright = ks;
-    if (swNow) swNow.bright = clamp01((ts - T_SW1 + 0.3) / 0.3);
     if (swBadge) { const bk = ease.back(clamp01((ts - T_SW1 - 0.1) / 0.5)); swBadge.bright = bk > 0.02 ? 1 : 0; const pu = 1 + (swFlip ? 0.05 * Math.sin(t * 4) : 0); swBadge.sprite.scale.set(swBadgeScale.x * Math.max(0.001, bk) * pu, swBadgeScale.y * Math.max(0.001, bk) * pu, 1); }
     if (swNews0) swNews0.bright = clamp01((ts - T_SW1) * 2);
     if (swFlipRing && ks >= 1) { const c = ((ts - T_SW1) % 2.4) / 2.4; swFlipRing.scale.setScalar(1.5 + c * (R - 2.8)); swFlipRing.material.uniforms.uAlpha.value = 0.55 * (1 - c); }

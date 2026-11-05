@@ -122,7 +122,7 @@ const COUNTRIES = [['canada', 'canadian|carney|ottawa|toronto|poilievre'], ['mex
   ['egypt', 'egyptian'], ['nigeria', 'nigerian'], ['kenya', 'kenyan'], ['south africa', 'south african'], ['ethiopia', 'ethiopian'], ['china', 'chinese|beijing|xi jinping'], ['japan', 'japanese|tokyo|takaichi|ishiba'], ['korea', 'korean|south korea|north korea'],
   ['taiwan', 'taiwanese'], ['india', 'indian|modi|delhi|mumbai'], ['pakistan', 'pakistani'], ['bangladesh', 'bangladeshi'], ['indonesia', 'indonesian'], ['philippines', 'philippine|filipino'], ['vietnam', 'vietnamese'], ['thailand', 'thai'],
   ['malaysia', 'malaysian'], ['singapore', 'singaporean'], ['australia', 'australian'], ['new zealand', 'kiwi|luxon|wellington|auckland'], ['brazil', 'brazilian|lula|bolsonaro'], ['argentina', 'argentine|argentinian|milei'], ['chile', 'chilean'], ['colombia', 'colombian'],
-  ['peru', 'peruvian'], ['venezuela', 'venezuelan|maduro|machado|caracas'], ['cuba', 'cuban'], ['haiti', 'haitian'], ['hong kong', 'hongkong'], ['europe', 'european|eurozone|euro area']];
+  ['peru', 'peruvian'], ['venezuela', 'venezuelan|maduro|machado|caracas'], ['cuba', 'cuban'], ['haiti', 'haitian'], ['hong kong', 'hongkong'], ['uae', 'united arab emirates|emirati|abu dhabi|dubai'], ['qatar', 'qatari|doha'], ['europe', 'european|eurozone|euro area']];
 const GEO = [...STATES.map((n) => [n, n, 'state']), ...COUNTRIES.map(([n, alt]) => [n, `${n}|${alt}`, 'country'])]
   .map(([name, alt, kind]) => ({ name, kind, re: new RegExp(`(?<![a-z])(?:${alt})(?![a-z])`, 'i'), prim: new RegExp(`(?<![a-z])${name}(?![a-z])`, 'i') }));
 export function geoNames(text, primaryOnly = false) {
@@ -491,7 +491,7 @@ const STORY_WEAK = new Set(['ai', 'general', 'election', 'elect', 'winner', 'ann
 const STORY_WEAK_P = new Set(['final', 'finals', 'pro', 'group', 'inc', 'corp', 'prize', 'problem', 'air', 'oil', 'crude', 'margin', 'district',
   'vote', 'percent', 'turnout', 'victory', 'cost', 'house', 'senate']);
 // Service pieces on sports / gaming feeds never carry a story (fantasy lineups, betting picks, listicles, how-to-watch).
-const SPORTS_FLUFF = /\b(DFS|DraftKings|FanDuel|fantasy|best bets?|prop bets?|picks?|parlay|lineups?|how to (watch|follow|stream)|live stream|every player|ranked|ranking|quiz|deals? of the day|best deals?|on sale|discount|price drop|\d+% off)\b/i;
+const SPORTS_FLUFF = /\b(DFS|DraftKings|FanDuel|fantasy|best bets?|prop bets?|picks?|predictions?|predicted|parlay|lineups?|how to (watch|follow|stream)|live stream|every player|ranked|ranking|quiz|deals? of the day|best deals?|on sale|discount|price drop|\d+% off)\b/i;
 const lowerWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ').trim();
 const isTitleCase = (t) => { if (/\?$/.test(String(t || '').trim())) return false; const w = String(t || '').split(/\s+/).filter((x) => /^[A-Za-z]/.test(x) && x.length > 3); return w.length >= 3 && w.filter((x) => /^[A-Z]/.test(x)).length / w.length >= 0.7; };
 // Proper-noun tokens of a question: capitalized words after the first ("Will Samuel Alito announce..." -> samuel, alito).
@@ -531,7 +531,7 @@ const outcomeHit = (o, H, lower = null) => !!o && H.has(o.last) && o.toks.filter
 // "out as Secretary of Defense" / "announces departure": a headline about the person's job being in doubt answers it
 const LEAVE_Q = /\b(out as|out by|out before|leaves?|departure|depart|resign\w*|steps? down|retire\w*|fired|ousted|replaced|exit|leadership change|regime)\b/i;
 const LEAVE_HEAD = /\b(out|leave|leaves|leaving|left|departure|depart\w*|exit\w*|resign\w*|steps? down|stepped down|retir\w*|fire[ds]?|firing|ous\w+|replac\w+|remov\w+|dismiss\w+|sack\w*|axe[ds]?|stay|survive[sd]?|fall guy|shake-?up|impeach\w*|quit\w*|regime change|supreme leader|succession|successor)\b/i;
-const LEVEL_HEAD = /\b(prices?|rates?|yields?|barrel|ounce|oil|crude|climbs?|falls?|slumps?|surges?|jumps?|drops?|slides?|rallies|rally|rises?|plunges?|tumbles?|soars?|hits?)\b/i;
+const LEVEL_HEAD = /\b(prices?|rates?|yields?|barrel|ounce|oil|crude|climbs?|falls?|slumps?|surges?|jumps?|drops?|slides?|rallies|rally|rises?|plunges?|tumbles?|soars?|hits?|slips?|dips?|eases?|edges?|sinks?|gains?|loses?|steadies|steady|retreats?|rebounds?|spikes?|swings?)\b/i;
 // "AZ-02" in a question is "Arizona's 2nd Congressional District" in a headline.
 const ABBR = { AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut', DE: 'delaware', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois', IN: 'indiana', IA: 'iowa', KS: 'kansas', KY: 'kentucky', LA: 'louisiana', ME: 'maine', MD: 'maryland', MA: 'massachusetts', MI: 'michigan', MN: 'minnesota', MS: 'mississippi', MO: 'missouri', MT: 'montana', NE: 'nebraska', NV: 'nevada', NH: 'new hampshire', NJ: 'new jersey', NM: 'new mexico', NY: 'new york', NC: 'north carolina', ND: 'north dakota', OH: 'ohio', OK: 'oklahoma', OR: 'oregon', PA: 'pennsylvania', RI: 'rhode island', SC: 'south carolina', SD: 'south dakota', TN: 'tennessee', TX: 'texas', UT: 'utah', VT: 'vermont', VA: 'virginia', WV: 'west virginia', WI: 'wisconsin', WY: 'wyoming' };
 const ORD = ['', '1st|first', '2nd|second', '3rd|third', '4th|fourth', '5th|fifth', '6th|sixth', '7th|seventh', '8th|eighth', '9th|ninth'];
@@ -544,6 +544,76 @@ function districtRes(text) {
     out.push(new RegExp(`${st}.{0,24}\\b(?:${ord}|district ${n}|${m[1].toLowerCase()}-0?${n})\\b|\\b(?:${ord})\\b.{0,24}district.{0,24}${st}|\\b${m[1].toLowerCase()}-0?${n}\\b`, 'i'));
   }
   return out;
+}
+
+// ---------- question types (2026-11-05 relevance pass) ----------
+// A headline that names the story's subject is not enough: it must be about what the market ASKS. "Avengers: Doomsday
+// best opening weekend" never takes a Dunkin' ad piece; "The Cat in the Hat Rotten Tomatoes score" never takes a box-office
+// tracking story; "best AI model" never takes a Diwali-prompts listicle. q: on the story's question text; h: the headline
+// must match. All matching types apply.
+const QTYPES = [
+  { key: 'reviews', q: /\b(rotten tomatoes|tomatometer|metacritic|critics'? score|review score)\b/i,
+    h: /\b(rotten tomatoes|tomatometer|metacritic|reviews?|reviewed|critics?|critical(ly)?|first reactions?|reactions|panned|acclaim\w*|praised?|raves?|verdict|rated|fresh|splat\w*|scores?)\b/i },
+  { key: 'box-office', q: /\b(box office|opening weekend|domestic opening|worldwide gross|gross(es)?)\b/i,
+    h: /\b(box office|opening|opens|opened|debut\w*|tickets?|pre-?sales?|tracking|gross\w*|weekend|projection\w*|projected|estimates?|record|\$\d[\d.,]*\s?(m|mn|million|b|bn|billion))\b/i },
+  { key: 'best-ai', q: /\b(best|top) ai\b|\b(best|top) (ai )?model\b|\b(lmarena|text arena|chatbot arena)\b/i,
+    h: /\b(benchmarks?|leaderboards?|lmarena|arena|rankings?|ranked|tops?|topped|beats?|outperform\w*|state[- ]of[- ]the[- ]art|smartest|most (capable|powerful|advanced|intelligent)|best (ai|model)|leading (ai|model)|ai race|frontier|new model|(ai|language|flagship|reasoning) models?|GPT-?\d[\w.]*|Gemini \d[\w.]*|Grok \d[\w.]*|Claude (Opus|Sonnet|Haiku|Fable)?\s?\d[\w.]*|Llama \d[\w.]*)\b/i },
+  { key: 'release', q: /\b(releas(e|ed|es)|launch(es|ed)?|release date|ships?|go(es)? on sale)\b/i,
+    h: /\b(releas\w*|launch\w*|reveal\w*|introduc\w*|new|rollout|rolls? out|rolled out|ships?|shipping|available|availability|debut\w*|unveil\w*|arriv\w*|coming|soon|date|leak\w*|delay\w*|postpon\w*|announc\w*|preview|beta|teas\w*|drops?|plans?|eyes|readies|prepar\w*|tests?|testing|ahead of|pre-?orders?|countdown)\b/i },
+  { key: 'transit', q: /\b(transits?|transit calls|ships? (through|passing)|tanker traffic|traffic through)\b/i,
+    h: /\b(transits?|ships?|shipping|tankers?|vessels?|traffic|crossings?|passage|navigation|reopen\w*|clos(e|ed|ure|ing)|blockade\w*|convoys?|escort\w*|mines?|chokepoint)\b/i },
+  { key: 'sanction-relief', q: /\bsanctions? relief\b|\bwaivers?\b/i,
+    h: /\b(relief|waivers?|lift\w*|eas(e|es|ed|ing)|exemptions?|licen[cs]es?|roll\w* back|unfreez\w*|carve-?outs?)\b/i },
+  { key: 'searched', q: /\b(most searched|#1 searched|searched (person|people)|year in search|google trends)\b/i,
+    h: /\b(search(ed|es)?|google trends|year in search|googled)\b/i },
+  { key: 'chart', q: /\b(billboard|hot 100|billboard 200|spotify (chart|top)|#1 (song|album))\b/i,
+    h: /\b(billboard|hot 100|charts?|charting|no\. ?1|number one|#1|debut\w*|streams?|streaming|spotify|top 10|tops?)\b/i },
+  // a sports award race on a team / conference outcome ("ACC" for the Heisman) needs the award named: "ACC POY Awards" is not it
+  { key: 'award', q: /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i, h: null },
+];
+const AWARD_RE = /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i;
+// Market-price levels (2026-11-05): "Brent above $97.99 on Nov 6" needs a headline about that asset's price that is < 24h old
+// ("Brent Crude $104, Lowest Since 7 Oct" from yesterday contradicts the market), and the asset must be what the headline
+// is about ("Gold climbs ... falling Treasury yields" is gold news, not a 10-year yield story).
+const ASSETS = [
+  { k: 'oil', q: /\b(wti|brent|crude|oil)\b/i, h: /\b(oil|crude|brent|wti|opec\+?)\b/i },
+  { k: 'gold', q: /\bgold\b/i, h: /\bgold\b/i },
+  { k: 'silver', q: /\bsilver\b/i, h: /\bsilver\b/i },
+  { k: 'fuel', q: /\b(diesel|gasoline|gas price|price of gas|gas prices)\b/i, h: /\b(diesel|gasoline|gas prices?|fuel prices?|pump prices?|at the pump)\b/i },
+  { k: 'yield', q: /\b(treasury|10-year|2-year|30-year|bond) yields?\b|\byield on\b|\btreasury\b/i, h: /\b(treasur(y|ies)|yields?|bonds?|10-year|t-notes?)\b/i },
+  { k: 'bitcoin', q: /\b(bitcoin|btc|ethereum|eth)\b/i, h: /\b(bitcoin|btc|ethereum|ether|crypto\w*)\b/i },
+  { k: 'stocks', q: /\b(s&p ?500|nasdaq|dow jones|the dow|russell 2000|vix)\b/i, h: /\b(s&p|nasdaq|dow|stocks?|wall street|russell|vix|equities)\b/i },
+  { k: 'fx', q: /\b(usd\/\w+|eur\/usd|dollar index|yen|euro|pound|peso)\b.*\b(above|below|exchange rate)\b/i, h: /\b(dollar|yen|euro|pound|sterling|peso|currenc\w*|forex|fx)\b/i },
+];
+const PRICEISH = /\b(above|below|at least|between|price|prices|yields?|close[sd]?|settle\w*|hits?|reach(es)?|high|low|barrel|ounce|per gallon)\b|\$\d/i;
+function storyAsset(text) {
+  if (!PRICEISH.test(text)) return null;
+  for (const a of ASSETS) if (a.q.test(text)) return a;
+  return null;
+}
+/** The first asset the headline is about (by position), so "Gold climbs ... Treasury yields" leads with gold. */
+function leadAsset(title) {
+  let best = null, at = Infinity;
+  for (const a of ASSETS) { const m = a.h.exec(title); if (m && m.index < at) { at = m.index; best = a; } }
+  return best;
+}
+// race-level news (no candidate named) is fine for a race ("Mississippi Senate race still up in the air"), never for
+// "who will attend" / "which movie" / "best actor nominee" events, where it is about someone else
+const RACE_EVENT = /\b(election|elections|race|primary|runoff|nominee|nomination|next (prime minister|president|chancellor|speaker|leader|pm)|prime minister|leader|majority|control of|seats?|governor|senate|house|mayor|winner)\b/i;
+const RACE_CATS = new Set(['elections', 'politics', 'world', 'geopolitics']);
+/** Why a headline that names the story's subject is still not about the question (null = fine). */
+function questionMiss(T, title, ageH, leadHit) {
+  for (const q of T.qtypes) {
+    if (q.key === 'award') { const m = AWARD_RE.exec(T.storyText); if (m && !new RegExp(m[1].replace(/'/g, "'?"), 'i').test(title) && !(leadHit && T.leadOut?.toks.length >= 2)) return 'award'; continue; }
+    if (!q.h.test(title)) return q.key;
+  }
+  if (T.asset) {
+    if (!T.asset.h.test(title)) return 'asset';
+    const la = leadAsset(title);
+    if (la && la.k !== T.asset.k) return `asset:${la.k}`;
+    if (ageH > 24) return 'stale-price';
+  }
+  return null;
 }
 
 /** Entity terms of a story (cached on the story object): see matchStoryNews. */
@@ -604,7 +674,13 @@ function storyTerms(story, idx) {
   const frame = multi ? new Set() : new Set(tokens(`${evTitle} ${lead.title || ''}`).filter((t) => idx.idf(t) >= 2.2 && !first.has(t) && !WEAK.has(t) && !STORY_WEAK.has(t) && !ENTITY_GENERIC.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
   const storyText = `${evTitle} ${lead.title || ''} ${lead.outcome || ''}`;
   const Fall = new Set(tokens(evTitle).filter((t) => !oTok.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
-  return { multi, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`) };
+  const qText = `${evTitle} ${lead.title || ''}`;
+  const qtypes = QTYPES.filter((q) => q.q.test(qText));
+  const asset = storyAsset(qText);
+  const race = RACE_CATS.has(String(story.category || lead.category || '').toLowerCase()) && RACE_EVENT.test(evTitle);
+  // a place outcome ('UAE') is named by its cities too ('Abu Dhabi talks')
+  const leadGeo = multi && lead.outcome ? geoNames(lead.outcome) : new Set();
+  return { multi, qtypes, asset, race, leadGeo, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`) };
 }
 
 /** Entity phrases for sports/games matching (kept for callers/tests): outcome names and their last word. */
@@ -628,14 +704,16 @@ export function storyEntities(story) {
 //   sports / games (opts.entity): also a sports or gaming feed headline naming one of the outcomes or a rare subject word.
 // So "Alito retirement" never takes "Ronaldo announces retirement" and "Largest company / Apple" never takes
 // "World's largest olive oil company".
-export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now(), max = 3, maxAgeMs = 48 * 3_600_000, entity = false } = {}) {
+export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now(), max = 3, maxAgeMs = 48 * 3_600_000, entity = false, minScore = 3 } = {}) {
   if (!story || !hIndex?.list?.length) return [];
   const idx = buildIndex(marketIndex);
   const T = storyTerms(story, idx);
   const cands = new Set();
   for (const t of T.E) for (const i of hIndex.byTok.get(t) || []) cands.add(i);
   for (const t of T.topics) for (const i of hIndex.byTopic.get(t.key) || []) cands.add(i);
-  const fresh = (it) => { const t = Date.parse(it.publishedAt); return Number.isFinite(t) && now - t <= maxAgeMs && t - now < 15 * 60_000; };
+  // a story's headline is news: never older than 4 days, whatever the caller allows (a 5-day-old live blog is not today's story)
+  const ageCap = Math.min(maxAgeMs, 96 * 3_600_000);
+  const fresh = (it) => { const t = Date.parse(it.publishedAt); return Number.isFinite(t) && now - t <= ageCap && t - now < 15 * 60_000; };
   const out = [];
   for (const i of cands) {
     const h = hIndex.list[i];
@@ -685,7 +763,7 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     // ("Sarah Paulson ... Rotten Tomatoes score" is not "The Cat in the Hat Rotten Tomatoes score")
     if (ok && !T.multi && T.first.size && !topic && [...T.first].filter((t) => hasStem(H, t)).length < (T.first.size >= 4 ? Math.ceil(T.first.size * 0.6) : 1)) ok = false;
     // single question whose headline only names the subject: it must also touch what is asked (the frame)
-    if (ok && !T.multi && T.frame.size && pRuns < 2 && ![...T.frame].some((t) => hasStem(H, t)) && !(T.leaveQ && LEAVE_HEAD.test(h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('frame miss', h.it.title.slice(0, 60), [...T.frame]); ok = false; }
+    if (ok && !T.multi && T.frame.size && pRuns < 2 && ![...T.frame].some((t) => hasStem(H, t)) && !(T.leaveQ && LEAVE_HEAD.test(h.it.title)) && !(T.levelQ && T.asset?.h.test(h.it.title) && LEVEL_HEAD.test(h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('frame miss', h.it.title.slice(0, 60), [...T.frame]); ok = false; }
     let why = 'story';
     if (!ok && entity && SPORTY.has(String(h.it.category || '').toLowerCase()) && !SPORTS_FLUFF.test(h.it.title)) {
       // a rare subject named in full: "LIV Golf" needs "LIV", not just "golf" ("Good Good Golf executive...")
@@ -700,9 +778,34 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     if (!ok) continue;
     // wrong place: a local story on a national market, another country's data on a named-country question
     if (scopeMismatch(T.storyText, h.it.title) || (!entity && geoMiss(T.storyText, h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('geo miss', h.it.title.slice(0, 60)); continue; }
+    // the story's own subject (2026-11-05): a multi-outcome story that is not a race ("who will attend", "which movie",
+    // "best actor nominee", "#1 searched person") needs its lead outcome named, or two outcomes together; a headline about
+    // the field or a rival ("Best Actor odds: Malkovich leads" on Tom Cruise, "Iran's new supreme leader" on Witkoff) is not it
+    if (T.multi && T.leadOut && !leadHit && oHits < 2 && !T.race && !(T.leadGeo.size && [...geoNames(h.it.title)].some((g) => T.leadGeo.has(g)))) { if (process.env.PNN_MATCH_DEBUG) console.error('lead miss', h.it.title.slice(0, 60)); continue; }
+    // what is asked: reviews for a Rotten Tomatoes score, a ranking / model for "best AI", a fresh price move for a price level
+    const ageH = (now - (Date.parse(h.it.publishedAt) || 0)) / 3_600_000;
+    const qm = questionMiss(T, h.it.title, ageH, leadHit);
+    if (qm) { if (process.env.PNN_MATCH_DEBUG) console.error(`question miss (${qm})`, h.it.title.slice(0, 60)); continue; }
+    const viaStory = why === 'story';
     if (process.env.PNN_MATCH_DEBUG) why += ` e=${[...T.E].filter((t) => H.has(t))} p=${[...T.P].filter((t) => H.has(t))} o=${oHits} topic=${topic} multi=${T.multi}`;
-    out.push({ item: h.it, score: e + 2 * p + 3 * oHits + (topic ? 3 : 0) + (T.leadOut && outcomeHit(T.leadOut, H, h.lower) ? 4 : 0), why });
+    const score = e + 2 * p + 3 * oHits + (topic ? 3 : 0) + (leadHit ? 4 : 0) + (T.qtypes.length || T.asset ? 1 : 0);
+    // relevance floor: one shared word plus a frame word is not enough on its own (entity matches carry their own proof)
+    if (viaStory && score < minScore) { if (process.env.PNN_MATCH_DEBUG) console.error(`low score ${score}`, h.it.title.slice(0, 60)); continue; }
+    out.push({ item: h.it, score, why, tw: H, outlet: String(h.it.outlet || h.it.source || '').toLowerCase() });
   }
+  // Corroboration (2026-11-05): a headline that other outlets also ran (similar wording among the matches) is a story,
+  // not one site's take; it ranks ahead of a lone piece of the same age.
+  for (const x of out) {
+    const outlets = new Set();
+    for (const y of out) {
+      if (y === x || !y.outlet || y.outlet === x.outlet || outlets.has(y.outlet)) continue;
+      let both = 0; for (const k of x.tw.keys()) if (y.tw.has(k)) both++;
+      if (both / Math.max(1, Math.min(x.tw.size, y.tw.size)) >= 0.4) outlets.add(y.outlet);
+    }
+    x.outlets = outlets.size + 1;
+    x.score += Math.min(3, 1.5 * outlets.size);
+  }
+  for (const x of out) { delete x.tw; delete x.outlet; }
   // Freshest strong match first: recency matters more than a slightly higher score.
   const ts = (x) => Date.parse(x.item.publishedAt) || 0;
   out.sort((a, b) => (ts(b) - ts(a)) / 3_600_000 + (b.score - a.score) * 0.5);

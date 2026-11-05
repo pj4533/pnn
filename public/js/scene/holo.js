@@ -123,14 +123,34 @@ export const reveal = { uniforms: REVEAL_UNIFORMS, glsl: revealGlsl, vert: lineV
 export const LABEL_LAYER = 1;
 const LABELS = new Set();
 let fontsReady = false;
+// Web fonts must be in before any label is drawn, or the canvas falls back to a serif. Canvas text never triggers a font load by itself,
+// and document.fonts.load() resolves with [] when the Google Fonts stylesheet has not been parsed yet, so: load explicitly, then keep
+// redrawing every label whenever the font set changes (loadingdone), and retry until the Orbitron + Rajdhani faces are really loaded.
+const FACES = ['900 80px Orbitron', '700 80px Orbitron', '800 60px Rajdhani', '700 60px Rajdhani', '600 60px Rajdhani'];
+function redrawAll() { for (const l of LABELS) l.redraw(); }
+function faceStatus(fam) { let n = 0, ok = 0; if (document.fonts) document.fonts.forEach((f) => { if (f.family.replace(/["']/g, '') === fam) { n++; if (f.status === 'loaded') ok++; } }); return { n, ok }; }
 if (typeof document !== 'undefined' && document.fonts?.load) {
-  Promise.all([document.fonts.load('900 80px Orbitron'), document.fonts.load('700 80px Orbitron'), document.fonts.load('700 60px Rajdhani'), document.fonts.load('600 60px Rajdhani')])
-    .then(() => { fontsReady = true; for (const l of LABELS) l.redraw(); }).catch(() => {});
+  let tries = 0;
+  const pump = () => {
+    Promise.all(FACES.map((f) => document.fonts.load(f, 'Aa0%\u25B2\u25BC'))).then(() => {
+      const o = faceStatus('Orbitron'), r = faceStatus('Rajdhani');
+      const ready = o.n > 0 && o.ok > 0 && r.n > 0 && r.ok > 0;
+      if (ready) { fontsReady = true; redrawAll(); }
+      else if (++tries < 40) setTimeout(pump, 250);
+    }).catch(() => { if (++tries < 40) setTimeout(pump, 500); });
+  };
+  pump();
+  document.fonts.addEventListener?.('loadingdone', () => { if (faceStatus('Orbitron').ok && faceStatus('Rajdhani').ok) { fontsReady = true; redrawAll(); } });
+  document.fonts.ready?.then(() => { if (faceStatus('Orbitron').ok) redrawAll(); });
 }
+// every canvas font names a fallback sans, so an unloaded face never turns serif
+const withFallback = (font) => (font.includes(',') ? font : `${font}, "Arial Narrow", "Helvetica Neue", Arial, sans-serif`);
 // Label: Sprite with a fixed-size canvas; text scaled to fit. opts: { w, h (canvas px), height (world units), color, glow, font, sub, subColor, subFont, align,
-//   mainY / subY (baseline-middle as a fraction of h; defaults 0.36 / 0.8 with a sub line), plate (default true: rounded dark backing, plateAlpha 0.55), crisp (heavier dark outline, no glow blur: for small labels over bright arcs) }
+//   mainY / subY (baseline-middle as a fraction of h; defaults 0.36 / 0.8 with a sub line), plate (default FALSE: tick/axis labels are plain text with glow + a thin dark outline;
+//   pass plate:true only for the hero readout and badges: a soft, feathered translucent backing, plateAlpha 0.34), crisp (heavier dark outline, no glow blur: for small labels over bright arcs) }
 export function makeLabel(text, opts = {}) {
-  const o = { w: 1024, h: 256, height: 1, color: '#ffffff', glow: '#ff2bd6', font: '900 150px Orbitron', sub: null, subColor: '#00f0ff', subFont: '700 64px Rajdhani', align: 'center', bright: 0.8, plate: true, plateAlpha: 0.55, crisp: false, ...opts };
+  const o = { w: 1024, h: 256, height: 1, color: '#ffffff', glow: '#ff2bd6', font: '900 150px Orbitron', sub: null, subColor: '#00f0ff', subFont: '700 64px Rajdhani', align: 'center', bright: 0.8, plate: false, plateAlpha: 0.34, crisp: false, ...opts };
+  o.font = withFallback(o.font); o.subFont = withFallback(o.subFont);
   const canvas = document.createElement('canvas');
   canvas.width = o.w; canvas.height = o.h;
   const ctx = canvas.getContext('2d');
@@ -153,20 +173,20 @@ export function makeLabel(text, opts = {}) {
     const px = Math.max(10, Math.floor(Number(m[1]) * maxW / w));
     return font.replace(/\d+px/, px + 'px');
   }
-  // dark rounded backing plate (~55% alpha) hugging the text so labels stay readable over bright scene areas (sun, sky, bloom)
+  // soft translucent backing for the hero readout and badges only (plate:true): feathered edges, no hard box, no border
   function plate(lines) {
-    if (o.plate === false) return;
+    if (!o.plate) return;
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, big = 0;
     for (const l of lines) {
       const px = Number((l.font.match(/(\d+)px/) || [0, 40])[1]);
       ctx.font = l.font; const w = ctx.measureText(l.str).width;
       const lx = o.align === 'left' ? l.x : o.align === 'right' ? l.x - w : l.x - w / 2;
-      x0 = Math.min(x0, lx); x1 = Math.max(x1, lx + w); y0 = Math.min(y0, l.y - px * 0.58); y1 = Math.max(y1, l.y + px * 0.58); big = Math.max(big, px);
+      x0 = Math.min(x0, lx); x1 = Math.max(x1, lx + w); y0 = Math.min(y0, l.y - px * 0.56); y1 = Math.max(y1, l.y + px * 0.56); big = Math.max(big, px);
     }
-    const padX = big * 0.3, padY = big * 0.14;
-    x0 = Math.max(1, x0 - padX); x1 = Math.min(o.w - 1, x1 + padX); y0 = Math.max(1, y0 - padY); y1 = Math.min(o.h - 1, y1 + padY);
-    const r = Math.min((y1 - y0) / 2, big * 0.3);
-    ctx.save(); ctx.shadowBlur = 0; ctx.fillStyle = `rgba(6,0,22,${o.plateAlpha})`;
+    const feather = big * 0.22, padX = big * 0.22, padY = big * 0.08;
+    x0 = Math.max(feather + 1, x0 - padX); x1 = Math.min(o.w - feather - 1, x1 + padX); y0 = Math.max(feather + 1, y0 - padY); y1 = Math.min(o.h - feather - 1, y1 + padY);
+    const r = Math.min((y1 - y0) / 2, big * 0.35);
+    ctx.save(); ctx.fillStyle = `rgba(6,0,22,${o.plateAlpha})`; ctx.shadowColor = `rgba(6,0,22,${o.plateAlpha * 1.6})`; ctx.shadowBlur = feather;
     ctx.beginPath();
     ctx.moveTo(x0 + r, y0); ctx.lineTo(x1 - r, y0); ctx.arcTo(x1, y0, x1, y0 + r, r); ctx.lineTo(x1, y1 - r); ctx.arcTo(x1, y1, x1 - r, y1, r);
     ctx.lineTo(x0 + r, y1); ctx.arcTo(x0, y1, x0, y1 - r, r); ctx.lineTo(x0, y0 + r); ctx.arcTo(x0, y0, x0 + r, y0, r); ctx.closePath(); ctx.fill(); ctx.restore();
@@ -190,10 +210,17 @@ export function makeLabel(text, opts = {}) {
       ctx.font = font;
       const px = Number((font.match(/(\d+)px/) || [0, 60])[1]);
       ctx.lineJoin = 'round';
+      // the halo must fade out INSIDE the canvas: a blur that reaches the texture edge is clipped into a hard-edged box (the old "plate" look on tick labels)
+      const tw = ctx.measureText(str).width;
+      const lft = o.align === 'left' ? x : o.align === 'right' ? x - tw : x - tw / 2;
+      const mxo = Math.min(lft, o.w - lft - tw);                                                          // free space left/right of the glyphs
+      const my = Math.min(y, o.h - y) - px * 0.4;                                                        // free space above/below the caps
+      const room = Math.max(3, Math.min(mxo, my) - px * 0.06);
+      const blurMax = Math.min(px * (o.crisp ? 0.35 : 0.5), room * 0.9);
       ctx.save();
       ctx.fillStyle = glowCol; ctx.strokeStyle = glowCol; ctx.shadowColor = glowCol;
-      ctx.globalAlpha = o.crisp ? 0.3 : 0.42; ctx.lineWidth = px * 0.2; ctx.shadowBlur = px * (o.crisp ? 0.35 : 0.55); ctx.strokeText(str, x, y);
-      ctx.globalAlpha = o.crisp ? 0.7 : 0.9; ctx.shadowBlur = px * 0.2; ctx.fillText(str, x, y);
+      ctx.globalAlpha = o.crisp ? 0.3 : 0.42; ctx.lineWidth = Math.min(px * 0.1, room * 0.4); ctx.shadowBlur = blurMax; ctx.strokeText(str, x, y);
+      ctx.globalAlpha = o.crisp ? 0.7 : 0.9; ctx.shadowBlur = Math.min(px * 0.2, blurMax); ctx.fillText(str, x, y);
       ctx.restore();
       ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(4,0,16,0.94)'; ctx.lineWidth = px * (o.crisp ? 0.2 : 0.14) * k; ctx.strokeText(str, x, y);
       ctx.fillStyle = fill; ctx.shadowColor = glowCol; ctx.shadowBlur = px * 0.07; ctx.fillText(str, x, y);

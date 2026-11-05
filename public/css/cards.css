@@ -154,3 +154,37 @@ body[data-segment="sotd"] .frame, body[data-segment="countdown"] .frame { left: 
 body:not([data-segment="top"]):not([data-segment="standby"]) .ov-top.has-next .seg-t { display: none; }
 .seg { align-items: center; }
 body[data-segment="top"] #chip { top: 63.4vh; }
+
+/* ---- MARKETS card (2026-11-05): a stock / index / bond yield: delayed price + the day's move (facts), then the paired prediction-market odds */
+body[data-segment="markets"] .ov-left { width: 47vw; }
+body[data-segment="markets"] .frame { left: 49vw; }
+body.flashing[data-segment="markets"] .frame { left: 49vw; }
+.bigc.bc-markets { --ac: var(--cyan); --ag: rgba(0,240,255,.5); --mv: var(--soft); --mg: rgba(217,204,255,.4); gap: 1.1vh; }
+.bc-markets.fin-up { --mv: var(--up); --mg: rgba(61,255,176,.55); }
+.bc-markets.fin-down { --mv: var(--down); --mg: rgba(255,90,134,.55); }
+.bc-markets .bc-head { max-height: 15vh; font-size: max(var(--min), min(2.5vw, 5.4vh)); }
+.fin-num { flex: 1 1 auto; display: flex; align-items: center; gap: 1.6vw; min-width: 0; }
+.fin-px { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.fin-v { display: block; font: max(var(--min), min(6.4vw, 14vh))/.9 var(--font-mono); color: #fff; white-space: nowrap; overflow: hidden;
+  text-shadow: 0 0 1.2vw var(--ac), 0 0 3vw var(--ag); }
+.fin-per { font: 700 max(var(--min), min(1.1vw, 2.4vh)) var(--font-display); letter-spacing: .12em; color: var(--soft); text-transform: uppercase; white-space: nowrap; }
+.fin-side { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: .5vh; }
+.fin-mv { display: flex; align-items: baseline; gap: .5vw; color: var(--mv); white-space: nowrap; min-width: 0; }
+.fin-ar { font: max(var(--min), min(2.6vw, 5.6vh)) var(--font-display); text-shadow: 0 0 1vw var(--mv); animation: dlIn .8s cubic-bezier(.2,1.4,.3,1) .35s both; }
+.fin-mvn { font: max(var(--min), min(4.4vw, 9.4vh))/.95 var(--font-mono); text-shadow: 0 0 1vw var(--mv), 0 0 2.4vw var(--mg); animation: dlIn .8s cubic-bezier(.2,1.4,.3,1) .35s both; }
+.fin-mvu { font: 700 max(var(--min), min(1.5vw, 3.2vh)) var(--font-display); letter-spacing: .08em; }
+.fin-mvt { font: 700 max(var(--min), min(1.3vw, 2.8vh)) var(--font-ui); color: #fff; white-space: nowrap; overflow: hidden; }
+.fin-prev { font: 600 max(var(--min), min(1.05vw, 2.3vh)) var(--font-ui); color: var(--soft); white-space: nowrap; overflow: hidden; }
+
+.fin-odds { display: flex; flex-direction: column; gap: .5vh; padding: .7vh .9vw; border-left: .3vw solid var(--cyan); background: linear-gradient(90deg, rgba(0,240,255,.12), rgba(0,240,255,.02) 90%); }
+.fin-oh { font: 900 max(var(--min), .8vw) var(--font-display); letter-spacing: .16em; color: var(--cyan); text-shadow: 0 0 .6vw rgba(0,240,255,.5); white-space: nowrap; overflow: hidden; }
+.fin-r { display: flex; align-items: center; gap: .8vw; min-width: 0; }
+.fin-l { flex: 1 1 30%; min-width: 0; font: 600 max(var(--min), min(1.2vw, 2.6vh)) var(--font-ui); color: #fff; white-space: nowrap; overflow: hidden; }
+.fin-tr { flex: 0 0 9vw; height: max(.7vh, 5px); background: rgba(255,255,255,.12); overflow: hidden; }
+.fin-tr u { display: block; height: 100%; background: var(--cyan); box-shadow: 0 0 .7vw var(--cyan); animation: grow 1.2s cubic-bezier(.2,.8,.2,1) .5s both; transform-origin: left; }
+.fin-p { flex: 0 0 4.2vw; text-align: right; font: max(var(--min), min(1.7vw, 3.6vh)) var(--font-mono); color: #fff; text-shadow: 0 0 .6vw var(--cyan); white-space: nowrap; }
+.fin-d { flex: 0 0 4.6vw; text-align: right; font: max(var(--min), min(1.2vw, 2.6vh)) var(--font-mono); white-space: nowrap; }
+.fin-d.up { color: var(--up); } .fin-d.down { color: var(--down); } .fin-d.flat { color: var(--soft); }
+.fin-r .thin { flex: 0 0 auto; }
+.bc-markets .fin-meta2 { margin-top: 0; border-top: 0; padding-top: 0; }
+.bc-markets .fin-meta .meta-t b { color: var(--amber); }

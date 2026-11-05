@@ -20,6 +20,53 @@ const probeSearch = search && flag('--probe-search');   // probes use the local 
 
 const pad = (s, n) => String(s ?? '').padEnd(n);
 
+// --stories [--state URL] [--index-cache FILE]: story -> news relevance audit (2026-11-05). Reads the aired stories from a
+// PNN server (read-only GET of /api/state, default http://localhost:4180), fetches a live market index (Polymarket +
+// Kalshi, or a cached copy), and re-runs matchStoryNews over data/news-archive.json (wire, 48h) and the saved Google
+// News results in data/news-search.json (7d), printing each story's best headline with its age and why it matched.
+if (flag('--stories')) {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { matchStoryNews, buildHeadlineIndex } = await import('../server/editorial/match.mjs');
+  const { classify } = await import('../server/editorial/filter.mjs');
+  const config = (await import('../server/config.mjs')).default;
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+  const stateUrl = args.includes('--state') ? args[args.indexOf('--state') + 1] : 'http://localhost:4180/api/state';
+  const cacheFile = args.includes('--index-cache') ? args[args.indexOf('--index-cache') + 1] : null;
+  const st = await (await fetch(stateUrl)).json();
+  let index = null;
+  if (cacheFile && fs.existsSync(cacheFile) && Date.now() - fs.statSync(cacheFile).mtimeMs < 3 * 3_600_000) index = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  if (!index) {
+    const { fetchKalshi } = await import('../server/sources/kalshi.mjs');
+    index = [...await fetchPolymarket(), ...await fetchKalshi().catch(() => [])];
+    if (cacheFile) fs.writeFileSync(cacheFile, JSON.stringify(index));
+  }
+  const now = Date.now();
+  index = index.filter((m) => { try { return classify(m, config, { now }).keep; } catch { return false; } });
+  const archive = JSON.parse(fs.readFileSync(path.join(root, 'data', 'news-archive.json'), 'utf8'));
+  const search = new Map(JSON.parse(fs.readFileSync(path.join(root, 'data', 'news-search.json'), 'utf8')));
+  const seen = new Set();
+  const stories = [...(st.stories || []), ...(st.desks || []).flatMap((d) => d.stories || [])].filter((s) => !seen.has(s.id) && seen.add(s.id));
+  const H = 3_600_000;
+  let withNews = 0;
+  console.log(`=== STORY -> NEWS (${stories.length} stories, ${index.length} airable markets, archive ${archive.length}, searched ${search.size})`);
+  for (const s of stories) {
+    const gated = ['sports', 'games', 'esports'].includes(s.category);
+    const wireHits = matchStoryNews(s, buildHeadlineIndex(archive), index, { now, max: 3, entity: gated, maxAgeMs: 48 * H });
+    const sr = (search.get(s.id)?.items || []).map((x) => ({ ...x, outlet: x.outlet || x.source }));
+    const srHits = gated || !sr.length ? [] : matchStoryNews(s, buildHeadlineIndex(sr), index, { now, max: 3, maxAgeMs: 7 * 24 * H });
+    const best = [...wireHits.map((r) => ({ ...r, via: 'wire' })), ...srHits.map((r) => ({ ...r, via: 'search' }))]
+      .sort((a, b) => (now - Date.parse(a.item.publishedAt)) / H + (a.via === 'wire' ? 0 : 3) - (now - Date.parse(b.item.publishedAt)) / H - (b.via === 'wire' ? 0 : 3))[0];
+    const was = s.news?.[0]?.title;
+    if (best) withNews++;
+    console.log(`\n[${s.category}] ${s.headline}`);
+    console.log(best ? `   -> ${best.via} ${best.item.outlet || best.item.source}: ${best.item.title} (${Math.round((now - Date.parse(best.item.publishedAt)) / H)}h, score ${best.score}${process.env.PNN_MATCH_DEBUG ? `, ${best.why}` : ''})` : '   -> (no news: would not air)');
+    if (was && was !== best?.item.title) console.log(`   (live server had: ${was})`);
+  }
+  console.log(`\n${withNews}/${stories.length} stories keep a news item`);
+  process.exit(0);
+}
+
 const wire = createWire();
 const t0 = Date.now();
 const status = await wire.pollAll();
@@ -145,6 +192,29 @@ if (!flag('--no-probes')) {
   check(!loose.length, 'flash: "Data Center IPOs" does not land on a Louisiana data-center moratorium market');
   const tight = await matchMarkets({ title: 'Louisiana lawmakers weigh a data center moratorium', items: [{ title: 'Louisiana lawmakers weigh a data center moratorium' }] }, idx2, { search: false });
   check(tight.length > 0, 'flash: the Louisiana moratorium headline still matches its market');
+  // ---- relevance pass (2026-11-05): reference / evergreen pages, question types, price recency, lead subject
+  for (const [o, t] of [['Britannica', '2026 Iran war | Oil, Explained, United States, Israel, Strait of Hormuz, Map, & Conflict'],
+    ['The Sunday Guardian', 'Diwali Decoration AI Prompts 2026: Copy-Paste These Trending ChatGPT and Gemini Prompts'],
+    ['Kalkine', 'Why Did Brent Swing Over USD 6 in One Day for United States Oil Fund (NYSEARCA:USO)?'], ['qz.com', "10 things to know about Google's Gemini 4 Carbon"],
+    ['Benzinga', 'JD Vance, Jon Ossoff or Kamala Harris? Crypto Bettors Assign Highest Odds of Winning'], ['IMDb', 'Oscar Predictions: Documentary Feature']]) {
+    check(!!badNewsSource({ title: t, outlet: o }), `blocked (reference/evergreen/bettors): ${o} / ${t.slice(0, 50)}`);
+  }
+  check(!badNewsSource({ title: 'What Is SpaceX Planning With Its Reported Move Into U.S. Mobile?', outlet: 'Yahoo Finance' }), 'allowed: a news question that starts "What Is"');
+  const ago = (h) => new Date(now - h * 3_600_000).toISOString();
+  const hlA = (title, h = 1, outlet = 'Probe') => ({ title, outlet, publishedAt: ago(h), category: 'general' });
+  const qcase = (m, good, bad, what) => {
+    const idxQ = [m, ...filler];
+    const titles = (rs) => rs.map((r) => r.item.title);
+    const g = titles(matchStoryNews(story(m), buildHeadlineIndex(good.map((x) => hlA(...x))), idxQ, { now, maxAgeMs: 7 * 24 * 3_600_000 }));
+    const b = titles(matchStoryNews(story(m), buildHeadlineIndex(bad.map((x) => hlA(...x))), idxQ, { now, maxAgeMs: 7 * 24 * 3_600_000 }));
+    check(g.length === good.length && !b.length, `${what}${b.length ? ` (wrongly kept: ${b.join(' / ')})` : ''}${g.length < good.length ? ` (lost: ${good.map((x) => x[0]).filter((t) => !g.includes(t)).join(' / ')})` : ''}`);
+  };
+  qcase(mk(3, 'The Cat in the Hat Rotten Tomatoes score?', 'Above 50', { category: 'culture' }),
+    [['The Cat in the Hat reviews: critics split on the Dr. Seuss remake']], [["The Cat in the Hat's box office tracking is way below the Mike Myers movie"]], 'Rotten Tomatoes score needs a reviews headline');
+  qcase(mk(4, 'Brent oil price above $97.99 a barrel on November 6?', 'Yes'),
+    [['Brent crude slips toward $97 as supply fears ease', 2]], [['Brent Crude $104, Lowest Since 7 Oct', 32], ['Gold climbs as Brent and Treasury yields fall', 2]], 'price level needs a fresh (< 24h) headline about that asset');
+  qcase(mk(5, 'Traffic through the Strait of Hormuz? More than 20 transit calls', 'Above 20', { category: 'politics' }),
+    [['Tanker traffic through the Strait of Hormuz picks up as insurers return']], [['Iran says Strait of Hormuz talks with Oman went well']], 'Hormuz transits need a shipping headline');
   console.log(fails ? `\n${fails} FAILED` : '\nall independence/quality checks passed');
   if (fails) process.exitCode = 1;
 }

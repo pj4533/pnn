@@ -184,7 +184,7 @@ export function createOutcomes(ctx, story, opts = {}) {
     else if (n >= 2) { bx = cross(items[1]); by = LEN + 2.0; bh = Math.min(2.2, (Math.abs(cross(items[0]) - cross(items[1])) - T - 0.2) / 3.2); }
     else { bx = axisX + plotW / 2; by = LEN * 0.5; }
     if (ok && bh > 1.2) {
-      swBadge = holo.label(bMain, { w: 640, h: 200, height: bh, font: '900 96px Orbitron', color: '#ffffff', glow: flipped ? GOLD : dcol, sub: bSub, subColor: flipped ? '#ffe28a' : '#dfe8ff', subFont: '700 60px Rajdhani', mainY: 0.34, subY: 0.8 });
+      swBadge = holo.label(bMain, { w: 640, h: 200, height: bh, font: '900 96px Orbitron', color: '#ffffff', glow: flipped ? GOLD : dcol, sub: bSub, subColor: flipped ? '#ffe28a' : '#dfe8ff', subFont: '700 60px Rajdhani', mainY: 0.34, subY: 0.8, plate: true });
       swBadge.sprite.position.set(bx, by, 0.9); swBadge.yFrac = clamp01(by / HT); swBadge.bright = 0; swBadgeScale = swBadge.sprite.scale.clone(); swBadge.flipped = flipped;
     }
   }
