@@ -57,6 +57,7 @@ The MVP is built: live Polymarket and Kalshi feeds, editorial filter and ranking
 - `npm run health`: `curl localhost:4180/api/health`. It includes `moments` (corner-pop detectors), `build.dead` (dead-content drops), `sotd` and `countdown`.
 - `npm run watch` (`scripts/watch.sh`): live-ops watcher for warnings, alerts and health.
 - `node scripts/test-sources.mjs`, `node scripts/test-editorial.mjs`: source parser and editorial rule tests.
+- `node scripts/test-match.mjs`, `node scripts/test-news-search.mjs`, `node scripts/test-wire-filters.mjs`: news matcher (exact/event tiers, scope, D4 headline filter), search coverage/backoff, and wire feed/filter tests (all offline).
 - `node scripts/test-wire.mjs [--top N] [--no-search] [--kalshi]`: live news-wire poll + clustering + news-to-market matching + probes (never touches the server).
 - UI: `/?fixture=1` (static fixture with a fake wire, an alert at 5s and a NEWS MEETS MARKETS flash at 12s; `&alerts=1`, `&noscene=1`, `&flash=1` flash at 2s and no alert, `&hold=1` keeps the flash up 60s). Logs: `logs/pnn.log` (`flash`, `wire breaking`, `wire no market`, `wire weak match`).
 - UI keys: 1 to 7 force top, focus, movers, week, desk, Story of the Day and countdown. With `?fixture=1`, `window.__pnnFakePop('move'|'still'|'money'|'listed')` fakes corner pops; on live, use `window.__pnn.pops.show(type, ev)`. `?fast=1` runs the clock 10x.

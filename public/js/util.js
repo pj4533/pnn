@@ -107,12 +107,57 @@ export function newsOf(story) {
   return n.find((x) => x && String(x.title || '').trim()) || null;
 }
 export const newsOutlet = (n) => String(n?.source || n?.outlet || 'News');
-/** "Reuters · 12m ago" (outlet + age; age omitted when the item has no time). */
-export const newsMeta = (n, now = Date.now()) => `${newsOutlet(n)}${n?.publishedAt ? ` · ${ago(n.publishedAt, now)}` : ''}`;
+/** Honest news age, never vague: "42 min ago", "5 hr ago", "1 day ago" (24-47h), "2 days ago" (48-71h), "3 days ago" (72-96h). Falls back to `ageH` when there is no time. */
+export function newsAge(n, now = Date.now()) {
+  const ms = toMs(n?.publishedAt);
+  let min;
+  if (!Number.isNaN(ms)) min = Math.max(0, (now - ms) / 60000);
+  else if (Number.isFinite(n?.ageH)) min = Math.max(0, n.ageH * 60);
+  else return '';
+  if (min < 1) return 'just now';
+  if (min < 60) return `${Math.round(min)} min ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} hr ago`;
+  const d = Math.floor(h / 24);
+  return `${d} ${d === 1 ? 'day' : 'days'} ago`;
+}
+/** True for an item 48h or older: it renders in muted amber so an older item reads as older. */
+export function newsOld(n, now = Date.now()) {
+  const ms = toMs(n?.publishedAt);
+  const h = !Number.isNaN(ms) ? (now - ms) / 3600000 : Number.isFinite(n?.ageH) ? n.ageH : 0;
+  return h >= 48;
+}
+/** "Reuters · 12 min ago" (outlet + age; age omitted when the item has no time). */
+export const newsMeta = (n, now = Date.now()) => { const a = newsAge(n, now); return `${newsOutlet(n)}${a ? ` · ${a}` : ''}`; };
+/** Kicker for a news item by tier: exact = IN THE NEWS; event-level says what the headline is about. `tier` falls back to the story's newsTier. */
+export function newsKicker(n, storyTier, compact = false) {
+  const tier = n?.tier || (storyTier === 'event' ? 'event' : 'exact');
+  if (tier !== 'event') return 'IN THE NEWS';
+  if (compact) return 'IN THE NEWS · EVENT';
+  return n?.about === 'race' ? 'IN THE NEWS · ABOUT THE RACE' : 'IN THE NEWS · ABOUT THIS QUESTION';
+}
+/** Plain-English move line for a story with no headline yet: "up 9 points today on $42K traded". The server may send `line`. */
+export function movingFirstLine(mf) {
+  if (!mf) return '';
+  // the server's line leads with "No headline yet · "; the kicker already says it, so drop it here
+  if (mf.line) return String(mf.line).replace(/^\s*no headline yet\s*·\s*/i, '');
+  const pts = Math.round(Math.abs(mf.points || 0) * 100);
+  const when = mf.since === 'past hour' ? 'in the past hour' : 'today';
+  const mv = pts ? `${mf.points > 0 ? 'up' : 'down'} ${pts} ${pts === 1 ? 'point' : 'points'} ${when}` : `moving ${when}`;
+  return Number.isFinite(mf.volume24h) && mf.volume24h > 0 ? `${mv} on ${money(mf.volume24h)} traded` : mv;
+}
+export const isMovingFirst = (story) => story?.newsTier === 'none-moving-first' && !!story?.movingFirst && !newsOf(story);
 /** The standard IN THE NEWS block, same markup on every card kind. '' when the item has no headline (the block hides). */
-export function newsLineHtml(n, now = Date.now(), attrs = 'data-drop="6"') {
+export function newsLineHtml(n, now = Date.now(), attrs = 'data-drop="6"', storyTier) {
   if (!n || !String(n.title || '').trim()) return '';
-  return `<div class="bc-newsline" ${attrs}><span class="bc-nl-h">IN THE NEWS</span><span class="bc-nl-t fit" data-fit-h>${esc(n.title)}</span><span class="bc-nl-s fit">${esc(newsMeta(n, now))}</span></div>`;
+  return `<div class="bc-newsline" ${attrs}><span class="bc-nl-h fit">${esc(newsKicker(n, storyTier))}</span><span class="bc-nl-t fit" data-fit-h>${esc(n.title)}</span><span class="bc-nl-s fit${newsOld(n, now) ? ' old' : ''}">${esc(newsMeta(n, now))}</span></div>`;
+}
+/** The news block for a story: its IN THE NEWS item, else (moving-first stories) the amber MARKETS MOVING FIRST · NO HEADLINE YET block with the move and size. */
+export function storyNewsHtml(story, now = Date.now(), attrs = 'data-drop="6"') {
+  const n = newsOf(story);
+  if (n) return newsLineHtml(n, now, attrs, story?.newsTier);
+  if (!isMovingFirst(story)) return '';
+  return `<div class="bc-newsline mf" ${attrs}><span class="bc-nl-h fit">MARKETS MOVING FIRST · NO HEADLINE YET</span><span class="bc-nl-t fit" data-fit-h>${esc(movingFirstLine(story.movingFirst))}</span></div>`;
 }
 
 /** Distinct neon colors for outcome bars. */

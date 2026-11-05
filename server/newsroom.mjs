@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { log } from './log.mjs';
 import wireConfig from './wire-config.mjs';
 import { createWire } from './sources/wire.mjs';
-import { matchMarkets, analyzeCluster } from './editorial/match.mjs';
+import { matchMarkets, analyzeCluster, headlineReject } from './editorial/match.mjs';
 import { tokenSet, jaccard } from './editorial/text.mjs';
 import { isMarginBracket } from './editorial/rank.mjs';
 import { buildFlash, marketDataLine } from './editorial/flash.mjs';
@@ -27,7 +27,9 @@ const errMsg = (e) => String(e?.message || e).slice(0, 300);
 const SG = new Set(['sports', 'games', 'esports']);
 // Independence (2026-11-05): an exchange's own "news" (Kalshi News, Polymarket, Robinhood...), social posts, scraper farms
 // and cut or garbled headlines never air as the news item, in the archive, the crawl, a flash or the Story of the Day.
-const badItem = (it) => !it || !it.title || !!badNewsSource(it) || looksCut(it.title) || nonLatin(it.title) || nonLatin(it.outlet);
+// Sensitive headlines (D4, QUEUED-FIXES 16) and site-title junk ("Federal Reserve Board - Home") never air either: not as a
+// flash, in the crawl, the archive the story matcher reads, or the Story of the Day (match.mjs headlineReject).
+const badItem = (it) => !it || !it.title || !!badNewsSource(it) || !!headlineReject(it) || looksCut(it.title) || nonLatin(it.title) || nonLatin(it.outlet);
 /** A cluster with its bad items removed (null when nothing airable is left); a bad representative title is replaced by the best good one. */
 function cleanCluster(c) {
   if (!c?.title) return null;
@@ -44,7 +46,9 @@ function cleanCluster(c) {
     independentOutlets: Math.min(c.independentOutlets ?? outs.length, Math.max(outs.length, 1)) };
 }
 const ARCHIVE_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'news-archive.json');
-const ARCHIVE_HOURS = 48, ARCHIVE_MAX = 8000;
+// 72h (news-gate build, option 4): older wire items still back a story, labelled with their honest age on screen.
+// The cap grows with the window and the larger feed list (~180 items/h today, more with the new feeds).
+const ARCHIVE_HOURS = 72, ARCHIVE_MAX = 20000;
 const THEME = { elections: 'politics', politics: 'politics', geopolitics: 'world', world: 'world', economy: 'economy', courts: 'courts',
   tech: 'tech', science: 'science', health: 'health', culture: 'culture', weather: 'weather' };
 
@@ -389,7 +393,9 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
   }
 
   // ---- boosts ("worked in")
-  const flashNews = (f) => ({ title: f.headline, source: f.credit || f.outlets?.[0] || 'News', url: f.url, publishedAt: f.newsAt, flash: true });
+  // a flash headline is matched to its own market: always exact tier (newsFor passes other items' tier/about/ageH through untouched)
+  const flashNews = (f) => ({ title: f.headline, source: f.credit || f.outlets?.[0] || 'News', url: f.url, publishedAt: f.newsAt, flash: true, via: 'wire', tier: 'exact', about: null,
+    ...(Date.parse(f.newsAt) ? { ageH: Math.max(0, Math.round((Date.now() - Date.parse(f.newsAt)) / 360_000) / 10) } : {}) });
   function activeBoosts() {
     const now = Date.now();
     for (const [k, b] of boosts) if (b.until < now) boosts.delete(k);
@@ -445,7 +451,7 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     return [...front, ...rest].slice(0, Math.max(n, front.length));
   }
   function newsFor(story, list) {
-    if (!story?.flash) return list;
+    if (!story?.flash || headlineReject(story.flash.headline)) return list;
     const top = flashNews({ ...story.flash, newsAt: story.flash.newsAt });
     return [top, ...(list || []).filter((x) => x.title !== top.title)].slice(0, 2);
   }

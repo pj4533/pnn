@@ -966,6 +966,22 @@ export function newsQuery(story) {
   let base;
   if (subj) base = `${cleanOutcome(m.outcome).replace(/^(Democrat|Republican|independent) /, '')} ${eventPhrase(story.eventTitle || m.eventTitle).phrase}`;
   else base = questionToClause(m.title) || m.title || story?.eventTitle || '';
+  return queryWords(base);
+}
+// Search phrases for a story, best first, deduped: the lead-outcome query, then (multi-outcome stories only) the
+// event-level phrase ("next James Bond", "Fed December decision") that ingest tries when the first finds nothing.
+export function newsQueries(story) {
+  const out = [newsQuery(story)];
+  const m = story?.lead || {};
+  const multi = m.outcome != null && ((story?._groupSize ?? 0) > 1 || (story?.markets?.length ?? 0) > 1) && story?.ladderKind !== 'strike';
+  if (multi) {
+    const ev = queryWords(eventPhrase(story.eventTitle || m.eventTitle || '').phrase || '');
+    if (ev.split(' ').length >= 2) out.push(ev);
+  }
+  const seen = new Set();
+  return out.filter((q) => { const k = String(q || '').toLowerCase(); if (!k || seen.has(k)) return false; seen.add(k); return true; });
+}
+function queryWords(base) {
   let q = dejargon(stripParens(base))
     .replace(/[“”"?]/g, ' ')
     .replace(/^Will\s+/i, '')
@@ -982,4 +998,15 @@ export function newsQuery(story) {
   return words.slice(0, 8).join(' ');
 }
 
-export default { shapeTitle, swingLine, shortHeadline, pct, pts, money, marketLine, marketLabel, outcomeLabel, moverName, storyHeadline, storyDek, alertCopy, newsQuery, questionToClause, eventPhrase, cleanOutcome, dejargon };
+// MARKETS MOVING FIRST (PLAN-news-gate.md section 5): the second line under the "NO HEADLINE YET" kicker.
+// "No headline yet · up 9 points today on $42K traded". States the move and the absence of a headline: never a cause,
+// never "will", never "Bettors".
+export function movingFirstLine(story) {
+  const mf = story?.movingFirst;
+  if (!mf || !Number.isFinite(mf.points)) return '';
+  const move = pts(mf.points, mf.since === 'past hour' ? 'in the past hour' : 'today');
+  const vol = money(mf.volume24h);
+  return `No headline yet · ${move}${vol ? ` on ${vol} traded` : ''}`;
+}
+
+export default { shapeTitle, swingLine, shortHeadline, pct, pts, money, marketLine, marketLabel, outcomeLabel, moverName, storyHeadline, storyDek, alertCopy, newsQuery, newsQueries, movingFirstLine, questionToClause, eventPhrase, cleanOutcome, dejargon };

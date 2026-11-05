@@ -2,8 +2,11 @@
 // gate, run on a per-cycle request budget). Fails soft ([]) unless opts.throwOnError.
 import fs from 'node:fs';
 import { getText } from '../http.mjs';
+import wireConfig from '../wire-config.mjs';
+import config from '../config.mjs';
 
-const TTL_MS = 10 * 60_000;
+const TTL_MS = 30 * 60_000;
+const CACHE_MAX = 1000;
 const cache = new Map(); // key -> {at, items}
 
 const decode = (s) => String(s)
@@ -27,10 +30,37 @@ export const nonLatin = (s) => /[Ͱ-ϿЀ-ԯ֐-ۿऀ-෿฀-໿぀-鿿가-힯]/.t
 const EXCHANGE_OUTLET = /\b(kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|bet365|caesars|prizepicks|underdog fantasy|novig|manifold|metaculus|predictit|crypto\.com|coinbase|public\.com|action network|oddsshark|vegasinsider|sportsbook ?review|covers\.com|bookies\.com|sportsbook|prediction markets?)\b/i;
 const SOCIAL_OUTLET = /^(facebook|instagram|x|twitter|x \(formerly twitter\)|tiktok|reddit|youtube|threads|linkedin|pinterest|quora|telegram|bluesky|mastodon|medium|substack|tumblr|truth social)$|\b(facebook|instagram|tiktok|reddit)\b/i;
 const SCRAPER_OUTLET = /\b(just jared|tmz|radar ?online|ok! magazine|okmagazine|perez hilton|hollywoodlife|daily star|rotten tomatoes|wikipedia|metacritic|box office mojo|newztodays?|newscord|newsbreak|dailyhunt|devdiscourse|opoyi|bignewsnetwork|indexbox|patch|breaking ?news ?today|latestly|newsx|menafn|bharat express)\b/i;
+// Retail / listing outlets (2026-11-05 news-gate build): a record store's product page ("Blood Records") or a ticket seller
+// is a listing, not news. "records" is plural-only so newspapers called "Record" are not caught.
+const RETAIL_OUTLET = /\b(records|vinyl|store|shop|merch|outlet|amazon|walmart|target|best buy|ebay|etsy|ticketmaster|stubhub|fandango|shopify|aliexpress|temu)\b|\brecord (store|shop)\b/i;
+const RETAIL_DOMAINS = /(^|\.)(amazon\.[a-z.]+|walmart\.com|target\.com|bestbuy\.com|ebay\.[a-z.]+|etsy\.com|ticketmaster\.[a-z.]+|stubhub\.[a-z.]+|fandango\.com|shopify\.com|aliexpress\.com|temu\.com|bandcamp\.com|discogs\.com)$/i;
 const BLOCK_DOMAINS = /(^|\.)(kalshi\.com|polymarket\.com|robinhood\.com|draftkings\.com|fanduel\.com|betmgm\.com|prizepicks\.com|predictit\.org|manifold\.markets|metaculus\.com|facebook\.com|fb\.com|fb\.watch|instagram\.com|x\.com|twitter\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|threads\.net|linkedin\.com|pinterest\.com|quora\.com|t\.me|bsky\.app|medium\.com|substack\.com|newztodays\.com|newscord\.com|newsbreak\.com|patch\.com|actionnetwork\.com|oddsshark\.com|vegasinsider\.com|covers\.com|bookies\.com)$/i;
 // Promo / betting-odds / exchange-coverage headlines: the news item must not be about the markets themselves.
 const PROMO_TITLE = /\((photos?|pics|video|slideshow)\)|\|\s*(rotten tomatoes|imdb|wikipedia|metacritic)$|\b(kalshi|polymarket|predictit|prediction markets?|betting (odds|sites?|apps?|promos?|markets?)|bettors|punters|gamblers|wagers?|odds (&|and) predictions|sportsbooks?|promo codes?|bonus bets?|sign-?up bonus|best bets?|parlays?|odds (boost|today)|dfs|draftkings|fanduel|betmgm)\b/i;
 // Sensitive (CLAUDE.md, DECISIONS D4): the news item next to a market never carries graphic death / violence wording.
+// Every attached headline (wire, search, flash) passes the same war / violence / death patterns as the markets and the wire
+// parse (config.sensitive.excludePatterns + wire-config filters.sensitive), so "Putin, Rezaei meet as Turkey probes deadly
+// Iran border fire" never airs as the news item (QUEUED-FIXES 16, DECISIONS D4).
+const SENSITIVE_BENIGN = config.sensitive?.headlineBenign ? new RegExp(config.sensitive.headlineBenign.source || config.sensitive.headlineBenign, 'gi') : null;
+const SENSITIVE_RES = [...(wireConfig.filters?.sensitive || []), ...(config.sensitive?.excludePatterns || []), ...(config.sensitive?.headlinePatterns || [])].map((r) => (r instanceof RegExp ? r : new RegExp(r, 'i')));
+/** true when a headline carries war / violence / death wording (D4). */
+export function sensitiveHeadline(title) {
+  // figures of speech ("trade war", "dead heat", "war chest") are not D4 content: strip them first (config.sensitive.headlineBenign, shared with rank.headlineBlocked)
+  const t = SENSITIVE_BENIGN ? String(title || '').replace(SENSITIVE_BENIGN, ' ') : String(title || '');
+  return SENSITIVE_TITLE.test(t) || SENSITIVE_RES.some((re) => re.test(t));
+}
+// Site-title junk: a search hit that is a site's own page title ("Federal Reserve Board - Home", "Calendar"), not a headline.
+const JUNK_TITLE = /^(home|home ?page|calendar|news|newsroom|latest news|login|log in|sign in|sign up|contact( us)?|about( us)?|menu|search|sitemap|press (releases?|room|center)|page not found|not found|404.*|access denied|just a moment.*|attention required.*|untitled|welcome)$|\s[-|–—:]\s*(home|home ?page|official (web)?site|welcome|calendar|newsroom)$|^(home|welcome to)\b\s*[-|–—:]/i;
+/** 'junk' when the title is a site / page title rather than a headline (it, or the bare outlet name as the title). */
+export function junkTitle(it) {
+  const t = String(it?.title || '').trim();
+  if (!t) return null;
+  if (JUNK_TITLE.test(t)) return 'junk';
+  const norm = (x) => String(x || '').toLowerCase().replace(/\(\.[a-z]+\)/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const o = norm(it?.outlet || it?.source);
+  if (o && (norm(t) === o || (o.startsWith(norm(t)) && norm(t).split(' ').length <= 4 && /\.gov|\.org/i.test(String(it?.outlet || it?.source || ''))))) return 'junk';
+  return null;
+}
 const SENSITIVE_TITLE = /\b(dead|dies|died|killed|kills|killing|murders?|murdered|manslaughter|assassinat\w*|massacre|genocide|suicide|shooting|shot dead|stabbed|stabbing|bomb(s|ing|ed)?|terror\w*|beheaded|hostages?|death toll|corpses?|bodies)\b/i;
 // Reference / evergreen / SEO pages (2026-11-05 relevance pass): an encyclopedia or database page ("2026 Iran war | Oil,
 // Explained, United States, Israel, Strait of Hormuz, Map, & Conflict" from Britannica), an explainer, a listicle, a
@@ -72,12 +102,15 @@ export function badNewsSource(it) {
   if (outlets.some((o) => EXCHANGE_OUTLET.test(o))) return 'exchange';
   if (outlets.some((o) => SOCIAL_OUTLET.test(o))) return 'social';
   if (outlets.some((o) => SCRAPER_OUTLET.test(o))) return 'scraper';
+  if (outlets.some((o) => RETAIL_OUTLET.test(o))) return 'retail';
   const d = domainOf(it.sourceUrl) || (/news\.google\.com/.test(String(it.url || '')) ? '' : domainOf(it.url));
+  if (d && RETAIL_DOMAINS.test(d)) return 'retail';
   if (d && BLOCK_DOMAINS.test(d)) return /kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|prizepicks|predictit|manifold|metaculus|actionnetwork|oddsshark|vegasinsider|covers|bookies/.test(d) ? 'exchange' : 'social';
   if (PROMO_TITLE.test(String(it.title || ''))) return 'promo';
   const ev = evergreen(it);
   if (ev) return ev;
-  if (SENSITIVE_TITLE.test(String(it.title || ''))) return 'sensitive';
+  if (sensitiveHeadline(it.title)) return 'sensitive';
+  if (junkTitle(it)) return 'junk';
   if (garbledTitle(it.title)) return 'garbled';
   return null;
 }
@@ -159,7 +192,9 @@ export function parseRss(xml) {
   learnWords(out.map((x) => x.title));
   // Google's own relevance order is kept (its first hits are the story, its tail is whatever else was recent); callers
   // that want freshness sort themselves (newsdesk / matchStoryNews do).
-  return out.filter((x) => !looksCut(x.title) && !nonLatin(x.title) && !nonLatin(x.source) && !badNewsSource(x));
+  // a search hit dated years ago (a site's evergreen page, "Federal Reserve Board - Home" from 2006) is not news either
+  const stale = Date.now() - 30 * 24 * 3_600_000;
+  return out.filter((x) => !looksCut(x.title) && !nonLatin(x.title) && !nonLatin(x.source) && !badNewsSource(x) && !(x.publishedAt && Date.parse(x.publishedAt) < stale));
 }
 
 // Google News search operators: leave the exchanges, social networks and scraper farms out of the result list, so the
@@ -179,7 +214,7 @@ export function refineQuery(q) {
 }
 
 // opts.throwOnError: rethrow fetch errors (HttpError with .status) so the caller can stop its cycle and back off;
-// http.mjs already backs the host off on 429 / 5xx. opts.ttlMs overrides the per-query cache (default 10 min).
+// http.mjs already backs the host off on 429 / 5xx. opts.ttlMs overrides the per-query cache (default 30 min; ingest passes poll.newsCacheMin, 45).
 // A result list thinner than `thin` clean items (the exchanges, social posts and scraper farms are dropped) gets one
 // broader retry on the query's leading words, so a strict source filter refills the pool instead of starving it.
 async function searchOnce(q) {
@@ -205,8 +240,8 @@ export async function fetchHeadlines(query, { max = 2, throwOnError = false, ttl
     items = items.slice(0, 25);
     cache.set(q.toLowerCase(), { at: Date.now(), items });
     // one entry per distinct query would otherwise grow forever
-    if (cache.size > 300) { const cut = Date.now() - 6 * TTL_MS; for (const [k, v] of cache) if (v.at < cut) cache.delete(k); }
-    if (cache.size > 300) for (const k of [...cache.keys()].slice(0, cache.size - 300)) cache.delete(k);
+    if (cache.size > CACHE_MAX) { const cut = Date.now() - 6 * TTL_MS; for (const [k, v] of cache) if (v.at < cut) cache.delete(k); }
+    if (cache.size > CACHE_MAX) for (const k of [...cache.keys()].slice(0, cache.size - CACHE_MAX)) cache.delete(k);
     return items.slice(0, max);
   } catch (e) {
     if (throwOnError) throw e;

@@ -68,6 +68,7 @@ body[data-desk="politics"] .cy-tag.desk { background: var(--amber); color: #1a05
 /* ALSO MOVING / COMING UP: the lower third carries something new while a full-screen card is up (watchability #5) */
 .cy-tag.alt { background: linear-gradient(90deg, #3dffb0, var(--cyan)); color: #1a0533; text-shadow: none; }
 /* PRICES ticker mode (delayed stock / bond / oil / gold quotes): its own tag colour, and a quote reads white (a price, not an odds %) */
+.cy-tag.mf { background: var(--amber); color: #1a0533; text-shadow: none; font-size: max(var(--min), min(.95vw, 2vh)); }
 .cy-tag.markets { background: linear-gradient(90deg, #e0a800, #ffd23f); color: #1a0533; text-shadow: none; }
 .cy-t2.quotes .cy-lbl { background: #ffd23f; }
 .cy-t2.quotes { border-top-color: #ffd23f; }

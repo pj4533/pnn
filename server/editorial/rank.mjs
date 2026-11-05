@@ -20,7 +20,7 @@
 // hour on $10K+ adds hourBoost(); change1h/flatMin come from PNN's own samples via ingest (null = no effect).
 
 import { classify } from './filter.mjs';
-import { storyHeadline, storyDek, marketLine, outcomeLabel, moverName, rungLabel, ladderParts, shortHeadline, shapeTitle } from './copy.mjs';
+import { storyHeadline, storyDek, marketLine, outcomeLabel, moverName, rungLabel, ladderParts, shortHeadline, shapeTitle, movingFirstLine } from './copy.mjs';
 
 const DAY = 864e5;
 
@@ -516,17 +516,39 @@ function qualifies(s, now) {
 
 // Sports, video games and esports share one small board allowance (user, 2026-11-05: "don't overdo it").
 export const SPORTS_GAMES = new Set(['sports', 'games', 'esports']);
-const SG_BOARD_MAX = 3;
+// News gate build 2026-11-05: caps come from config.limits / config.movingFirst (defaults here so tests and SIM work).
+const SG_BOARD_MAX = 4;
 const isSG = (s) => SPORTS_GAMES.has(s?.category);
-function selectBoard(ranked, limit, now, enrich) {
+const isMF = (s) => s?.newsTier === 'none-moving-first';
+const capsOf = (config = {}) => {
+  const L = config.limits || {}, MF = config.movingFirst || {};
+  return {
+    sgBoard: L.sgBoard ?? SG_BOARD_MAX, sgDesk: L.sgDesk ?? 8, sgClosing: L.sgClosing ?? 3, sgMovers: L.sgMovers ?? 3,
+    sgPerHead: L.sgPerHeadBoard ?? 1, staleH: L.topStaleH ?? 48,
+    mfBoard: MF.boardMax ?? 4, mfTop: MF.topMax ?? 1, mfDesk: MF.deskMax ?? 2, mfClosing: MF.closingMax ?? 1, mfMovers: MF.moversMax ?? 3,
+    mfShare: MF.share ?? 0.15,
+  };
+};
+// Age of a story's lead headline in hours (news[0].ageH, else from publishedAt); null when it has none.
+function newsAgeH(s, now) {
+  const n = s?.news?.[0];
+  if (!n) return null;
+  if (Number.isFinite(n.ageH)) return n.ageH;
+  const t = Date.parse(n.publishedAt || '');
+  return Number.isFinite(t) ? (now - t) / 36e5 : null;
+}
+function selectBoard(ranked, limit, now, enrich, C = capsOf()) {
   const quota = (c) => QUOTA[c] ?? QUOTA_DEFAULT;
   const picked = new Set();
   const counts = {};
-  let sg = 0;
-  const perHead = new Map();   // one headline carries at most 2 board stories (no board of five "Anthropic IPO" questions)
+  let sg = 0, mf = 0;
+  // one headline carries at most 2 board stories (no board of five "Anthropic IPO" questions); a sports/games story
+  // never shares its headline on the board (one GTA VI piece backed 5 stories)
+  const perHead = new Map();
   const head = (s) => s.news?.[0]?.title || null;
-  const take = (s) => { picked.add(s); counts[boardCat(s)] = (counts[boardCat(s)] || 0) + 1; if (isSG(s)) sg++; if (head(s)) perHead.set(head(s), (perHead.get(head(s)) || 0) + 1); };
-  const sgFull = (s) => (isSG(s) && sg >= SG_BOARD_MAX) || (head(s) && (perHead.get(head(s)) || 0) >= 2);
+  const take = (s) => { picked.add(s); counts[boardCat(s)] = (counts[boardCat(s)] || 0) + 1; if (isSG(s)) sg++; if (isMF(s)) mf++; if (head(s)) perHead.set(head(s), (perHead.get(head(s)) || 0) + 1); };
+  const sgFull = (s) => (isSG(s) && sg >= C.sgBoard) || (isMF(s) && mf >= C.mfBoard)
+    || (head(s) && (perHead.get(head(s)) || 0) >= (isSG(s) ? C.sgPerHead : 2));
   // 1. reserve a seat for the best qualifying story in every category
   const bestByCat = new Map();
   for (const s of ranked) if (!bestByCat.has(boardCat(s)) && qualifies(s, now)) bestByCat.set(boardCat(s), s);
@@ -544,30 +566,38 @@ function selectBoard(ranked, limit, now, enrich) {
   for (const s of ranked) { if (picked.size >= limit) break; if (!picked.has(s) && !sgFull(s)) take(s); }
   const order = new Map(ranked.map((s, i) => [s, i]));
   const board = [...picked].sort((a, b) => order.get(a) - order.get(b));
-  // sports / games never lead the newscast
-  const lead = board.find((s) => !isSG(s) && qualifies(s, now) && topWorthy(s, enrich)) || board.find((s) => !isSG(s));
+  // sports / games and MARKETS MOVING FIRST never lead the newscast
+  const leadable = (s) => !isSG(s) && !isMF(s);
+  const lead = board.find((s) => leadable(s) && qualifies(s, now) && topWorthy(s, enrich)) || board.find(leadable) || board.find((s) => !isSG(s));
   const rest = lead ? [lead, ...board.filter((s) => s !== lead)] : board;
-  return orderTop(rest, 6, 4, (s) => qualifies(s, now) && topWorthy(s, enrich), (s) => qualifies(s, now));
+  // The top 6 skips a story whose headline is older than C.staleH while a fresher qualifying story of its category is
+  // on the board; at most C.mfTop moving-first stories, never #1.
+  const freshCats = new Set(board.filter((s) => { const h = newsAgeH(s, now); return h != null && h <= C.staleH && qualifies(s, now); }).map(boardCat));
+  const stale = (s) => { const h = newsAgeH(s, now); return h != null && h > C.staleH && freshCats.has(boardCat(s)); };
+  return orderTop(rest, 6, 4, (s) => qualifies(s, now) && topWorthy(s, enrich) && !stale(s), (s) => qualifies(s, now) && !stale(s),
+    { notFirst: isMF, fits: (s, top) => !isMF(s) || top.filter(isMF).length < C.mfTop });
 }
 
 // #1 stays the strongest story. The rest of the top `n` is the best story of each other category (in rank
 // order) until `minCats` categories are covered, then the next best with at most 2 per category, then
 // interleaved so the same category never sits back to back when it can be avoided.
-function orderTop(board, n = 6, minCats = 4, ok = () => true, okLoose = ok) {
+function orderTop(board, n = 6, minCats = 4, ok = () => true, okLoose = ok, { notFirst = () => false, fits = () => true } = {}) {
   if (board.length <= 2) return board;
-  // #1 is the best story that clears the floor (quiet nights relax it below)
-  const first = board.find(ok) || board.find(okLoose) || board[0];
+  // #1 is the best story that clears the floor (quiet nights relax it below); `notFirst` stories never take #1
+  const lead = (s) => !notFirst(s);
+  const first = board.find((s) => lead(s) && ok(s)) || board.find((s) => lead(s) && okLoose(s)) || board.find(lead) || board[0];
   const top = [first];
   const cats = new Set([boardCat(first)]);
+  const can = (s) => !top.includes(s) && fits(s, top);
   for (const s of board) {
     if (top.length >= n || cats.size >= minCats) break;
-    if (!cats.has(boardCat(s)) && ok(s)) { top.push(s); cats.add(boardCat(s)); }
+    if (!cats.has(boardCat(s)) && ok(s) && can(s)) { top.push(s); cats.add(boardCat(s)); }
   }
   const per = (c) => top.filter((x) => boardCat(x) === c).length;
-  for (const s of board) { if (top.length >= n) break; if (!top.includes(s) && per(boardCat(s)) < 2 && ok(s)) top.push(s); }
+  for (const s of board) { if (top.length >= n) break; if (can(s) && per(boardCat(s)) < 2 && ok(s)) top.push(s); }
   // quiet night: relax to the old floor, then to anything, so the top 6 still fills
-  for (const s of board) { if (top.length >= n) break; if (!top.includes(s) && okLoose(s)) top.push(s); }
-  for (const s of board) { if (top.length >= n) break; if (!top.includes(s)) top.push(s); }
+  for (const s of board) { if (top.length >= n) break; if (can(s) && okLoose(s)) top.push(s); }
+  for (const s of board) { if (top.length >= n) break; if (can(s)) top.push(s); }
   // interleave (keep #1 first): repeatedly take the best remaining whose category differs from the previous
   const rest = top.slice(1).sort((a, b) => board.indexOf(a) - board.indexOf(b));
   const out = [top[0]];
@@ -576,6 +606,7 @@ function orderTop(board, n = 6, minCats = 4, ok = () => true, okLoose = ok) {
     const i = rest.findIndex((s) => boardCat(s) !== prev);
     out.push(rest.splice(i < 0 ? 0 : i, 1)[0]);
   }
+  // the stories left out of the top n keep rank order; a capped kind (moving-first beyond C.mfTop) waits there too
   return [...out, ...board.filter((s) => !top.includes(s))];
 }
 
@@ -585,23 +616,28 @@ export const DESKS = [
   { id: 'world', title: 'WORLD DESK', categories: ['geopolitics', 'world'] },
   { id: 'culture', title: 'CULTURE DESK', categories: ['culture', 'weather'] },
   { id: 'politics', title: 'POLITICS DESK', categories: ['politics', 'courts'] },
-  // News-gated (DECISIONS 2026-11-05 news-driven PNN): only stories matched to a wire headline <= 24h, at most 6.
-  { id: 'sports', title: 'SPORTS & GAMES', categories: ['sports', 'games', 'esports'], max: 6 },
+  // News-gated (DECISIONS 2026-11-05 news-driven PNN): only stories matched to a wire headline <= 24h, at most 8
+  // (config.limits.sgDesk; was 6 before the news gate build).
+  { id: 'sports', title: 'SPORTS & GAMES', categories: ['sports', 'games', 'esports'], max: 8 },
 ];
-function buildDesks(ranked, now, { max = 12, min = 2 } = {}) {
+function buildDesks(ranked, now, { max = 12, min = 2, C = capsOf() } = {}) {
   const desks = [];
   for (const d of DESKS) {
     const fam = {};
     const heads = {};
     const picks = [];
+    let mf = 0;
+    const cap = d.id === 'sports' ? C.sgDesk : (d.max ?? max);
     for (const s of ranked) {
-      if (picks.length >= (d.max ?? max)) break;
+      if (picks.length >= cap) break;
       if (!d.categories.includes(boardCat(s)) || !qualifies(s, now)) continue;
+      if (isMF(s) && mf >= C.mfDesk) continue;   // MARKETS MOVING FIRST: at most 2 per desk
       const h = s.news?.[0]?.title;
       if (h && (heads[h] || 0) >= 2) continue;   // one headline, at most 2 stories per desk
       const f = familyOf(s);
       if ((fam[f] = (fam[f] || 0) + 1) > (f.startsWith('ladder:') ? 1 : 2)) continue;   // no desk of six Fed-rate brackets or two gas lines
       if (h) heads[h] = (heads[h] || 0) + 1;
+      if (isMF(s)) mf++;
       picks.push(s);
     }
     if (picks.length >= min) desks.push({ id: d.id, title: d.title, categories: d.categories, stories: picks });
@@ -632,42 +668,149 @@ function capPick(items, limit, passes, caps = {}) {
 // ---------- news gate (DECISIONS 2026-11-05: news-driven PNN) ----------
 // Every story that airs carries a matching headline. enrich.newsLookup(story) -> {items, outlets24, freshH, wire24}
 // (server/newsdesk.mjs). Without it (tests, SIM) nothing is gated. Stories with no headline go to `pending` (the
-// search queue) instead of airing. Sports / games need a wire headline <= 24h. Fresh, multi-outlet coverage lifts a
-// story; coverage that is only days old decays it.
+// search queue) instead of airing, unless they qualify as MARKETS MOVING FIRST (a big, well-traded move with no
+// headline yet; capped and labelled). Sports / games need a wire headline <= 24h scoring >= limits.sgMinScore. Fresh,
+// multi-outcome coverage lifts a story; coverage that is days old decays it; an event-level headline weighs x 0.9.
 export function newsFactor(n) {
   if (!n?.items?.length || n.freshH == null) return 1;
   const h = n.freshH;
-  const fresh = h <= 2 ? 1.35 : h <= 6 ? 1.2 : h <= 12 ? 1.1 : h <= 24 ? 1 : h <= 48 ? 0.8 : h <= 96 ? 0.65 : 0.5;
-  return fresh * (1 + 0.1 * Math.min(4, Math.max(0, (n.outlets24 || 0) - 1)));
+  const fresh = h <= 2 ? 1.35 : h <= 6 ? 1.2 : h <= 12 ? 1.1 : h <= 24 ? 1 : h <= 48 ? 0.85 : h <= 72 ? 0.7 : h <= 96 ? 0.55 : 0.4;
+  const tier = n.items[0]?.tier === 'event' ? 0.9 : 1;
+  return fresh * tier * (1 + 0.1 * Math.min(4, Math.max(0, (n.outlets24 || 0) - 1)));
 }
+
+// Attached headlines must pass D4 (QUEUED-FIXES 16) and must be a headline, not a site title ("Federal Reserve Board -
+// Home", "Calendar"). headlineBlocked(title, config) -> 'junk' | 'sensitive' | null. Reads config.sensitive
+// (excludePatterns + headlinePatterns, after neutralising headlineBenign idioms like "trade war" or "dead heat").
+// Exported so the wire, search and flash paths can share it.
+const JUNK_TITLE_RE = /\s[-|–—:·]\s*(home|home ?page|official (web ?)?site|welcome|index)\s*$|^\s*(home|home ?page|calendar|about( us)?|contact( us)?|press releases?|news( releases)?|newsroom|index|search( results)?|log ?in|sign ?in|events?|subscribe|untitled|page not found|404\b.*|access denied)\s*$/i;
+const D4_FALLBACK = /\b(war|wars|warfare|military|missiles?|troops?|airstrikes?|bomb(s|ing|ed)?|attack(s|ed|ing)?|cease-?fire|invasion|kill(s|ed|ing)?|dead(ly)?|dies?|died|deaths?|murder\w*|assassinat\w*|shooting|terror\w*|hostages?|massacre|genocide|fatal\w*|stabb\w*)\b/i;
+const blockedCache = new Map();
+export function headlineBlocked(title, config = {}) {
+  const t = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!t) return 'junk';
+  if (JUNK_TITLE_RE.test(t) || t.split(' ').length < 3) return 'junk';
+  const S = config.sensitive;
+  if (S?.mode === 'allow') return null;
+  const key = `${S ? 'c' : 'd'}|${t}`;
+  if (blockedCache.has(key)) return blockedCache.get(key);
+  const benign = S?.headlineBenign;
+  const tt = benign ? t.replace(new RegExp(benign.source || benign, 'gi'), ' ') : t;
+  const pats = S ? [...(S.excludePatterns || []), ...(S.headlinePatterns || [])] : [D4_FALLBACK];
+  const hit = pats.some((p) => (p instanceof RegExp ? new RegExp(p.source, p.flags.replace('g', '')) : new RegExp(p, 'i')).test(tt));
+  const r = hit ? 'sensitive' : null;
+  if (blockedCache.size > 20000) blockedCache.clear();
+  blockedCache.set(key, r);
+  return r;
+}
+const itemAgeH = (it, now) => (Number.isFinite(it?.ageH) ? it.ageH : (now - (Date.parse(it?.publishedAt || '') || 0)) / 36e5);
+// Drop blocked items; recompute freshH / wire24 / outlets24 when anything was removed (lookup results are cached and
+// shared, so never mutate them).
+function cleanLookup(n, config, now, counts) {
+  const items = n?.items || [];
+  if (!items.length) return n;
+  const keep = items.filter((it) => { const r = headlineBlocked(it?.title, config); if (r) counts[r] = (counts[r] || 0) + 1; return !r; });
+  if (keep.length === items.length) return n;
+  const ages = keep.map((it) => itemAgeH(it, now));
+  return {
+    ...n, items: keep,
+    freshH: keep.length ? Math.max(0, Math.min(...ages)) : null,
+    wire24: keep.some((it, i) => it.via === 'wire' && ages[i] <= 24),
+    outlets24: Math.min(n.outlets24 || 0, new Set(keep.filter((_, i) => ages[i] <= 24).map((it) => String(it.outlet || it.source || '').toLowerCase())).size),
+  };
+}
+
+// MARKETS MOVING FIRST (PLAN-news-gate.md section 5). Returns the story's movingFirst block or null.
+const VOTE_SHARE_RE = /\bleast \d+(\.\d+)?%|\bpercent(age)?\b|\bturnout\b|\b(share of|of the) (the )?(popular )?vote\b|\bvote share\b/i;
+const MF_EXCLUDE_DEFAULT = /\b(iran\w*|russia\w*|ukrain\w*|israel\w*|gaza|hamas|hezbollah|houthis?|taiwan strait|north korea\w*|nuclear|cease-?fire|strikes?|troops?|missiles?|war|wars|military)\b/i;
+export function movingFirstOf(s, now, config = {}) {
+  const MF = config.movingFirst || {};
+  if (MF.enabled === false) return null;
+  const lead = s?.lead;
+  if (!lead || !Number.isFinite(lead.yesPrice) || isSG(s)) return null;
+  const exCats = MF.excludeCategories || ['geopolitics', 'sports', 'games', 'esports'];
+  if (exCats.includes(s.category) || exCats.includes(boardCat(s))) return null;
+  // decay, near-certain (even when it just got there), settling and margin brackets are not pre-news
+  if (!qualifies(s, now) || isDecay(lead, now) || nearCertain(lead) || isSettling(lead) || isMarginBracket(s)) return null;
+  // election vote-share / turnout brackets the day after a vote are results settling, not pre-news
+  if (boardCat(s) === 'elections' && VOTE_SHARE_RE.test(`${s.eventTitle || ''} ${lead.title || ''} ${lead.outcome || ''}`)) return null;
+  const evVol = s._evVol ?? lead.volume24h ?? 0;
+  if (evVol < (MF.minVolume ?? 10_000)) return null;
+  const P = MF.points ?? 0.05;
+  let move = null, since = 'today';
+  if (Number.isFinite(lead.change1d) && abs(lead.change1d) >= P) move = lead.change1d;
+  else if (hotNow(lead, evVol) && abs(lead.change1h) >= P) { move = lead.change1h; since = 'past hour'; }
+  if (move == null) return null;
+  // settled-bracket guard: the price now and the price before the move both inside the band (a +84 "move" to 99% is
+  // a bracket settling, not news); a 1h move checks the day-ago price too
+  const [lo, hi] = MF.priceBand || [0.04, 0.96];
+  const inBand = (p) => Number.isFinite(p) && p >= lo && p <= hi;
+  if (!inBand(lead.yesPrice) || !inBand(lead.yesPrice - move)) return null;
+  if (since === 'past hour' && Number.isFinite(lead.change1d) && !inBand(lead.yesPrice - lead.change1d)) return null;
+  const closes = Date.parse(lead.closesAt || s.closesAt || '');
+  if (Number.isFinite(closes) && closes - now < (MF.minHoursToClose ?? 6) * 36e5) return null;
+  // conflict (D4 belt and braces): no headline frames these, so they never air without one
+  const text = [s.eventTitle, lead.title, lead.eventTitle, lead.outcome, ...(s.markets || []).flatMap((m) => [m.title, m.outcome])].filter(Boolean).join(' · ');
+  const pats = [...(MF.excludePatterns?.length ? MF.excludePatterns : [MF_EXCLUDE_DEFAULT]), ...(config.sensitive?.excludePatterns || [])];
+  if (pats.some((p) => (p instanceof RegExp ? new RegExp(p.source, p.flags.replace('g', '')) : new RegExp(p, 'i')).test(text))) return null;
+  const strong = abs(move) >= (MF.strongPoints ?? 0.08) && evVol >= (MF.strongVolume ?? 25_000);
+  return { points: Math.round(move * 1000) / 1000, volume24h: Math.round(evVol), strong, since };
+}
+
 const NEWS_EVAL_MAX = 1500;   // lower-ranked stories never reach air; skip their lookups
-function newsGate(live, enrich, nowMs, deadIds, dropped) {
+function newsGate(live, enrich, nowMs, deadIds, dropped, config = {}) {
   const fn = enrich?.newsLookup;
   if (typeof fn !== 'function') return { ranked: live, pending: [], news: { gated: false } };
   const t0 = Date.now();
+  const L = config.limits || {};
+  const poolMax = L.newsPool ?? 400;
+  const sgMin = L.sgMinScore ?? 3.3;
   const ok = [], pending = [];
-  let sgDrop = 0, none = 0;
+  const blocked = {};
+  let sgDrop = 0, sgScore = 0, none = 0, mfCount = 0;
   live.forEach((s, i) => {
     let n = null;
-    if (i < NEWS_EVAL_MAX || isSG(s)) { try { n = fn(s); } catch { n = null; } }
+    if (i < NEWS_EVAL_MAX || isSG(s)) { try { n = cleanLookup(fn(s), config, nowMs, blocked); } catch { n = null; } }
     const items = n?.items || [];
-    if (!items.length || (isSG(s) && !n.wire24)) {
-      if (isSG(s)) sgDrop++;
-      else { none++; if (i < NEWS_EVAL_MAX && pending.length < 120 && qualifies(s, nowMs)) pending.push(s); }
+    const sgWeak = isSG(s) && items.length && Number.isFinite(items[0]?.score) && items[0].score < sgMin;
+    if (!items.length || (isSG(s) && !n.wire24) || sgWeak) {
+      if (isSG(s)) { if (sgWeak && n.wire24) sgScore++; else sgDrop++; deadIds.add(s.id); return; }
+      none++;
+      const evaluated = i < NEWS_EVAL_MAX;
+      const mf = evaluated ? movingFirstOf(s, nowMs, config) : null;
+      if (evaluated && pending.length < poolMax && (mf || qualifies(s, nowMs))) pending.push(s);
+      if (mf) {
+        // airs in a capped, labelled share of slots (selectBoard / buildDesks / closing / movers enforce the caps)
+        mfCount++;
+        s.news = [];
+        s.newsTier = 'none-moving-first';
+        s.movingFirst = mf;
+        mf.line = movingFirstLine(s);   // "No headline yet · up 9 points today on $42K traded" (copy.mjs)
+        s.newsScore = mf.strong ? 1 : 0.9;
+        s.score = Math.round(s.score * s.newsScore * 100) / 100;
+        ok.push({ s, i });
+        return;
+      }
       deadIds.add(s.id);
       return;
     }
     s.news = items;
+    s.newsTier = items[0]?.tier === 'event' ? 'event' : 'exact';
+    s.movingFirst = null;
     s.newsScore = Math.round(newsFactor(n) * 100) / 100;
     s.score = Math.round(s.score * s.newsScore * 100) / 100;
     ok.push({ s, i });
   });
-  if (none) dropped['news:none'] = none;
+  if (none - mfCount) dropped['news:none'] = none - mfCount;
   if (sgDrop) dropped['news:sports-games'] = sgDrop;
+  if (sgScore) dropped['news:sg-score'] = sgScore;
   // re-rank by the news-weighted score; ties keep the diversified order
   const v = (x) => (x.s._v ?? x.s.score) * x.s.newsScore;   // the diversified (family-damped) value, news-weighted
   ok.sort((a, b) => v(b) - v(a) || a.i - b.i);
-  return { ranked: ok.map((x) => x.s), pending, news: { gated: true, ms: Date.now() - t0, withNews: ok.length, pending: pending.length, sgDropped: sgDrop } };
+  return {
+    ranked: ok.map((x) => x.s), pending,
+    news: { gated: true, ms: Date.now() - t0, withNews: ok.length - mfCount, pending: pending.length, sgDropped: sgDrop, sgScoreDropped: sgScore, movingFirst: mfCount, headlinesBlocked: blocked },
+  };
 }
 
 // ---------- main ----------
@@ -764,7 +907,8 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     return false;
   });
   // News gate: stories without a matching headline do not air (they wait in `pending` for a news search).
-  const { ranked, pending, news: newsStats } = newsGate(live, enrich, nowMs, deadIds, dropped);
+  const { ranked, pending, news: newsStats } = newsGate(live, enrich, nowMs, deadIds, dropped, config);
+  const C = capsOf(config);
 
   // movers: one per event, by weighted |change1d| (faded when flat, boosted by a move in the last hour), skipping
   // decay drift and trivial moves. Then picked with caps so the ticker is not 20 election races: any one category
@@ -792,9 +936,12 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     if (moverSeen.has(m.storyId) || deadIds.has(m.storyId)) continue;
     moverSeen.add(m.storyId);
     const st = storyById.get(m.storyId);
-    if (newsStats.gated && !st?.news?.length) continue;   // a mover card carries its story's headline
-    if (SPORTS_GAMES.has(st?.category) && uniq.filter((x) => SPORTS_GAMES.has(x.st?.category)).length >= 2) continue;
+    if (newsStats.gated && !st?.news?.length && !isMF(st)) continue;   // a mover card carries its story's headline (or MOVING FIRST)
+    if (SPORTS_GAMES.has(st?.category) && uniq.filter((x) => SPORTS_GAMES.has(x.st?.category)).length >= C.sgMovers) continue;
+    // a moving-first ticker entry is the story's own lead (the guarded market), never a far rung of its event
+    if (isMF(st) && (m.id !== st.lead?.id || uniq.filter((x) => isMF(x.st)).length >= C.mfMovers)) continue;
     if (st?.news?.length) m.news = st.news.slice(0, 2);
+    if (st?.newsTier) { m.newsTier = st.newsTier; m.movingFirst = st.movingFirst || null; }
     uniq.push({ m, st, cat: st ? boardCat(st) : m.category, fam: st ? familyOf(st) : `event:${m.storyId}` });
   }
   const strongMover = (m) => (m.volume24h || 0) >= HOT_VOLUME && (abs(m.change1d) >= 0.03 || hotNow(m));
@@ -814,10 +961,29 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     .map((x) => ({ s: x.s, cat: boardCat(x.s), fam: null }));
   // Only non-thin stories, unless there are none at all (then the thin ones, ranked, rather than nothing).
   const solid = closingRanked.filter((x) => !x.s.thin);
-  const sgOk = (list) => { let n = 0; return list.filter((x) => !isSG(x.s) || ++n <= 2); };   // <= 2 sports / games
+  // <= 3 sports / games, <= 1 MARKETS MOVING FIRST
+  const sgOk = (list) => { let n = 0, f = 0; return list.filter((x) => (!isSG(x.s) || ++n <= C.sgClosing) && (!isMF(x.s) || ++f <= C.mfClosing)); };
   const closing = capPick(sgOk(solid.length ? solid : closingRanked), limClosing, [() => 'caps', () => true], { cat: 3 }).map((x) => x.s);
-  const board = selectBoard(ranked, limStories, nowMs, enrich);
-  const desks = buildDesks(ranked, nowMs, { max: L.deskStories ?? 12 });
+  const board = selectBoard(ranked, limStories, nowMs, enrich, C);
+  let desks = buildDesks(ranked, nowMs, { max: L.deskStories ?? 12, C });
+  // MARKETS MOVING FIRST share: at most C.mfShare of the on-air stories (board + desks); trim desk-only ones, lowest first
+  if (newsStats.movingFirst) {
+    const onAir = new Set([...board, ...desks.flatMap((d) => d.stories)]);
+    const allowed = Math.max(1, Math.floor(C.mfShare * onAir.size));
+    const mfOn = [...onAir].filter(isMF);
+    if (mfOn.length > allowed) {
+      const onBoard = new Set(board);
+      const order = new Map(ranked.map((s, i) => [s, i]));
+      const cut = new Set(mfOn.filter((s) => !onBoard.has(s)).sort((a, b) => order.get(b) - order.get(a)).slice(0, mfOn.length - allowed));
+      desks = desks.map((d) => ({ ...d, stories: d.stories.filter((s) => !cut.has(s)) }));
+    }
+    const airedMF = new Set([...board, ...desks.flatMap((d) => d.stories), ...closing].filter(isMF).map((s) => s.id));
+    for (const m of movers) if (isMF(storyById.get(m.storyId))) airedMF.add(m.storyId);
+    const capped = ranked.filter((s) => isMF(s) && !airedMF.has(s.id)).length;
+    newsStats.movingFirstAired = airedMF.size;
+    newsStats.movingFirstCapped = capped;
+    if (capped) dropped['news:moving-first-capped'] = capped;
+  }
   const aired = [...board, ...desks.flatMap((d) => d.stories)];
   lastAired = {
     storyIds: new Set(aired.map((s) => s.id)),

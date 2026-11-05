@@ -1,6 +1,6 @@
 // HTML builders for the segment panels. Pure functions of (data, now) → HTML string.
 import { outcomeSubtitle } from './cards.js';
-import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta } from './util.js';
+import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta, newsAge, newsOld, storyNewsHtml, isMovingFirst, movingFirstLine } from './util.js';
 
 const KIND = { mover: 'ON THE MOVE', favorite: 'THE FAVORITE', closing: 'RESOLVING SOON', news: 'IN THE NEWS' };
 
@@ -65,7 +65,7 @@ export function sparkline(story, now, attrs = '') {
 
 /** The standard IN THE NEWS block (shared markup with the full-screen cards); '' when the story has no news item. */
 export function newsBlock(story, now, { drop = 5 } = {}) {
-  return newsLineHtml(newsOf(story), now, `data-drop="${drop}"`);
+  return storyNewsHtml(story, now, `data-drop="${drop}"`);
 }
 
 function kicker(story, extra = '', { withEvent = true } = {}) {
@@ -92,7 +92,7 @@ export function miniCard(story, now, rank) {
   return `<article class="mini" data-story="${esc(story.id)}" style="--i:${rank}">
     <div class="mini-top"><span class="mini-rk">${story.boardRank || rank + 1}</span><span class="mini-cat fit">${esc(categoryName(story.category).toUpperCase())}</span><span class="mini-v">${esc(pct(m.yesPrice))}</span></div>
     <div class="mini-h fit" data-fit-h>${esc(story.short || story.headline)}</div>
-    ${nw ? `<div class="mini-nw" data-opt-parent><b>${esc(miniOutlet(nw).toUpperCase())}</b><span data-opt> · ${esc(nw.title)}</span><i>${nw.publishedAt ? ` · ${esc(ago(nw.publishedAt, now))}` : ''}</i></div>` : ''}
+    ${nw ? `<div class="mini-nw${nw.tier === 'event' ? ' ev' : ''}" data-opt-parent><b>${esc(miniOutlet(nw).toUpperCase())}</b><span data-opt> · ${esc(nw.title)}</span><i${newsOld(nw, now) ? ' class="old"' : ''}>${newsAge(nw, now) ? ` · ${esc(newsAge(nw, now))}` : ''}${nw.tier === 'event' ? ' · event news' : ''}</i></div>` : isMovingFirst(story) ? `<div class="mini-nw mf" data-opt-parent><b>MOVING FIRST</b><span data-opt> · no headline yet</span><i> · ${esc(movingFirstLine(story.movingFirst).replace(/ on \$.*$/, '').replace(/ points?\b/, ' pts'))}</i></div>` : ''}
     <div class="mini-meta"><span class="mini-mv ${moveCls(m.change1d)}">${esc(moveShort(m.change1d))}</span><span class="fit"><b>${esc(exchangeName(m.source))}</b> · ${esc(ago(m.updatedAt, now))} · ${esc(money(m.volume24h))}/24h</span>${story.thin ? '<span class="thin sm">THIN</span>' : ''}</div>
   </article>`;
 }

@@ -14,6 +14,14 @@ export default {
     newsSec: 600,          // refresh headlines for the top N stories
     newsTopN: 10,
     newsMax: 2,            // headlines per story
+    // Per-story Google News search (news gate build 2026-11-05, PLAN-news-gate.md section 1; read by ingest/newsdesk).
+    newsSearchSec: 90,     // search cycle
+    newsBudget: 14,        // searches per cycle (was 6)
+    newsBudgetShort: 20,   // when the board is short of stories (was 8)
+    newsRetryMin: 90,      // no-match retry, doubling per consecutive miss (was 20)
+    newsRetryMaxMin: 360,  // retry cap
+    newsRefreshMin: 120,   // aired search-only stories refresh (was 60)
+    newsCacheMin: 45,      // query cache TTL (was 10-15)
     historySec: 600,       // Polymarket price history for the top N story leads
     historyTopN: 8,
     history: { interval: '1d', fidelity: 30 },
@@ -183,6 +191,22 @@ export default {
       re('\\bannex(es|ed|ation)?\\b'), re('\\boccup(y|ies|ation)\\b'),
       re('\\bdeclares? war\\b'), re('\\barmed conflict\\b'), re('\\brecaptur'),
     ],
+    // Attached news headlines (wire, search, flash, moving-first context) must pass excludePatterns above PLUS these
+    // headline-only words (QUEUED-FIXES 16: "Putin, Rezaei meet as Turkey probes deadly Iran border fire" aired).
+    // Headline-only because they are too broad for market titles ("deadliest hurricane season" markets stay).
+    headlinePatterns: [
+      re('\\bdead(ly|liest|lier)\\b'), re('\\bfatal(ly|ities)?\\b'), re('\\bslain\\b'), re('\\bslaying'),
+      re('\\bstabb(ed|ing)\\b'), re('\\bgun(man|men|fire|shots?|point)\\b'),
+      re('\\bkidnap'), re('\\babduct'), re('\\bexecutions?\\b'), re('\\bmanslaughter\\b'), re('\\bsuicide\\b'),
+      re('\\bbeheaded\\b'), re('\\bcorpses?\\b'), re('\\bdeath toll\\b'), re('\\bwounded\\b'),
+      re('\\bdrones?\\b.{0,30}\\b(hit|struck|downed|shot)\\b'),
+      re('\\brap(e|ed|ist)\\b'), re('\\bgunned\\b'), re('\\bairstrike'),
+      // military strikes / attacks by a state or armed force ("Russia intensifies Ukraine strikes"); labour strikes stay
+      re('\\b(russia|russian|ukraine|ukrainian|israel|israeli|iran|iranian|gaza|lebanon|syria|syrian|yemen|houthi|kyiv|moscow|military|missile|drone|air|naval|artillery|rocket|retaliatory|cross-border|border)\\s+(strikes?|attacks?|raids?|offensive|bombardments?|shelling|barrages?)\\b'),
+      re('\\b(strikes?|attacks?|shelling|bombardments?|raids?)\\s+(on|in|against)\\s+(russia|ukraine|kyiv|israel|iran|gaza|lebanon|syria|yemen|tehran|beirut)\\b'),
+    ],
+    // Benign idioms neutralised before the headline test, so "trade war" / "dead heat" headlines still back markets.
+    headlineBenign: re('\\b(trade|price|tariff|culture|bidding|streaming|console|talent|turf|flame|format|patent|currency|chip|subsidy|fare|pricing) wars?\\b|\\bwar (chest|room)s?\\b|\\bdead heat\\b|\\bdeadlock\\w*|\\battack ads?\\b|\\bpanic attack\\b|\\bheart attack\\b'),
   },
 
   // Market-level noise filters (editorial/filter.mjs).
@@ -360,6 +384,31 @@ export default {
     closingDays: 7,
     marketsPerStory: 5,
     alerts: 10,
+    // News gate (PLAN-news-gate.md, 2026-11-05).
+    newsPool: 400,          // pending (search queue) cap; was a hard-coded 120
+    sgBoard: 4,             // sports & games on the 30-story board (was 3)
+    sgDesk: 8,              // SPORTS & GAMES desk (was 6)
+    sgClosing: 3,           // sports & games in THIS WEEK (was 2)
+    sgMovers: 3,            // sports & games in the ticker (was 2)
+    sgMinScore: 3.3,        // match-score floor on news[0] for sports & games (the measured wrong matches all scored < 3.3)
+    sgPerHeadBoard: 1,      // one headline backs at most 1 sports/games story on the board (2 on the desk)
+    topStaleH: 48,          // the top 6 skips a story whose news is older than this while a fresher one of its category qualifies
+  },
+
+  // MARKETS MOVING FIRST · NO HEADLINE YET (PLAN-news-gate.md section 5). A big, well-traded move with no headline yet
+  // airs in a capped, labelled share of slots. Both prices inside the band and not closing within 6h: no settled-bracket
+  // artifacts. Conflict and sports/games never air without a headline to frame them (D4).
+  movingFirst: {
+    enabled: true,
+    points: 0.05, minVolume: 10_000,          // |change1d| >= 5 pts on >= $10K event volume (or a hot 1h move)
+    strongPoints: 0.08, strongVolume: 25_000, // the strong tier ranks at 1.0 x score, the rest at 0.9
+    priceBand: [0.04, 0.96],                  // yesPrice AND prior (yesPrice - move) inside the band
+    minHoursToClose: 6,
+    share: 0.15, boardMax: 4, topMax: 1, deskMax: 2, closingMax: 1, moversMax: 3,
+    excludeCategories: ['geopolitics', 'sports', 'games', 'esports'],
+    excludePatterns: [
+      re('\\b(iran\\w*|russia\\w*|ukrain\\w*|israel\\w*|gaza|hamas|hezbollah|houthis?|taiwan strait|north korea\\w*|nuclear|cease-?fire|strikes?|troops?|missiles?|war|wars|military|invasion|invade\\w*|sanctions?|nato|kremlin|putin|zelensk\\w*|netanyahu|khamenei)\\b'),
+    ],
   },
 
   sim: {

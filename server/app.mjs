@@ -73,6 +73,11 @@ export function health(store, config) {
     const limit = (intervals[name] || 300) * (config.staleFactor || 3);
     const stale = ageSec == null || ageSec > limit;
     feeds[name] = { ok: !!f.ok && !stale, stale, ageSec, staleAfterSec: limit, lastOk: f.lastOk, lastError: f.lastError, count: f.count };
+    if (name === 'news') {
+      // search coverage (PLAN-news-gate section 1): budget, 429 scale, hourly yield, pool drain
+      const { budget, scale, searched1h, found1h, pool, neverSearched, retrying } = f;
+      Object.assign(feeds[name], { budget, scale, searched1h, found1h, pool, neverSearched, retrying });
+    }
     if (name === 'wire') {
       // the news wire: count = feeds ok; plus ring size and what the matcher made of breaking clusters
       const { feedsOk, feedsTotal, lastPoll, items, clustersFired, clustersMatched, flashesMade, lastFlashAt,

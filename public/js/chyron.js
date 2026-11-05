@@ -1,7 +1,7 @@
 // Chyron: persistent lower third (current story headline), scrolling ticker, data/disclaimer strip.
 // The ticker cycles MOVERS (45s), PRICES (25s, state.finance: delayed stock / index / yield / oil / gold quotes) and NEWS WIRE (30s, state.wire:
 // outlet + headline + age) with a quick crossfade. The wire is skipped while it has fewer than 3 headlines, PRICES while there are fewer than 3 quotes.
-import { el, esc, pct, moveShort, moveCls, money, exchangeName, ago, storyVolume } from './util.js';
+import { el, esc, pct, moveShort, moveCls, money, exchangeName, ago, storyVolume, newsAge, isMovingFirst } from './util.js';
 import { fitText } from './fit.js';
 import { finItems, fmtVal, moveShortFin, finDir, finMeta } from './finance.js';
 
@@ -48,9 +48,9 @@ export function createChyron(root) {
       return;
     }
     delete line.dataset.story;
-    const t = tagText || TAGS[kind] || 'PNN';
+    const t = tagText || (kind !== 'alert' && isMovingFirst(story) ? 'MOVING FIRST' : TAGS[kind]) || 'PNN';
     if (tag.textContent !== t) { tag.innerHTML = `<span>${esc(t)}</span>`; }
-    tag.className = `cy-tag ${kind}`;
+    tag.className = `cy-tag ${kind}${isMovingFirst(story) ? ' mf' : ''}`;
     const h = story?.headline || 'PNN reports what prediction markets are pricing, in plain English.';
     const sk = `${kind}|${story?.id || ''}`;
     if (sk !== lastStoryKey) {            // new story: animate the headline in
@@ -86,7 +86,7 @@ export function createChyron(root) {
     }).join('');
   }
   function wireFor(s) {
-    return (s?.wire || []).slice(0, 30).map((w) => `<span class="cy-item wi"><span class="ol">${esc(String(w.outlet || 'NEWS').toUpperCase())}</span><span class="nm">${esc(w.title)}</span><span class="ag">${esc(ago(w.publishedAt))}</span></span>`).join('');
+    return (s?.wire || []).slice(0, 30).map((w) => `<span class="cy-item wi"><span class="ol">${esc(String(w.outlet || 'NEWS').toUpperCase())}</span><span class="nm">${esc(w.title)}</span><span class="ag">${esc(newsAge(w) || ago(w.publishedAt))}</span></span>`).join('');
   }
   // PRICES: delayed quotes (facts), never mixed into the odds items. Indices first, then yields, oil / gold, then stocks.
   const KIND_ORDER = { index: 0, yield: 1, commodity: 2, currency: 3, stock: 4 };

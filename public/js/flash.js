@@ -1,7 +1,7 @@
 // NEWS MEETS MARKETS: a side takeover over the left column (~10s) when a breaking news story trades somewhere.
 // Only live SSE 'flash' events play; state.flashes is never replayed. Queued, deduped by id (and by story within
 // 10 min), capped at 3, stale (> 10 min) dropped. Paused while a BREAKING takeover is on air.
-import { el, esc, pctNum, moveText, moveCls, money, exchangeName, ago } from './util.js';
+import { el, esc, pctNum, moveText, moveCls, money, exchangeName, ago, newsAge } from './util.js';
 import { fitText, fitStack } from './fit.js';
 
 // ?fixture=1&hold=1 keeps a flash up for 60s (screenshots and layout checks).
@@ -59,7 +59,7 @@ export function createFlashes(root, { onStart, onEnd, onClick } = {}) {
         <div class="fl-news">
           <div class="fl-lbl">ON THE WIRE</div>
           <div class="fl-head fit" data-fit-h>${esc(f.headline)}</div>
-          <div class="fl-credit fit">${esc((f.credit || 'News wire').toUpperCase())}${f.newsAt ? ` · ${esc(ago(f.newsAt).toUpperCase())}` : ''}</div>
+          <div class="fl-credit fit">${esc((f.credit || 'News wire').toUpperCase())}${f.newsAt ? ` · ${esc((newsAge({ publishedAt: f.newsAt }) || ago(f.newsAt)).toUpperCase())}` : ''}</div>
         </div>
         <div class="fl-sec">WHAT THE MARKETS ARE PRICING</div>
         ${ms.map(row).join('')}

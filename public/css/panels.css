@@ -81,6 +81,9 @@
 .mini-nw { flex: 0 0 auto; min-width: 0; font: 600 max(var(--min), .72vw) var(--font-ui); color: #fff; white-space: nowrap; overflow: hidden; border-left: 2px solid var(--magenta); padding-left: .4vw; }
 .mini-nw b { font: 800 max(var(--min), .72vw) var(--font-ui); letter-spacing: .05em; color: var(--pink); }
 .mini-nw i { font: normal max(var(--min), .72vw) var(--font-mono); color: var(--soft); }
+.mini-nw i.old { color: #d9a55b; }
+.mini-nw.mf { border-left-color: var(--amber); }
+.mini-nw.mf b { color: var(--amber); }
 
 /* boards: movers + this week */
 .board-h { display: flex; flex-direction: column; gap: .3vh; }

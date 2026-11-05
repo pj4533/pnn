@@ -7,7 +7,7 @@
 //   wire.start()                              staggered first polls, then each feed on its own jittered timer
 //   wire.stop()
 //   await wire.pollAll()                      one poll of every feed now (tests / warm start); returns status()
-//   wire.items({limit, since, category})      newest-first WireItem[] from the ring
+//   wire.items({limit, since, category, backlog})  newest-first WireItem[] from the ring plus the 6h..maxItemAgeHours backlog (backlog:false = ring only)
 //   wire.clusters({limit, minOutlets})        current clusters (last 45 min window kept for 6h), best first
 //   wire.detect({now})                        run breaking detection now; returns newly fired Cluster[] (also emitted)
 //   wire.status()                             per-feed {id, outlet, ok, lastOk, lastError, items, newestAgeMin, status, backoffSec}
@@ -119,13 +119,16 @@ function splitAggregatorTitle(title) {
 
 export function compileFilters(cfg) {
   const f = cfg.filters || {};
-  return Object.entries(f).map(([name, list]) => ({ name, list: (list || []).map((r) => (r instanceof RegExp ? r : new RegExp(String(r), 'i'))) }));
+  const titleOnly = new Set(cfg.titleOnlyFilters || []);   // e.g. fluff, junk: judged on the headline alone, not the description
+  return Object.entries(f).map(([name, list]) => ({ name, titleOnly: titleOnly.has(name), list: (list || []).map((r) => (r instanceof RegExp ? r : new RegExp(String(r), 'i'))) }));
 }
-/** Returns the filter group name that rejects this text ('sensitive', 'sports', ...) or null. */
-export function rejectReason(text, compiled, skip = null) {
+/** Returns the filter group name that rejects this text ('sensitive', 'sports', ...) or null.
+ *  `titleText` (optional) is what title-only groups (cfg.titleOnlyFilters) test; it defaults to `text`. */
+export function rejectReason(text, compiled, skip = null, titleText = null) {
   for (const g of compiled) {
     if (skip && skip.includes(g.name)) continue;   // feed.skipFilters: e.g. sports/gaming feeds skip the 'sports' group
-    for (const r of g.list) if (r.test(text)) return g.name;
+    const t = g.titleOnly && titleText != null ? titleText : text;
+    for (const r of g.list) if (r.test(t)) return g.name;
   }
   return null;
 }
@@ -133,7 +136,7 @@ export function rejectReason(text, compiled, skip = null) {
 /** Raw items -> WireItem[] for one feed (dedup ids, age checks, filters). Pure except for `now`. */
 export function normalizeItems(feed, raw, cfg, compiledFilters, now = Date.now(), stats = null) {
   const out = [];
-  const maxAge = (cfg.maxItemAgeHours ?? 24) * 3_600_000;
+  const maxAge = (cfg.maxItemAgeHours ?? 72) * 3_600_000;
   const maxFuture = (cfg.maxFutureMin ?? 10) * MIN;
   for (const r of raw) {
     let title = r.title.replace(/\s+/g, ' ').trim();
@@ -145,7 +148,7 @@ export function normalizeItems(feed, raw, cfg, compiledFilters, now = Date.now()
     }
     if (!title || r.ts == null) { if (stats) stats.undated++; continue; }
     if (now - r.ts > maxAge || r.ts - now > maxFuture) { if (stats) stats.old++; continue; }
-    const why = rejectReason(`${title} ${feed.kind === 'nws' ? '' : r.desc || ''}`, compiledFilters, feed.skipFilters);
+    const why = rejectReason(`${title} ${feed.kind === 'nws' ? '' : r.desc || ''}`, compiledFilters, feed.skipFilters, title);
     if (why) { if (stats) stats.filtered[why] = (stats.filtered[why] || 0) + 1; continue; }
     const marker = cfg.markers ? cfg.markers.test(title) || cfg.markers.test((r.desc || '').slice(0, 40)) : false;
     let official = false;
@@ -309,7 +312,8 @@ export function createWire(overrides = {}) {
     items: 0, newestTs: null, status: null, polls: 0, notModified: 0, stats: null,
   }]));
   const hosts = new Map();       // host -> {until, n}
-  const ring = new Map();        // item id -> item (insertion order ~ arrival)
+  const ring = new Map();        // item id -> item (insertion order ~ arrival); clustering and breaking detection only see this (ring.maxAgeHours)
+  const backlog = new Map();     // item id -> item aged out of the ring (or arrived older than it), kept until maxItemAgeHours; feeds items() only
   const clusters = new Map();    // cluster id -> internal cluster
   const fired = [];              // [{at, tok}] for near-duplicate refire suppression
   const df = new Map();          // token -> number of ring items containing it (for IDF weighting)
@@ -366,29 +370,41 @@ export function createWire(overrides = {}) {
   function ingest(newItems) {
     const now = Date.now();
     const fresh = [];
+    const ringMs = cfg.ring.maxAgeHours * 3_600_000;
+    const aged = [];
     for (const it of newItems) {
-      if (ring.has(it.id)) continue;
+      if (ring.has(it.id) || backlog.has(it.id)) continue;
       it.seenAt = new Date(now).toISOString();
       it.tok = tokenSet(it.title);
       it.outletKey = it.outlet;
       if (!it.tok.size) continue;
+      if (now - it.ts > ringMs) {   // 6h..72h old on arrival: archive material, never a cluster (breaking needs a fresh item)
+        const { tok, ...rest } = it;
+        backlog.set(it.id, rest);
+        aged.push(rest);
+        continue;
+      }
       ring.set(it.id, it);
       dfAdd(it, 1);
       fresh.push(it);
     }
     for (const it of fresh.sort((a, b) => a.ts - b.ts)) addToClusters(clusters, it, bc, idf, rare);
     prune(now);
-    if (fresh.length) emitter.emit('items', fresh.map(({ tok, ts, outletKey, clusterId, ...rest }) => rest));
-    return fresh.length;
+    const strip = ({ tok, ts, outletKey, clusterId, ...rest }) => rest;
+    if (fresh.length || aged.length) emitter.emit('items', [...fresh, ...aged].map(strip));
+    return fresh.length + aged.length;
   }
 
   function prune(now) {
     const maxAge = cfg.ring.maxAgeHours * 3_600_000;
-    for (const [id, it] of ring) if (now - it.ts > maxAge) { ring.delete(id); dfAdd(it, -1); }
+    const toBacklog = (it) => { const { tok, ...rest } = it; backlog.set(it.id, rest); };
+    for (const [id, it] of ring) if (now - it.ts > maxAge) { ring.delete(id); dfAdd(it, -1); toBacklog(it); }
     if (ring.size > cfg.ring.maxItems) {
       const sorted = [...ring.values()].sort((a, b) => a.ts - b.ts);
-      for (const it of sorted.slice(0, ring.size - cfg.ring.maxItems)) { ring.delete(it.id); dfAdd(it, -1); }
+      for (const it of sorted.slice(0, ring.size - cfg.ring.maxItems)) { ring.delete(it.id); dfAdd(it, -1); toBacklog(it); }
     }
+    const keepMs = Math.max(cfg.maxItemAgeHours ?? 72, cfg.ring.maxAgeHours) * 3_600_000;
+    for (const [id, it] of backlog) if (now - it.ts > keepMs) backlog.delete(id);
     for (const [id, c] of clusters) {
       c.items = c.items.filter((i) => ring.has(i.id));
       if (!c.items.length) { clusters.delete(id); continue; }
@@ -490,9 +506,9 @@ export function createWire(overrides = {}) {
       return this.status();
     },
     detect,
-    items({ limit = 50, since = 0, category = null } = {}) {
+    items({ limit = 50, since = 0, category = null, backlog: withBacklog = true } = {}) {
       const sinceMs = typeof since === 'string' ? Date.parse(since) : since;
-      return [...ring.values()]
+      return [...ring.values(), ...(withBacklog ? backlog.values() : [])]
         .filter((i) => i.ts >= (sinceMs || 0) && (!category || i.category === category))
         .sort((a, b) => b.ts - a.ts)
         .slice(0, limit)

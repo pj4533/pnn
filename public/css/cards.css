@@ -52,6 +52,13 @@ body.flashing[data-segment="desk"] .frame, body.flashing[data-segment="movers"] 
 .bc-nl-h { font: 900 max(var(--min), .85vw) var(--font-display); letter-spacing: .22em; color: var(--magenta); text-shadow: 0 0 .6vw rgba(255,43,214,.6); }
 .bc-nl-t { max-height: 6.4vh; overflow: hidden; font: 700 max(var(--min), min(1.3vw, 2.8vh))/1.2 var(--font-ui); color: #fff; overflow-wrap: break-word; }
 .bc-nl-s { font: max(var(--min), .85vw) var(--font-mono); color: var(--pink); white-space: nowrap; overflow: hidden; }
+.bc-nl-h { white-space: nowrap; overflow: hidden; }
+/* age >= 48h: muted amber so an older item reads as older (never pink) */
+.bc-nl-s.old, .cd-ns.old { color: #d9a55b; }
+/* MARKETS MOVING FIRST: no headline yet; same geometry, amber instead of magenta */
+.bc-newsline.mf { border-left-color: var(--amber); background: linear-gradient(90deg, rgba(255,177,59,.16), rgba(255,177,59,.02) 90%); }
+.bc-newsline.mf .bc-nl-h { color: var(--amber); text-shadow: 0 0 .6vw rgba(255,177,59,.55); }
+.bc-newsline.mf .bc-nl-t { font-weight: 600; color: #fff; }
 
 .bc-meta { margin-top: auto; }
 .bc-meta .meta-t { font-size: max(var(--min), min(1vw, 2.1vh)); }

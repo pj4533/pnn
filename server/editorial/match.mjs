@@ -25,6 +25,27 @@ import { classify } from './filter.mjs';
 import { tokens, tokenSet } from './text.mjs';
 import { log } from '../log.mjs';
 import { badNewsSource, looksCut, nonLatin, learnWords } from '../sources/news.mjs';
+import * as newsSrc from '../sources/news.mjs';
+import wireConfig from '../wire-config.mjs';
+import pnnConfig from '../config.mjs';
+
+// Sensitive headlines (DECISIONS D4, QUEUED-FIXES 16): every attached headline (wire, search, flash, Story of the Day)
+// passes the same war / violence / death patterns as the markets (config.sensitive) and the wire parse (wire-config
+// filters.sensitive). news.mjs badNewsSource applies them too; this is the matcher's own guard so no path skips it.
+const SENSITIVE_HEAD = [...(wireConfig?.filters?.sensitive || []), ...(pnnConfig?.sensitive?.excludePatterns || []), /\bdeadly\b|\bfatal\w*\b|\bgunfire\b|\bwounded\b/i]
+  .map((r) => (r instanceof RegExp ? r : new RegExp(r, 'i')));
+// A site's own page title from a search hit ("Federal Reserve Board - Home", "Calendar") is not a headline.
+const SITE_TITLE = /^(home|home ?page|calendar|news|newsroom|latest news|press releases?|login|sign in|contact( us)?|about( us)?|search|sitemap|untitled|welcome|page not found|access denied)$|\s[-|–—:]\s*(home|home ?page|official (web)?site|welcome|calendar|newsroom)$/i;
+/** Why a headline may never be attached to a story or flash ('sensitive' | 'site-title' | null). */
+export function headlineReject(it) {
+  const t = String((typeof it === 'string' ? it : it?.title) || '').trim();
+  if (!t) return 'empty';
+  const b = pnnConfig?.sensitive?.headlineBenign;   // "trade war", "dead heat": figures of speech, not D4 content
+  const tb = b ? t.replace(new RegExp(b.source || b, 'gi'), ' ') : t;
+  if (newsSrc.sensitiveHeadline?.(t) || SENSITIVE_HEAD.some((re) => re.test(tb))) return 'sensitive';
+  if (SITE_TITLE.test(t) || t.split(/\s+/).length < 2 || (typeof it === 'object' && newsSrc.junkTitle?.(it))) return 'site-title';
+  return null;
+}
 
 const DAY = 86_400_000;
 
@@ -138,9 +159,31 @@ const NATIONAL_STORY = { test: (t) => NATIONAL_RE.test(t) || /\bUS\b/.test(t) };
 const NATIONAL_HEAD = /\b(national|nationwide|united states|american|americans|u\.s\.|us|across the (country|nation)|aaa|federal|washington|nation)\b/i;
 const LOCAL_HEAD = /\b(county|counties|township|borough|parish|village of|statewide|state average|state's average|local|neighborhood|school district|city council|mayor|town of|city of)\b/i;
 const DISTRICT = /\b[A-Z]{2}-\d{1,2}\b/;
+// Central banks are places of their own (2026-11-05 news-gate build): a Bank of England hike is not Bank of Canada news.
+// A story that names one bank never takes a headline that names only other banks.
+const BANKS = [['fed', /\b(fed|federal reserve|fomc|powell|warsh)\b/i], ['boc', /\bbank of canada\b|\bboc\b/i], ['boe', /\bbank of england\b|\bboe\b/i],
+  ['ecb', /\b(european central bank|ecb|lagarde)\b/i], ['boj', /\b(bank of japan|boj)\b/i], ['rba', /\b(reserve bank of australia|rba)\b/i],
+  ['snb', /\b(swiss national bank|snb)\b/i], ['rbnz', /\b(reserve bank of new zealand|rbnz)\b/i], ['banxico', /\b(banxico|bank of mexico)\b/i],
+  ['pboc', /\b(people'?s bank of china|pboc)\b/i], ['rbi', /\b(reserve bank of india|rbi)\b/i], ['riksbank', /\briksbank\b/i], ['norges', /\bnorges bank\b/i]];
+const banksIn = (t) => new Set(BANKS.filter(([, re]) => re.test(t)).map(([k]) => k));
+function bankMismatch(st, h) {
+  const s = banksIn(st);
+  if (!s.size) return false;
+  const hb = banksIn(h);
+  return hb.size > 0 && ![...hb].some((b) => s.has(b));
+}
+// A US Senate / House / Governor market never takes a state-legislature headline ("Democrats flip two Alabama Senate seats
+// as District 10 remains close" is the Alabama state senate, not the US Senate race).
+const FED_OFFICE = /\b(senate|house|governor|gubernatorial|congress\w*)\b/i;
+const STATE_LEG_STORY = /\b(state senate|state house|legislat\w*|assembly|district \d+|state (rep\w*|senator))\b/i;
+const STATE_LEG_HEAD = new RegExp(`\\b(state senate|state house|statehouse|state legislat\\w*|legislatures?|legislative (seats?|races?|districts?|majorit\\w*|chambers?)|general assembly|state assembly|assembly (seats?|district)|state (rep|representative|senator)s?|district \\d+|(two|three|four|five|six|seven|eight|nine|ten|\\d+) (${STATES.join('|')}) (senate|house) seats)\\b`, 'i');
+function legislatureMismatch(st, h) {
+  return FED_OFFICE.test(st) && !STATE_LEG_STORY.test(st) && !DISTRICT.test(st) && STATE_LEG_HEAD.test(h);
+}
 /** true when a headline is about a place the (national) story is not: "Fairfield Gas Prices ... State Average". */
 export function scopeMismatch(storyText, title) {
   const st = String(storyText || ''), h = String(title || '');
+  if (bankMismatch(st, h) || legislatureMismatch(st, h)) return true;
   const sGeo = geoNames(st);
   if (sGeo.size || DISTRICT.test(st)) return false;           // the story names its own place: geoMiss handles that
   if (NATIONAL_HEAD.test(h)) return false;
@@ -467,7 +510,7 @@ export function buildHeadlineIndex(items) {
   for (const it of items || []) {
     if (!it?.title) continue;
     // Never the news item: exchange / promo / social / scraper sources, garbled lowercase titles, cut headlines, non-Latin
-    if (badNewsSource(it) || looksCut(it.title) || nonLatin(it.title) || nonLatin(it.outlet)) continue;
+    if (badNewsSource(it) || headlineReject(it) || looksCut(it.title) || nonLatin(it.title) || nonLatin(it.outlet)) continue;
     const news = analyzeCluster({ title: it.title });
     const i = list.length;
     list.push({ it, news, lower: ` ${String(it.title).toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ')} ` });
@@ -489,7 +532,9 @@ const STORY_WEAK = new Set(['ai', 'general', 'election', 'elect', 'winner', 'ann
   'congress', 'midterm', 'midterms', 'democratic', 'federal', 'global', 'world', 'chart', 'love', 'margin', 'victory', 'vote', 'percent', 'change', 'changes', 'nominated', 'nomination', 'nominations', 'nominee', 'nominees', 'nominate', 'announced', 'announces', 'released', 'releases']);
 // Capitalized but not a subject ("Finals", "Group", "Inc", "Prize"): never a P word.
 const STORY_WEAK_P = new Set(['final', 'finals', 'pro', 'group', 'inc', 'corp', 'prize', 'problem', 'air', 'oil', 'crude', 'margin', 'district',
-  'vote', 'percent', 'turnout', 'victory', 'cost', 'house', 'senate']);
+  'vote', 'percent', 'turnout', 'victory', 'cost', 'house', 'senate',
+  // a question's capitalised first word is no subject: "Another Fed rate hike" never takes "another Switch 2 price hike"
+  'another', 'any', 'other']);
 // Service pieces on sports / gaming feeds never carry a story (fantasy lineups, betting picks, listicles, how-to-watch).
 const SPORTS_FLUFF = /\b(DFS|DraftKings|FanDuel|fantasy|best bets?|prop bets?|picks?|predictions?|predicted|parlay|lineups?|how to (watch|follow|stream)|live stream|every player|ranked|ranking|quiz|deals? of the day|best deals?|on sale|discount|price drop|\d+% off)\b/i;
 const lowerWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ').trim();
@@ -525,6 +570,8 @@ function outcomeTerm(outcome, idf) {
 // `lower` (the headline's raw lowercase words) guards the stemmer: "Caleb Williams" must not hit "William Contreras"
 // a word with a different ending still counts: impeach / impeachment, nominate / nomination / nominated
 const hasStem = (H, t) => H.has(t) || (t.length >= 7 && [...H.keys()].some((k) => k.length >= 7 && Math.abs(k.length - t.length) <= 5 && k.slice(0, 7) === t.slice(0, 7)));
+// a transliterated surname ("Eisenkot" / "Eizenkot"): same length (>= 6), same first two letters, one letter different
+const translitHit = (o, H) => !!o && o.toks.length <= 3 && o.last.length >= 6 && [...H.keys()].some((k) => k.length === o.last.length && k.slice(0, 2) === o.last.slice(0, 2) && [...k].filter((c, i) => c !== o.last[i]).length === 1);
 const outcomeHit = (o, H, lower = null) => !!o && H.has(o.last) && o.toks.filter((t) => H.has(t)).length >= o.need && (!lower || !o.raw || lower.includes(` ${o.raw}`));
 
 
@@ -576,6 +623,9 @@ const QTYPES = [
   // not a history piece ("LIV Golf timeline: From the league's beginning to where things now stand")
   { key: 'shutdown', q: /\b(shut ?downs?|shut(s|ting)? down|fold(s|ing)?|cease(s)? operations?|wind(s|ing)? down|dissol\w+|go(es)? out of business|liquidat\w+)\b/i,
     h: /\b(shut ?downs?|shut(s|ting)? down|shuttered|end of|the end|ends?|ending|ended|fold(s|ed|ing)?|collaps\w*|demise|future|dissol\w+|wind(s|ing)? down|clos(e|es|ed|ing|ure)|cease\w*|pull(s|ed)? (the )?plug|funding|bankrupt\w*|insolven\w*|liquidat\w+|merg(e|er|es|ed|ing)|merger|takeover|cancel\w*|survive|survival|doomed|crisis|uncertain\w*|in doubt|exit|quit|disband\w*|scrap\w*|axed?|PIF|public investment fund)\b/i },
+  // album sales ("First Week Album Equivalent Units"): a sales / chart / debut headline, not a store listing of the record
+  { key: 'album-units', q: /\b(album equivalent units|first[- ]week (sales|units)|equivalent units)\b/i,
+    h: /\b(units|sales|sold|sells|selling|first[- ]week|debut\w*|billboard|charts?|charting|streams?|streaming|copies|tracking|projected|projections?|forecast\w*|no\. ?1|number one|#1)\b/i },
   // a sports award race on a team / conference outcome ("ACC" for the Heisman) needs the award named: "ACC POY Awards" is not it
   { key: 'award', q: /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i, h: null },
 ];
@@ -610,6 +660,22 @@ function leadAsset(title) {
 const RACE_EVENT = /\b(election|elections|race|primary|runoff|nominee|nomination|next (prime minister|president|chancellor|speaker|leader|pm)|prime minister|leader|majority|control of|seats?|governor|senate|house|mayor|winner)\b/i;
 const RACE_CATS = new Set(['elections', 'politics', 'world', 'geopolitics']);
 const RETRO_HEAD = /\btimeline\b.*\b(from|beginning|origins?|history|where (things|it) (now )?stand\w*)\b|\b(a )?(brief |short |full |complete )?history of\b|\blook(ing)? back\b/i;
+// ---------- 2026-11-05 news-gate build (option 3 + fifth lever) ----------
+// Race-result lever: a margin / vote-share / turnout bracket on one race is answered by the race result ("Democrat Amy
+// Acton wins Ohio's race for governor") even though the headline has none of the bracket's frame words.
+const RESULT_Q = /\b(margin|percent|percentage|vote share|popular vote|turnout|least \d+(\.\d+)?%)/i;
+const RESULT_HEAD = /\b(wins?|won|winning|flips?|flipped|defeats?|defeated|beats?|unseats?|ousts?|concedes?|conceded|projected|called|victory|victorious|re-?elected|elected|landslide|routs?)\b/i;
+const OFFICES = [['gov', /\b(governor\w*|gubernatorial|governorship)\b/i], ['senate', /\bsenate\b/i], ['house', /\b(house|congressional|congress(man|woman)?)\b|\b[A-Z]{2}-\d{1,2}\b/i], ['mayor', /\bmayor\w*\b/i]];
+const officesIn = (t) => new Set(OFFICES.filter(([, re]) => re.test(t)).map(([k]) => k));
+// Proper-noun run words that are ordinary words too: "Red" of "Red Rocks" never counts as the subject on its own.
+const COMMON_RUN = new Set(['red', 'new', 'big', 'blue', 'black', 'white', 'green', 'gold', 'golden', 'great', 'little', 'old', 'young', 'grand', 'high',
+  'royal', 'united', 'north', 'south', 'east', 'west', 'best', 'good', 'star', 'stars', 'city', 'park', 'home', 'night', 'life', 'love', 'king', 'queen',
+  'house', 'rock', 'rocks', 'man', 'woman', 'girl', 'boy', 'dead', 'last', 'free', 'real', 'live', 'open', 'world', 'one', 'top', 'bad', 'joy', 'mt']);
+const NOT_NAME = /^(no|none|other|another|neither|nobody|no one|tie|draw|someone else|yes)\b|\d|\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|exactly|more than|fewer|less than|over|under|above|below|between|at least)\b/i;
+// Podcast episodes, round-ups and live blogs are the item only when nothing cleaner exists.
+const LEDE_HEAD = /\b(podcast|episode|round-?up|live updates?|live blog|results for .+ and )\b/i;
+// An official release backs an event only when it is about the policy itself, not an enforcement / personnel notice.
+const POLICY_HEAD = /\b(fomc|monetary policy|interest rates?|rate (decision|hike|cut|increase|decrease)|policy rate|target range|federal funds|statement|minutes|projections?|opinion|ruling|order|decision)\b/i;
 /** Why a headline that names the story's subject is still not about the question (null = fine). */
 function questionMiss(T, title, ageH, leadHit) {
   // a history / recap piece is not news about a market's open question (unless the question itself is about history)
@@ -684,6 +750,10 @@ function storyTerms(story, idx) {
   const first = new Set([...([...properRuns(lead.title), ...properRuns(evTitle)][0] || [])].flatMap((t) => t.split(/[-./]/)).filter((t) => idx.idf(t) >= 2.2 && t.length >= 3 && !UNITS.has(t) && !WEAK.has(t) && !STORY_WEAK.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
   const frame = multi ? new Set() : new Set(tokens(`${evTitle} ${lead.title || ''}`).filter((t) => idx.idf(t) >= 2.2 && !first.has(t) && !WEAK.has(t) && !STORY_WEAK.has(t) && !ENTITY_GENERIC.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
   const storyText = `${evTitle} ${lead.title || ''} ${lead.outcome || ''}`;
+  // outcomes that are names (a person, a film, a party), not counts or brackets ("Exactly 0 cuts") or "No Bond chosen"
+  const named = withOutcome.filter((m) => !NOT_NAME.test(String(m.outcome)));
+  const namedOutcomes = multi ? named.map((m) => outcomeTerm(m.outcome, idx.idf)).filter(Boolean) : [];
+  const oTokNamed = new Set(namedOutcomes.flatMap((o) => o.toks));
   const Fall = new Set(tokens(evTitle).filter((t) => !oTok.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
   const qText = `${evTitle} ${lead.title || ''}`;
   const qtypes = QTYPES.filter((q) => q.q.test(qText));
@@ -691,7 +761,11 @@ function storyTerms(story, idx) {
   const race = RACE_CATS.has(String(story.category || lead.category || '').toLowerCase()) && RACE_EVENT.test(evTitle);
   // a place outcome ('UAE') is named by its cities too ('Abu Dhabi talks')
   const leadGeo = multi && lead.outcome ? geoNames(lead.outcome) : new Set();
-  return { multi, qtypes, asset, race, leadGeo, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`) };
+  return { multi, qtypes, asset, race, leadGeo, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`),
+    resultQ: !multi && race && RESULT_Q.test(storyText), offices: officesIn(`${evTitle} ${lead.title || ''}`), raceGeo: geoNames(`${evTitle} ${lead.title || ''}`, true),
+    // every distinctive word of the event's frame (not an outcome, not a weak or generic word): what "about the event" means
+    // ("No Bond chosen" is an outcome, but "Bond" is still the event's frame: only named outcomes are taken out)
+    evTitle, namedOutcomes, Fs: new Set(tokens(evTitle).filter((t) => !oTokNamed.has(t) && !CONTEXT.test(t) && !/\d/.test(t) && !WEAK.has(t) && !STORY_WEAK.has(t) && !ENTITY_GENERIC.has(t) && idx.idf(t) >= 1.8)) };
 }
 
 /** Entity phrases for sports/games matching (kept for callers/tests): outcome names and their last word. */
@@ -734,8 +808,11 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     const H = h.news.tw;
     let e = 0, p = 0, eOut = 0, eNonP = 0;
     for (const t of T.E) if (hasStem(H, t)) { e++; if (T.oTok.has(t)) eOut++; if (!T.P.has(t)) eNonP++; }
-    const pRuns = T.runs.filter((r) => [...r].some((t) => hasStem(H, t))).length;
-    for (const t of T.P) if (hasStem(H, t)) p++;
+    // a multi-word run ("Red Rocks", "Pete Hegseth") hits on a word of its own that is not an ordinary word, or as a whole:
+    // "Raise the Red Lantern" never names "Red Rocks" (2026-11-05 news-gate build)
+    const runHit = (r) => (r.size === 1 ? hasStem(H, [...r][0]) : [...r].some((t) => !COMMON_RUN.has(t) && hasStem(H, t)) || [...r].every((t) => hasStem(H, t)));
+    const pRuns = T.runs.filter(runHit).length;
+    for (const t of T.P) if (hasStem(H, t) && (!COMMON_RUN.has(t) || T.runs.some((r) => r.has(t) && (r.size === 1 || runHit(r))) || !T.runs.some((r) => r.has(t)))) p++;
     const topic = T.topics.some((t) => h.news.topics.includes(t));
     const oHits = T.outcomes.filter((o) => outcomeHit(o, H, h.lower)).length;
     let ok;
@@ -748,7 +825,7 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     const pRare = [...T.P].some((t) => H.has(t) && idx.idf(t) >= idx.rareIdf);
     // ... and the outcome must be the story's own (its lead), or two outcomes together: "Arsenal pushed by pain" is rival news
     // on a Barcelona market, "Anthropic IPO" is not SpaceX news (2026-11-05).
-    const leadHit = T.leadOut ? outcomeHit(T.leadOut, H, h.lower) : false;
+    const leadHit = T.leadOut ? outcomeHit(T.leadOut, H, h.lower) || translitHit(T.leadOut, H) : false;
     const oOk = T.leadOut ? leadHit : oHits >= 1;
     // a full person name (two or more words) plus any word of the race itself ("Schumer ... Majority Leader") is the story;
     // "AZ-02" is "Arizona's 2nd Congressional District"
@@ -772,9 +849,50 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     if (!ok && !T.multi && T.leaveQ && pRuns >= 1 && LEAVE_HEAD.test(h.it.title)) ok = true;
     // single question: the headline must name the question's own subject (the first proper noun) unless a strong topic is shared
     // ("Sarah Paulson ... Rotten Tomatoes score" is not "The Cat in the Hat Rotten Tomatoes score")
-    if (ok && !T.multi && T.first.size && !topic && [...T.first].filter((t) => hasStem(H, t)).length < (T.first.size >= 4 ? Math.ceil(T.first.size * 0.6) : 1)) ok = false;
+    // race-result lever: a margin / vote-share / turnout bracket takes the race result itself ("Democrat Amy Acton wins Ohio's
+    // race for governor"): same state (or district), same office, a result verb; the bracket's frame words are not needed
+    const resultHit = T.resultQ && RESULT_HEAD.test(h.it.title) && [...officesIn(h.it.title)].some((o) => T.offices.has(o))
+      && ([...T.raceGeo].some((g) => geoNames(h.it.title).has(g)) || distHit);
+    if (!ok && resultHit && (pRuns >= 1 || e >= 2)) ok = true;
+    // a strong topic stands in for the subject only when the topic IS the subject ("Fed" for a Fed question, "Alito" for SCOTUS);
+    // "Google will block search access" is not Bad Bunny's Year in Search (2026-11-05 news-gate build)
+    const topicSubj = topic && (!T.first.size || T.topics.some((tp) => h.news.topics.includes(tp) && [...T.first].some((f) => tp.covers.has(f) || tp.market.test(f))));
+    if (ok && !T.multi && T.first.size && !topicSubj && [...T.first].filter((t) => hasStem(H, t)).length < (T.first.size >= 4 ? Math.ceil(T.first.size * 0.6) : 1)) ok = false;
     // single question whose headline only names the subject: it must also touch what is asked (the frame)
-    if (ok && !T.multi && T.frame.size && pRuns < 2 && ![...T.frame].some((t) => hasStem(H, t)) && !(T.leaveQ && LEAVE_HEAD.test(h.it.title)) && !(T.levelQ && T.asset?.h.test(h.it.title) && LEVEL_HEAD.test(h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('frame miss', h.it.title.slice(0, 60), [...T.frame]); ok = false; }
+    if (ok && !T.multi && T.frame.size && pRuns < 2 && !resultHit && ![...T.frame].some((t) => hasStem(H, t)) && !(T.leaveQ && LEAVE_HEAD.test(h.it.title)) && !(T.levelQ && T.asset?.h.test(h.it.title) && LEVEL_HEAD.test(h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('frame miss', h.it.title.slice(0, 60), [...T.frame]); ok = false; }
+    // Event level (option 3): a multi-outcome story whose lead is not named still takes a headline that is unambiguously about
+    // the event: its own subject plus two frame words ("Justice Alito ... Supreme Court" on the next justice), a rival
+    // outcome plus a distinctive frame word ("Brosnan endorses Callum Turner as next Bond" on Josh O'Connor), or an official
+    // release on the policy itself. Never on one shared word or an outcome name alone (measured 15% precision).
+    let tier = 'exact';
+    const evCand = T.multi && T.leadOut && !leadHit && oHits < 2;
+    const leadMiss = evCand && !T.race && !(T.leadGeo.size && [...geoNames(h.it.title)].some((g) => T.leadGeo.has(g)));
+    let evOk = false;
+    if (!entity && evCand) {
+      const fsHit = [...T.Fs].filter((t) => hasStem(H, t));
+      const fsHits = fsHit.length + (distHit ? 1 : 0);
+      // the event's subject run plus two distinctive frame words, one of them its most distinctive ("Justice Alito ... Supreme
+      // Court" on the next justice); "Oscar Micheaux Film Institute" names "Oscar" and "film", not "documentary", and "Mass
+      // Effect ... Feature Doc" is not Best Animated Feature
+      const fsTop = [...T.Fs].reduce((a, t) => (!a || idx.idf(t) > idx.idf(a) ? t : a), null);
+      const topHit = !!fsTop && fsHit.includes(fsTop);
+      // (when the most distinctive word is the subject run itself, "Critics" of "Critics Choice Awards", a second one is needed)
+      const runToks = new Set(T.runs.filter(runHit).flatMap((r) => [...r]));
+      const subjOk = pRuns >= 1 && ((topHit && fHits >= 2 && (fsHit.length >= 2 || !runToks.has(fsTop))) || fsHit.length >= 3);
+      // a rival outcome by name (a word of its own, not one the event title shares: "Exactly 1 cut" is not a name) plus the
+      // event's most distinctive frame word (or two frame words, or its district): "OpenAI ... cybersecurity model" is not
+      // "best coding model"
+      const evTok = new Set(tokens(T.evTitle));
+      const rival = T.namedOutcomes.some((o) => outcomeHit(o, H, h.lower) && o.toks.some((t) => !evTok.has(t) && H.has(t)));
+      const rivalOk = rival && (fsHits >= 2 || topHit || distHit);
+      const officialOk = !!h.it.official && topic && fsHits >= 1 && POLICY_HEAD.test(h.it.title);
+      // a race's own office: an Alaska Senate headline is not Alaska Governor news
+      const hOff = officesIn(h.it.title);
+      const officeOk = !T.offices.size || !hOff.size || [...hOff].some((o) => T.offices.has(o));
+      evOk = officeOk && fsHits >= 1 && (subjOk || rivalOk || officialOk);
+      if (process.env.PNN_MATCH_DEBUG) console.error(evOk ? 'event ok' : 'event no', { subjOk, rivalOk, officialOk, officeOk, fsHit, pRuns, fsTop }, h.it.title.slice(0, 60));
+    }
+    if (!ok && evOk) { ok = true; tier = 'event'; }
     let why = 'story';
     if (!ok && entity && SPORTY.has(String(h.it.category || '').toLowerCase()) && !SPORTS_FLUFF.test(h.it.title)) {
       // a rare subject named in full: "LIV Golf" needs "LIV", not just "golf" ("Good Good Golf executive...")
@@ -787,12 +905,15 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
       why = 'entity';
     }
     if (!ok) continue;
+    // another office's race: a Maine House headline is not news on a Senate-seats market (2026-11-05 news-gate verify)
+    if (!entity && T.offices?.size) { const ho = officesIn(h.it.title); if (ho.size && ![...ho].some((o) => T.offices.has(o))) { if (process.env.PNN_MATCH_DEBUG) console.error('office miss', h.it.title.slice(0, 60)); continue; } }
     // wrong place: a local story on a national market, another country's data on a named-country question
     if (scopeMismatch(T.storyText, h.it.title) || (!entity && geoMiss(T.storyText, h.it.title))) { if (process.env.PNN_MATCH_DEBUG) console.error('geo miss', h.it.title.slice(0, 60)); continue; }
     // the story's own subject (2026-11-05): a multi-outcome story that is not a race ("who will attend", "which movie",
     // "best actor nominee", "#1 searched person") needs its lead outcome named, or two outcomes together; a headline about
     // the field or a rival ("Best Actor odds: Malkovich leads" on Tom Cruise, "Iran's new supreme leader" on Witkoff) is not it
-    if (T.multi && T.leadOut && !leadHit && oHits < 2 && !T.race && !(T.leadGeo.size && [...geoNames(h.it.title)].some((g) => T.leadGeo.has(g)))) { if (process.env.PNN_MATCH_DEBUG) console.error('lead miss', h.it.title.slice(0, 60)); continue; }
+    // ... unless it is about the event itself (event tier above): then it backs every outcome, labelled as event-level
+    if (leadMiss) { if (!evOk) { if (process.env.PNN_MATCH_DEBUG) console.error('lead miss', h.it.title.slice(0, 60)); continue; } tier = 'event'; }
     // what is asked: reviews for a Rotten Tomatoes score, a ranking / model for "best AI", a fresh price move for a price level
     const ageH = (now - (Date.parse(h.it.publishedAt) || 0)) / 3_600_000;
     const qm = questionMiss(T, h.it.title, ageH, leadHit);
@@ -802,7 +923,9 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     const score = e + 2 * p + 3 * oHits + (topic ? 3 : 0) + (leadHit ? 4 : 0) + (T.qtypes.length || T.asset ? 1 : 0);
     // relevance floor: one shared word plus a frame word is not enough on its own (entity matches carry their own proof)
     if (viaStory && score < minScore) { if (process.env.PNN_MATCH_DEBUG) console.error(`low score ${score}`, h.it.title.slice(0, 60)); continue; }
-    out.push({ item: h.it, score, why, tw: H, outlet: String(h.it.outlet || h.it.source || '').toLowerCase() });
+    // an event-level headline ranks below an exact one; a podcast / round-up / live blog only when nothing cleaner exists
+    const adj = (tier === 'event' ? 0.85 : 1) * (LEDE_HEAD.test(h.it.title) && !h.it.official ? 0.6 : 1);
+    out.push({ item: h.it, score: Math.round(score * adj * 100) / 100, why, tier, about: tier === 'event' ? (T.race ? 'race' : 'question') : null, tw: H, outlet: String(h.it.outlet || h.it.source || '').toLowerCase() });
   }
   // Corroboration (2026-11-05): a headline that other outlets also ran (similar wording among the matches) is a story,
   // not one site's take; it ranks ahead of a lone piece of the same age.
@@ -819,7 +942,9 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
   for (const x of out) { delete x.tw; delete x.outlet; }
   // Freshest strong match first: recency matters more than a slightly higher score.
   const ts = (x) => Date.parse(x.item.publishedAt) || 0;
-  out.sort((a, b) => (ts(b) - ts(a)) / 3_600_000 + (b.score - a.score) * 0.5);
+  // an exact hit outranks an event-level one of similar age (event counts as 6h older)
+  const key = (x) => ts(x) / 3_600_000 + x.score * 0.5 - (x.tier === 'event' ? 6 : 0);
+  out.sort((a, b) => key(b) - key(a));
   const seenT = new Set();
   return out.filter((x) => { const k = lowerWords(x.item.title); if (seenT.has(k)) return false; seenT.add(k); return true; }).slice(0, max);
 }

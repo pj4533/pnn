@@ -7,10 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { log } from './log.mjs';
 import { fetchPolymarket, parsePolymarketEvents, fetchPriceHistory, sweepPolymarketTags, mergedPolymarket } from './sources/polymarket.mjs';
 import { fetchKalshi, fetchKalshiHistory } from './sources/kalshi.mjs';
-import { fetchHeadlines } from './sources/news.mjs';
+import { fetchHeadlines, badNewsSource } from './sources/news.mjs';
 import { detectBreaking } from './editorial/breaking.mjs';
 import { buildStories } from './editorial/rank.mjs';
 import { newsQuery } from './editorial/copy.mjs';
+import * as copy from './editorial/copy.mjs';
 import { classify } from './editorial/filter.mjs';
 import { filterHeadlinesForStory } from './editorial/match.mjs';
 import { startNewsroom } from './newsroom.mjs';
@@ -103,7 +104,9 @@ export function startIngest(store, config, { sim = false } = {}) {
       try { const n = newsdesk.newsFor(s); if (n.length) news = n; } catch { /* keep */ }
       let newsMarks = s.newsMarks || [];
       try { if (newsroom?.marksFor) newsMarks = newsroom.marksFor(s) || newsMarks; } catch { /* keep */ }
-      return { ...s, news: newsroom ? newsroom.newsFor(s, news) : news, history: historyFor(s), newsMarks };
+      // D4 / independence once more at the last step: no attached headline (wire, search, flash) carries war, violence or death wording
+      const attached = (newsroom ? newsroom.newsFor(s, news) : news).filter((n) => !badNewsSource(n));
+      return { ...s, news: attached, history: historyFor(s), newsMarks };
     });
   }
   const attachDesks = (desks) => (desks || []).map((d) => ({ ...d, stories: attach(d.stories) }));
@@ -143,7 +146,7 @@ export function startIngest(store, config, { sim = false } = {}) {
       out = buildStories(markets, config, { now, enrich });
       const dead = Object.fromEntries(Object.entries(out?.stats?.dropped || {}).filter(([k]) => k.startsWith('dead:')));
       const ns = out?.stats?.news || {};
-      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead, newsMs: ns.ms ?? null, newsDropped: { none: out?.stats?.dropped?.['news:none'] || 0, sportsGames: ns.sgDropped || 0 } };
+      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead, newsMs: ns.ms ?? null, newsDropped: { none: out?.stats?.dropped?.['news:none'] || 0, sportsGames: ns.sgDropped || 0, sgScore: ns.sgScoreDropped || 0, movingFirstCapped: out?.stats?.dropped?.['news:moving-first-capped'] || 0, headlinesBlocked: ns.headlinesBlocked || 0 } };
       pending = out?.pending || [];
     } catch (e) {
       log('error', 'buildStories failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) });
@@ -211,6 +214,16 @@ export function startIngest(store, config, { sim = false } = {}) {
   }
 
   const SG = new Set(['sports', 'games', 'esports']);
+  // on-air stories by news tier: exact (default), event-level, markets moving first (no headline yet)
+  const tiers = (on) => {
+    const t = { exact: 0, event: 0, movingFirst: 0 };
+    for (const s of on) {
+      if (s.newsTier === 'none-moving-first') t.movingFirst++;
+      else if ((s.newsTier || s.news?.[0]?.tier) === 'event') t.event++;
+      else if (s.news?.length) t.exact++;
+    }
+    return t;
+  };
   function newsCoverage(st) {
     const seen = new Map();
     for (const s of [...(st.stories || []), ...(st.closing || []), ...(st.desks || []).flatMap((d) => d.stories || [])]) if (s?.id && !seen.has(s.id)) seen.set(s.id, s);
@@ -220,6 +233,9 @@ export function startIngest(store, config, { sim = false } = {}) {
     const ageH = (s) => { const t = Date.parse(s.news?.[0]?.publishedAt); return Number.isFinite(t) ? (Date.now() - t) / 3_600_000 : null; };
     const ages = on.map(ageH).filter((x) => x != null).sort((a, b) => a - b);
     return {
+      pool: newsdesk.poolStats(pending),
+      tiers: tiers(on),
+      movingFirstPct: on.length ? Math.round((on.filter((s) => s.newsTier === 'none-moving-first').length / on.length) * 1000) / 1000 : null,
       onAir: on.length, withNews, pct: on.length ? Math.round((withNews / on.length) * 1000) / 10 : null, pending: pending.length,
       movers: movers.length, moversWithNews: movers.filter((m) => m.news?.length).length,
       viaWire: on.filter((s) => s.news?.[0]?.via === 'wire' || s.news?.[0]?.flash).length,
@@ -238,39 +254,81 @@ export function startIngest(store, config, { sim = false } = {}) {
   // 5xx stops the cycle and the scheduler backs off (http.mjs also backs the host off). Results are kept only when
   // they pass the same strict story scorer as the wire (match.mjs), so an unrelated search hit never airs.
   let searching = false;
+  // Rate-limit reaction (option 1): a 429 halves the per-cycle budget for 30 min, then it is restored.
+  let budgetScale = 1, rateLimitedAt = 0;
+  const searchLog = [];   // {at, searched, found}: feeds.news searched1h / found1h
+  let lastBudget = P.newsBudget ?? 14;
   async function refreshNews() {
     if (searching) return;
     searching = true;
     try { await searchCycle(); } finally { searching = false; }
   }
+  function updateNewsFeed() {
+    const cut = Date.now() - 3_600_000;
+    while (searchLog.length && searchLog[0].at < cut) searchLog.shift();
+    const pool = newsdesk.poolStats(pending);
+    Object.assign(store.feeds.news, {
+      budget: lastBudget, scale: budgetScale, searched1h: searchLog.reduce((a, x) => a + x.searched, 0), found1h: searchLog.reduce((a, x) => a + x.found, 0),
+      pool: pool.size, neverSearched: pool.neverSearched, retrying: pool.retrying,
+    });
+  }
   async function searchCycle() {
+    if (budgetScale < 1 && Date.now() - rateLimitedAt > 30 * 60_000) { budgetScale = 1; log('info', 'news budget restored', { budget: P.newsBudget ?? 14 }); }
     const st = store.getState();
     const aired = [...(st.stories || []), ...(st.desks || []).flatMap((d) => d.stories || [])];
     // a short board (just after a restart, or a quiet news day) searches a little harder
     const short = (st.stories || []).length < (config.limits?.stories ?? 30);
-    const targets = newsdesk.searchTargets(pending, aired, { max: short ? (P.newsBudgetShort ?? 8) : (P.newsBudget ?? 6) });
-    if (!targets.length) return;
-    let ok = 0, found = 0, lastErr = null;
+    const budget = Math.max(1, Math.round((short ? (P.newsBudgetShort ?? 20) : (P.newsBudget ?? 14)) * budgetScale));
+    lastBudget = budget;
+    const targets = newsdesk.searchTargets(pending, aired, {
+      max: budget, retryMin: P.newsRetryMin ?? 90, retryMaxMin: P.newsRetryMaxMin ?? 360, refreshMin: P.newsRefreshMin ?? 120,
+    });
+    if (!targets.length) { updateNewsFeed(); return; }
+    const ttlMs = (P.newsCacheMin ?? 45) * 60_000;
+    const pace = () => new Promise((r) => setTimeout(r, 1500));
+    const hitsFor = async (q, s) => {
+      const raw = await fetchHeadlines(q, { max: 10, throwOnError: true, ttlMs });
+      const items = (Array.isArray(raw) ? raw : []).map((it) => ({ ...it, outlet: it.source, category: 'search' }));
+      return filterHeadlinesForStory(s, items, latest.airable, { maxAgeMs: 7 * 24 * 3_600_000 });
+    };
+    let ok = 0, found = 0, spent = 0, never = 0, retry = 0, eventQ = 0, lastErr = null, limited = false;
     for (const s of targets) {
-      const q = newsQuery(s);
-      if (!q) { newsdesk.setSearch(s.id, [], { found: false }); continue; }
+      if (spent >= budget) break;
+      // lead-outcome query first; when it finds nothing and the story has an event-level phrase, one more search (counted
+      // against the budget) for "next James Bond" / "Fed December meeting"; hits are scored by the same strict matcher
+      const qs = ((typeof copy.newsQueries === 'function' ? copy.newsQueries(s) : null) ?? [newsQuery(s)]).filter(Boolean);
+      if (!qs.length) { newsdesk.setSearch(s.id, [], { found: false }); continue; }
+      if (newsdesk.searched(s.id)) retry++; else never++;
       try {
-        const raw = await fetchHeadlines(q, { max: 10, throwOnError: true, ttlMs: 15 * 60_000 });
-        const items = (Array.isArray(raw) ? raw : []).map((it) => ({ ...it, outlet: it.source, category: 'search' }));
-        const hits = filterHeadlinesForStory(s, items, latest.airable, { maxAgeMs: 7 * 24 * 3_600_000 });
+        spent++;
+        let hits = await hitsFor(qs[0], s);
+        if (!hits.length && qs[1] && spent < budget) {
+          await pace();
+          spent++; eventQ++;
+          hits = await hitsFor(qs[1], s);
+        }
         newsdesk.setSearch(s.id, hits);
         ok++;
         if (hits.length) found++;
       } catch (e) {
         lastErr = e;
-        if (e?.status === 429 || e?.status >= 500) break;
+        if (e?.status === 429) { limited = true; break; }
+        if (e?.status >= 500) break;
       }
-      await new Promise((r) => setTimeout(r, 1500));
+      await pace();
     }
-    log('info', 'news search', { targets: targets.length, ok, found, pending: pending.length, error: lastErr ? errMsg(lastErr) : undefined });
+    searchLog.push({ at: Date.now(), searched: ok, found });
+    if (limited) {
+      budgetScale = 0.5; rateLimitedAt = Date.now();
+      log('warn', 'news budget halved', { budget: Math.max(1, Math.round((P.newsBudget ?? 14) * budgetScale)), restoreMin: 30 });
+    }
+    log('info', 'news search', { targets: targets.length, ok, found, never, retry, event: eventQ, spent, budget, pending: pending.length, error: lastErr ? errMsg(lastErr) : undefined });
     if (ok) feedOk('news', newsdesk.stats().searchFound);
     else if (lastErr) feedErr('news', lastErr);
-    if (found) { rebuild('news'); saveSearch(); } else reattach();
+    // every cycle that searched anything is saved, so misses survive a restart and are not searched again
+    if (ok) saveSearch();
+    if (found) rebuild('news'); else reattach();
+    updateNewsFeed();
     if (!ok && lastErr) throw lastErr;
   }
 

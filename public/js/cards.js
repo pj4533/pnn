@@ -8,7 +8,7 @@
 // Also: sotdCard (Story of the Day board) and countdownCard (COUNTDOWN DESK, next 3 decisions).
 import { countText } from './countdown.js';
 import { fmtVal, finDir, moveSize, moveWords, changeAbs, finHeadline, finKindLabel } from './finance.js';
-import { esc, pct, pctNum, ptsOf, moveCls, money, exchangeName, ago, until, etShort, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsMeta } from './util.js';
+import { esc, pct, pctNum, ptsOf, moveCls, money, exchangeName, ago, until, etShort, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsMeta, newsKicker, newsOld, storyNewsHtml } from './util.js';
 
 /** "up 45 points today" / "down 1 point this week" / "" (plain English, whole points). */
 export function pointsText(d, when = 'today') {
@@ -71,7 +71,7 @@ function meta(s, seg, now) {
   const ex = (s.sources?.length ? s.sources : [m.source]).map(exchangeName).join(' + ');
   return `<div class="meta bc-meta"><span class="fit meta-t"><b>${esc(ex)}</b> · updated ${esc(ago(m.updatedAt, now))} · <b>${esc(seg.id === 'movers' ? money(m.volume24h) : storyVolume(s))}</b> traded in 24 hrs</span>${s.thin ? '<span class="thin">THIN MARKET</span>' : ''}</div>`;
 }
-const newsLine = (s, now) => newsLineHtml(newsOf(s), now);
+const newsLine = (s, now) => storyNewsHtml(s, now);
 const electionNote = (s) => (isElection(s) ? '<div class="bc-note fit" data-drop="5">Market prices, not official results</div>' : '');
 
 /** THEN vs NOW: "YESTERDAY 14%" dimmed -> "NOW 92%" counting up over ~2s, a huge glowing +78, FLIPPED when it crossed 50%. */
@@ -174,7 +174,7 @@ export function countdownCard(items, now = Date.now(), newsFor = null) {
         <div class="cd-when"><span class="cd-n" data-count-at="${esc(c.at)}">IN ${esc(countText(c.at, now))}</span><span class="cd-at fit">${esc(etShort(c.at))} ET</span></div>
         <div class="cd-b"><div class="cd-t fit" data-fit-h>${esc(c.title)}</div>
           ${c.label ? `<div class="cd-o"><span class="cd-ol fit">${esc(c.eventTitle && c.eventTitle !== c.title ? `${c.eventTitle}: ${c.label}` : c.label)}</span><b class="cd-v">${esc(pct(c.yesPrice))}</b>${d ? `<span class="cd-m ${d > 0 ? 'up' : 'down'}">${esc(signed(d))} today</span>` : ''}</div>` : ''}
-          ${nw ? `<div class="cd-nw" ${i ? 'data-drop="2"' : ''}><b>IN THE NEWS</b><span class="cd-nt fit" data-fit-h>${esc(nw.title)}</span><span class="cd-ns fit">${esc(newsMeta(nw, now))}</span></div>` : ''}
+          ${nw ? `<div class="cd-nw" ${i ? 'data-drop="2"' : ''}><b>${esc(newsKicker(nw, undefined, true))}</b><span class="cd-nt fit" data-fit-h>${esc(nw.title)}</span><span class="cd-ns fit${newsOld(nw, now) ? ' old' : ''}">${esc(newsMeta(nw, now))}</span></div>` : ''}
         </div></div>`;
     }).join('')}</div>
     <div class="meta bc-meta"><span class="fit meta-t"><b>${esc([...new Set(list.map((c) => c.source).filter(Boolean))].map(exchangeName).join(' + ') || 'Prediction markets')}</b> · odds are market prices, not forecasts of record</span></div>

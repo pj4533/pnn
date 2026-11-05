@@ -343,6 +343,7 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
     mk({ id: 'ks:FEDDEC', title: 'Will the Fed hike rates at the December FOMC meeting?', yesPrice: 0.62, change1d: 0.08, volume24h: 2e6 }),
     mk({ id: 'ks:OPENAIIPO', title: 'Will OpenAI announce an IPO before 2027?', yesPrice: 0.31, change1d: 0.06, volume24h: 4e5 }),
     mk({ id: 'ks:NONEWS', title: 'Will Zorblaxian tariffs on widgets exceed 40% in 2026?', yesPrice: 0.45, change1d: 0.09, volume24h: 9e5 }),
+    mk({ id: 'ks:QUIET', title: 'Will Quuxland adopt a four-day work week in 2026?', yesPrice: 0.35, change1d: 0.02, volume24h: 6e5 }),
   ];
   const archive = [
     { title: 'Fed signals December rate hike as Powell warns on inflation', outlet: 'Reuters', publishedAt: at(1), category: 'economy', url: 'https://x/1' },
@@ -356,14 +357,22 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
   const out = buildStories(mkts, config, { now: NOW, enrich: { newsLookup: (s) => nd.lookup(s, NOW) } });
   const aired = new Set([...out.stories, ...out.desks.flatMap((d) => d.stories), ...out.closing].map((s) => s.id));
   eq(aired.has('ks:FEDDEC'), true, 'news gate: Fed story with Fed headlines airs');
-  eq(aired.has('ks:NONEWS'), false, 'news gate: story without a headline does not air');
-  eq(out.pending.some((s) => s.id === 'ks:NONEWS'), true, 'news gate: newsless story waits in pending');
+  eq(aired.has('ks:QUIET'), false, 'news gate: story without a headline (and no big move) does not air');
+  eq(out.pending.some((s) => s.id === 'ks:QUIET'), true, 'news gate: newsless story waits in pending');
+  // a 9-point move on $900K with no headline is MARKETS MOVING FIRST (PLAN-news-gate section 5): airs labelled, stays in the search queue
+  const nonews = [...out.stories, ...out.desks.flatMap((d) => d.stories)].find((s) => s.id === 'ks:NONEWS');
+  eq(nonews?.newsTier, 'none-moving-first', 'moving first: big newsless move airs as moving-first');
+  eq(nonews?.movingFirst?.line, 'No headline yet · up 9 points today on $900K traded', 'moving first: copy line');
+  eq(out.stories[0]?.newsTier === 'none-moving-first', false, 'moving first: never #1');
+  eq(out.pending.some((s) => s.id === 'ks:NONEWS'), true, 'moving first: still searched (pending)');
   const fed = out.stories.find((s) => s.id === 'ks:FEDDEC');
   eq(/Fed/.test(fed?.news?.[0]?.title || ''), true, `news gate: Fed news[0] is a Fed headline ("${fed?.news?.[0]?.title}")`);
   eq(fed?.news?.[0]?.via, 'wire', 'news gate: wire headline preferred');
+  eq(fed?.newsTier, 'exact', 'news gate: matched story is exact tier');
   eq(fed?.news?.some((n) => /Swift|Thunder/.test(n.title)), false, 'news gate: no unrelated headline attached');
-  for (const s of [...out.stories, ...out.closing]) if (!s.news?.length) { console.log(`  FAIL news gate: ${s.id} aired without news`); process.exitCode = 1; }
-  for (const m of out.movers) if (!m.news?.length) { console.log(`  FAIL news gate: mover ${m.id} without news`); process.exitCode = 1; }
+  const mfOk = (x) => x.newsTier === 'none-moving-first' && x.movingFirst?.line;
+  for (const s of [...out.stories, ...out.closing]) if (!s.news?.length && !mfOk(s)) { console.log(`  FAIL news gate: ${s.id} aired without news`); process.exitCode = 1; }
+  for (const m of out.movers) if (!m.news?.length && !mfOk(m)) { console.log(`  FAIL news gate: mover ${m.id} without news`); process.exitCode = 1; }
   eq(fed.newsScore > 1, true, `news gate: fresh multi-outlet coverage boosts (factor ${fed.newsScore})`);
   const ungated = buildStories(mkts, config, { now: NOW });
   eq(ungated.stories.some((s) => s.id === 'ks:NONEWS'), true, 'news gate: off without enrich.newsLookup');
@@ -396,22 +405,150 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
   eq(bHits.join(','), 'Reuters', `strict: largest-company story ignores "largest olive oil company" (${bHits})`);
   const stale = createNewsdesk({ getArchive: () => archive.map((a) => ({ ...a, publishedAt: at(30) })), getMarkets: () => mkts }).lookup(nba, NOW);
   eq(stale.wire24, false, 'sports gate: a 30h-old headline is not enough to air');
-  // board cap: <= 3 sports + games stories, SPORTS & GAMES desk <= 6 (only when filter.mjs files these as sports)
+  // board cap: <= 4 sports + games stories, SPORTS & GAMES desk <= 8 (only when filter.mjs files these as sports)
+  // (news gate build: caps 4/8 with a 3.3 match-score floor; the headlines here are stubbed at score 4.5 so only the caps act)
   const teams = ['Celtics', 'Knicks', 'Nuggets', 'Bucks', 'Warriors', 'Spurs', 'Rockets', 'Pacers'];
   const sm = teams.map((t, i) => mk({ id: `pm:sp${i}`, source: 'polymarket', eventId: `pm:spev${i}`, eventTitle: `NBA: 2027 Champion (${t})`, outcome: t, title: `Will the ${t} win the 2027 NBA Finals?`,
     tags: ['sports', 'nba', 'nba-finals'], yesPrice: 0.2 + i * 0.02, change1d: 0.06, volume24h: 5e5 }));
   const sArch = [...archive, ...teams.map((t, i) => ({ title: `${t} win again as playoff race tightens in NBA`, outlet: 'ESPN', publishedAt: at(1 + i * 0.1), category: 'sports', url: `https://s/${i}` }))];
   const all = [...mkts, ...sm];
   const nd2 = createNewsdesk({ getArchive: () => sArch, getMarkets: () => all });
-  const o2 = buildStories(all, config, { now: NOW, enrich: { newsLookup: (s) => nd2.lookup(s, NOW) } });
+  const sgStub = (s) => {
+    const k = teams.findIndex((t) => (s.eventTitle || '').includes(t));
+    if (k < 0) return nd2.lookup(s, NOW);
+    // two teams share one headline: the board takes only one of them
+    const title = k === 1 ? `${teams[0]} win again as playoff race tightens in NBA` : `${teams[k]} win again as playoff race tightens in NBA`;
+    return { items: [{ title, outlet: 'ESPN', source: 'ESPN', publishedAt: at(1 + k * 0.1), via: 'wire', score: 4.5 }], outlets24: 1, freshH: 1 + k * 0.1, wire24: true };
+  };
+  const o2 = buildStories(all, config, { now: NOW, enrich: { newsLookup: sgStub } });
   const sg = (l) => l.filter((s) => ['sports', 'games', 'esports'].includes(s.category)).length;
   const desk = o2.desks.find((d) => d.id === 'sports');
   if (o2.stats.kept > mkts.length) {
-    eq(sg(o2.stories) <= 3, true, `sports cap: ${sg(o2.stories)} sports/games stories on the board`);
+    eq(sg(o2.stories), 4, `sports cap: ${sg(o2.stories)} sports/games stories on the board (want 4)`);
     eq(['sports', 'games', 'esports'].includes(o2.stories[0]?.category), false, 'sports never lead the board');
-    eq(!!desk && desk.stories.length <= 6 && desk.title === 'SPORTS & GAMES', true, `SPORTS & GAMES desk (${desk?.stories?.length})`);
+    eq(!!desk && desk.stories.length <= 8 && desk.stories.length >= 6 && desk.title === 'SPORTS & GAMES', true, `SPORTS & GAMES desk (${desk?.stories?.length})`);
+    const sgHeads = o2.stories.filter((s) => ['sports', 'games', 'esports'].includes(s.category)).map((s) => s.news?.[0]?.title);
+    eq(new Set(sgHeads).size, sgHeads.length, 'sports: no two board SG stories share a headline');
+    eq(o2.closing.filter((s) => ['sports', 'games', 'esports'].includes(s.category)).length <= 3, true, 'sports: <= 3 in THIS WEEK');
+    eq(o2.movers.filter((m) => ['sports', 'games', 'esports'].includes(m.category)).length <= 3, true, 'sports: <= 3 movers');
+    // score floor: the same stories at matcher score 3.0 (the measured wrong matches all scored < 3.3) never air
+    const weak = buildStories(all, config, { now: NOW, enrich: { newsLookup: (s) => { const r = sgStub(s); return teams.some((t) => (s.eventTitle || '').includes(t)) ? { ...r, items: r.items.map((i) => ({ ...i, score: 3 })) } : r; } } });
+    eq(sg([...weak.stories, ...weak.desks.flatMap((d) => d.stories)]), 0, 'sports: score floor 3.3 drops weak matches');
+    eq(weak.stats.dropped['news:sg-score'] >= 8, true, `sports: floor counted in news:sg-score (${weak.stats.dropped['news:sg-score']})`);
   } else console.log('  (sports cap test skipped: filter.mjs does not keep NBA futures yet)');
   console.log(`  news gate: board ${out.stories.map((s) => s.id).join(', ')} | pending ${out.pending.map((s) => s.id).join(', ')} | sports board ${sg(o2.stories)}, desk ${desk?.stories?.length ?? 0}`);
+}
+
+// ---------- news gate build 2026-11-05 (PLAN-news-gate.md options 4-6, QUEUED-FIXES 16) ----------
+{
+  const { headlineBlocked, newsFactor, movingFirstOf } = await import('../server/editorial/rank.mjs');
+  const { newsQueries, movingFirstLine } = await import('../server/editorial/copy.mjs');
+  const H = 3_600_000;
+  const at = (h) => new Date(NOW - h * H).toISOString();
+  const mk = (o) => ({ source: 'kalshi', tags: ['economics'], change1w: null, closesAt: new Date(NOW + 40 * 24 * H).toISOString(), volumeTotal: 1e7, liquidity: 1e6,
+    outcome: null, updatedAt: new Date(NOW).toISOString(), ...o, eventId: o.eventId || o.id, eventTitle: o.eventTitle || o.title });
+  // (16) every attached headline passes D4 and is a headline, not a site title
+  eq(headlineBlocked('Vladimir Putin, Rezaei meet as Turkey probes deadly Iran border fire', config), 'sensitive', 'headline: "deadly" is D4');
+  eq(headlineBlocked('Putin, Rezaei meet as Turkey probes deadly Iran border fire'), 'sensitive', 'headline: D4 fallback without config');
+  eq(headlineBlocked('Federal Reserve Board - Home', config), 'junk', 'headline: site title "- Home" is junk');
+  eq(headlineBlocked('Calendar', config), 'junk', 'headline: one-word page title is junk');
+  eq(headlineBlocked('Missile strikes hit Kyiv overnight', config), 'sensitive', 'headline: war wording');
+  eq(headlineBlocked('US-China trade war heats up as new tariffs take effect', config), null, 'headline: "trade war" is not D4');
+  eq(headlineBlocked('Arizona Senate race remains a dead heat as counting continues', config), null, 'headline: "dead heat" is not D4');
+  eq(headlineBlocked('Fed signals December rate hike as Powell warns on inflation', config), null, 'headline: ordinary headline passes');
+  {
+    const m = [mk({ id: 'ks:PUTINMEET', title: 'Will Putin meet Pezeshkian in Ankara before 2027?', tags: ['politics'], yesPrice: 0.4, change1d: 0.02, volume24h: 5e5 })];
+    const look = () => ({ items: [{ title: 'Vladimir Putin, Rezaei meet as Turkey probes deadly Iran border fire', outlet: 'Reuters', source: 'Reuters', publishedAt: at(1), via: 'wire', score: 9 }], outlets24: 1, freshH: 1, wire24: true });
+    const o = buildStories(m, config, { now: NOW, enrich: { newsLookup: look } });
+    const on = [...o.stories, ...o.desks.flatMap((d) => d.stories)].find((s) => s.id === 'ks:PUTINMEET');
+    eq(!!on?.news?.some((n) => /deadly/.test(n.title)), false, 'headline: a D4 headline never rides along');
+    eq(o.stats.news.headlinesBlocked?.sensitive, 1, 'headline: blocked count in stats.news');
+  }
+  // (4) freshness weights: steeper tail, event tier x 0.9
+  const nf = (h, tier) => Math.round(newsFactor({ items: [{ tier }], freshH: h, outlets24: 1 }) * 1000) / 1000;
+  eq([2, 6, 12, 24, 48, 72, 96, 120].map((h) => nf(h)).join(','), '1.35,1.2,1.1,1,0.85,0.7,0.55,0.4', 'newsFactor freshness tiers');
+  eq(nf(24, 'event'), 0.9, 'newsFactor: event tier x 0.9');
+  // newsQueries: lead query first, event phrase second for a multi-outcome story, deduped
+  {
+    const ms = ['Josh O\'Connor', 'Callum Turner', 'Jacob Elordi'].map((o, i) => mk({ id: `pm:bond${i}`, eventId: 'pm:bond', source: 'polymarket', eventTitle: 'Next James Bond actor?', title: `Will ${o} be the next James Bond?`, outcome: o, yesPrice: 0.3 - i * 0.05, change1d: 0.01 }));
+    const qs = newsQueries({ lead: ms[0], markets: ms, eventTitle: 'Next James Bond actor?' });
+    eq(qs.length, 2, `newsQueries: two queries (${qs.join(' | ')})`);
+    eq(/James Bond/.test(qs[1] || '') && !/O'Connor/.test(qs[1] || ''), true, `newsQueries: event phrase second ("${qs[1]}")`);
+    eq(newsQueries({ lead: mk({ id: 'ks:one', title: 'Will the Fed hike in December?' }), markets: [] }).length, 1, 'newsQueries: single question has one query');
+  }
+  // (5) MARKETS MOVING FIRST: guards
+  const mfOf = (o, extra = {}) => { const lead = mk(o); const st = { id: lead.eventId, category: extra.category || 'economy', eventTitle: lead.eventTitle, lead, markets: [lead], closesAt: lead.closesAt, ...extra };
+    Object.defineProperty(st, '_evVol', { value: lead.volume24h, enumerable: false }); return movingFirstOf(st, NOW, config); };
+  eq(!!mfOf({ id: 'ks:A', title: 'Will US gas average above $3.50 this week?', yesPrice: 0.6, change1d: -0.23, volume24h: 6.2e4 }), true, 'moving first: a 23-point move on $62K qualifies');
+  eq(mfOf({ id: 'ks:B', title: 'Will Texas turnout exceed 60%?', yesPrice: 0.03, change1d: -0.84, volume24h: 2e5 }), null, 'moving first: settled bracket at 3% (-84) excluded');
+  eq(mfOf({ id: 'ks:C', title: 'Will the FL-24 winner get over 70%?', yesPrice: 0.99, change1d: 0.84, volume24h: 2e5 }), null, 'moving first: settled bracket at 99% (+84) excluded');
+  eq(mfOf({ id: 'ks:C2', title: 'Will widgets ship 10M units in 2027?', yesPrice: 0.5, change1d: 0.48, volume24h: 2e5 }), null, 'moving first: prior price 2% (outside band) excluded');
+  eq(mfOf({ id: 'ks:D', title: 'Will Iran and the US sign a nuclear deal in 2026?', yesPrice: 0.3, change1d: 0.1, volume24h: 2e5 }, { category: 'politics' }), null, 'moving first: conflict wording excluded');
+  eq(mfOf({ id: 'ks:E', title: 'Will the Pope visit Lebanon in 2027?', yesPrice: 0.3, change1d: 0.1, volume24h: 2e5 }, { category: 'geopolitics' }), null, 'moving first: geopolitics excluded');
+  eq(mfOf({ id: 'ks:F', title: 'Will the Celtics win the 2027 NBA Finals?', yesPrice: 0.3, change1d: 0.1, volume24h: 2e5 }, { category: 'sports' }), null, 'moving first: sports excluded');
+  eq(mfOf({ id: 'ks:G', title: 'Will the Senate pass the widget bill?', yesPrice: 0.3, change1d: 0.1, volume24h: 2e5, closesAt: new Date(NOW + 3 * H).toISOString() }), null, 'moving first: closing within 6h excluded');
+  eq(mfOf({ id: 'ks:H', title: 'Will Trump insult Paxton by November 30?', yesPrice: 0.1, change1d: -0.06, volume24h: 2e5 }), null, 'moving first: deadline decay excluded');
+  eq(mfOf({ id: 'ks:I', title: 'Will widgets cost $5 in 2027?', yesPrice: 0.98, change1d: 0.12, volume24h: 2e5 }), null, 'moving first: near-certain excluded');
+  eq(mfOf({ id: 'ks:J', title: 'Will widgets cost $5 in 2027?', yesPrice: 0.5, change1d: 0.03, volume24h: 2e5 }), null, 'moving first: 3 points is not enough');
+  eq(mfOf({ id: 'ks:K', title: 'Will widgets cost $5 in 2027?', yesPrice: 0.5, change1d: 0.06, volume24h: 8e3 }), null, 'moving first: under $10K excluded');
+  const strong = mfOf({ id: 'ks:L', title: 'Will widgets cost $5 in 2027?', yesPrice: 0.5, change1d: 0.09, volume24h: 4.2e4 });
+  eq(`${strong?.strong}|${strong?.since}|${strong?.points}`, 'true|today|0.09', 'moving first: strong tier at 9 pts / $42K');
+  eq(movingFirstLine({ movingFirst: strong }), 'No headline yet · up 9 points today on $42K traded', 'moving first: line');
+  eq(movingFirstLine({ movingFirst: { points: -0.06, volume24h: 15000, since: 'past hour' } }), 'No headline yet · down 6 points in the past hour on $15K traded', 'moving first: past-hour line');
+  for (const t of [movingFirstLine({ movingFirst: strong })]) if (/\bwill\b|bettors|because|after /i.test(t)) { console.log(`  FAIL moving first copy implies a cause/prediction: ${t}`); process.exitCode = 1; }
+  // (5) caps: 12 newsless movers + 40 stories with news across categories
+  {
+    const cats = [['economics', 'economy'], ['politics', 'politics'], ['science and technology', 'tech'], ['entertainment', 'culture'], ['health', 'health']];
+    const news = [], mfs = [];
+    for (let i = 0; i < 40; i++) { const [tag] = cats[i % 5]; news.push(mk({ id: `ks:N${i}`, tags: [tag], title: `Will widget index ${i} rise above ${100 + i} in 2027?`, yesPrice: 0.3 + (i % 5) * 0.08, change1d: 0.03 + (i % 4) * 0.01, volume24h: 3e5 - i * 4e3 })); }
+    for (let i = 0; i < 12; i++) { const [tag] = cats[i % 5]; mfs.push(mk({ id: `ks:M${i}`, tags: [tag], title: `Will gizmo maker ${i} file for an IPO in 2027?`, yesPrice: 0.4, change1d: 0.12 + i * 0.01, volume24h: 2e6 })); }
+    const look = (s) => (/^ks:N/.test(s.id) ? { items: [{ title: `Widget index ${s.id} climbs on strong demand data`, outlet: 'Reuters', source: 'Reuters', publishedAt: at(2), via: 'wire', score: 8, tier: 'exact' }], outlets24: 1, freshH: 2, wire24: true } : { items: [], outlets24: 0, freshH: null, wire24: false });
+    const o = buildStories([...news, ...mfs], config, { now: NOW, enrich: { newsLookup: look } });
+    const isMF = (s) => s?.newsTier === 'none-moving-first';
+    eq(isMF(o.stories[0]), false, 'moving first caps: never #1 even when the newsless moves are the biggest');
+    eq(o.stories.slice(0, 6).filter(isMF).length <= 1, true, `moving first caps: <= 1 in the top 6 (${o.stories.slice(0, 6).filter(isMF).length})`);
+    eq(o.stories.filter(isMF).length, 4, `moving first caps: 4 on the board (${o.stories.filter(isMF).length})`);
+    for (const d of o.desks) if (d.stories.filter(isMF).length > 2) { console.log(`  FAIL moving first caps: ${d.id} desk has ${d.stories.filter(isMF).length}`); process.exitCode = 1; }
+    eq(o.closing.filter(isMF).length <= 1, true, 'moving first caps: <= 1 in THIS WEEK');
+    eq(o.movers.filter(isMF).length <= 3, true, `moving first caps: <= 3 movers (${o.movers.filter(isMF).length})`);
+    const onAir = new Set([...o.stories, ...o.desks.flatMap((d) => d.stories)]);
+    eq([...onAir].filter(isMF).length <= Math.max(1, Math.floor(0.15 * onAir.size)), true, `moving first caps: share <= 15% (${[...onAir].filter(isMF).length}/${onAir.size})`);
+    eq(o.stats.dropped['news:moving-first-capped'] > 0, true, `moving first caps: overflow counted (${o.stats.dropped['news:moving-first-capped']})`);
+    eq(mfs.every((m) => o.pending.some((s) => s.id === m.id)), true, 'moving first: every candidate stays in the search queue');
+    for (const s of onAir) if (isMF(s) && (s.news?.length || !/^No headline yet · up \d+ points today on \$\d+(\.\d)?[KM]? traded$/.test(s.movingFirst?.line || ''))) { console.log(`  FAIL moving first: ${s.id} line "${s.movingFirst?.line}"`); process.exitCode = 1; }
+    // (6) the four baseline wrong sports matches never air (match-score floor 3.3 or the matcher itself)
+    {
+      const { createNewsdesk } = await import('../server/newsdesk.mjs');
+      // multi-outcome events as they trade (one market per outcome), real headlines from the 2026-11-05 archive
+      const sp = (id, ev, outs, t, tags) => outs.map((o, i) => mk({ id: `${id}${i}`, eventId: `${id}-ev`, source: 'polymarket', eventTitle: ev, outcome: o, title: t.replace('{o}', o), tags,
+        yesPrice: 0.3 - i * 0.05, change1d: i ? 0.01 : 0.06, volume24h: 4e5 }));
+      const sm = [
+        ...sp('pm:barca', 'La Liga Winner', ['Barcelona', 'Real Madrid', 'Atletico Madrid'], 'Will {o} win La Liga?', ['sports', 'soccer', 'la-liga']),
+        ...sp('pm:faker', 'LoL Worlds 2026: Finals MVP', ['Faker', 'Chovy', 'Keria'], 'Will {o} be the LoL Worlds 2026 Finals MVP?', ['esports', 'league-of-legends']),
+        ...sp('pm:messi', 'MLS: 2026 MVP', ['Lionel Messi', 'Sam Surridge', 'Anders Dreyer'], 'Will {o} win the 2026 MLS MVP?', ['sports', 'soccer', 'mls']),
+        ...sp('pm:giants', 'NFC Champion', ['New York Giants', 'Philadelphia Eagles', 'Detroit Lions'], 'Will the {o} win the NFC Championship?', ['sports', 'nfl']),
+      ];
+      const arch = [
+        { title: 'Champions League: team of the week, no Barça or Real Madrid', outlet: 'Yahoo Sports', publishedAt: at(2), category: 'sports', url: 'https://w/1' },
+        { title: '“William Contreras Doesn’t Trust a Lot of People” – Brewers Manager Shares Insight on 2026 World Series MVP’s Tough Nature', outlet: 'Yahoo Sports', publishedAt: at(2), category: 'sports', url: 'https://w/2' },
+        { title: 'Cristiano Ronaldo vs. Lionel Messi by the numbers', outlet: 'Yahoo Sports', publishedAt: at(2), category: 'sports', url: 'https://w/3' },
+        { title: 'New Rumor Suggests NY Giants Being Forced To Wait on Jonathan Taylor Trade Until Specific Date', outlet: 'Yahoo Sports', publishedAt: at(2), category: 'sports', url: 'https://w/4' },
+      ];
+      const ndw = createNewsdesk({ getArchive: () => arch, getMarkets: () => sm });
+      const ow = buildStories(sm, config, { now: NOW, enrich: { newsLookup: (s) => ndw.lookup(s, NOW) } });
+      const onw = [...ow.stories, ...ow.desks.flatMap((d) => d.stories), ...ow.closing].map((s) => `${s.id} <- ${s.news?.[0]?.title} (${s.news?.[0]?.score})`);
+      eq(onw.length, 0, `sports: baseline wrong matches stay off air (${onw.join(' | ')})`);
+    }
+    // flips to exact once a headline arrives
+    const look2 = (s) => (s.id === 'ks:M11' ? { items: [{ title: 'Gizmo maker 11 files confidentially for IPO', outlet: 'Bloomberg', source: 'Bloomberg', publishedAt: at(1), via: 'search', score: 9 }], outlets24: 1, freshH: 1, wire24: false } : look(s));
+    const o2 = buildStories([...news, ...mfs], config, { now: NOW, enrich: { newsLookup: look2 } });
+    const m11 = [...o2.stories, ...o2.desks.flatMap((d) => d.stories)].find((s) => s.id === 'ks:M11');
+    eq(`${m11?.newsTier}|${m11?.movingFirst}`, 'exact|null', 'moving first: flips to exact when a headline arrives');
+    // (4) top 6 prefers a fresher story of the same category over one whose news is > 48h old
+    const look3 = (s) => { const r = look(s); if (s.id === 'ks:N0') return { ...r, items: [{ ...r.items[0], publishedAt: at(60) }], freshH: 60 }; return r; };
+    const o3 = buildStories(news, config, { now: NOW, enrich: { newsLookup: look3 } });
+    eq(o3.stories.slice(0, 6).some((s) => s.id === 'ks:N0'), false, 'top 6: a 60h-old headline yields to fresher same-category news');
+  }
 }
 
 // Polish queue 2026-11-05: ladder rung wording, raw-question leftovers, photo-count novelty, swing = card.
