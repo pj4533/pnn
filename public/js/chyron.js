@@ -5,7 +5,7 @@ import { el, esc, pct, moveShort, moveCls, money, exchangeName, ago, storyVolume
 import { fitText } from './fit.js';
 import { finItems, fmtVal, moveShortFin, finDir, finMeta } from './finance.js';
 
-const TAGS = { top: 'TOP STORY', focus: 'IN FOCUS', movers: 'MOVERS', week: 'THIS WEEK', desk: 'DESK', markets: 'MARKETS', standby: 'PNN', alert: 'BREAKING' };
+const TAGS = { top: 'TOP STORY', focus: 'IN FOCUS', movers: 'MOVERS', week: 'THIS WEEK', desk: 'DESK', markets: 'MARKETS', tossup: 'TOSS-UP', swings: 'WEEK SWINGS', steady: 'STEADY', disagree: 'EXCHANGES', package: 'THE STORY', standby: 'PNN', alert: 'BREAKING' };
 
 export function createChyron(root) {
   root.innerHTML = `

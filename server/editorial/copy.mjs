@@ -1029,4 +1029,31 @@ export function movingFirstLine(story) {
   return `No headline yet · ${move}${vol ? ` on ${vol} traded` : ''}`;
 }
 
-export default { shapeTitle, swingLine, shortHeadline, pct, pts, money, marketLine, marketLabel, outcomeLabel, moverName, storyHeadline, storyDek, alertCopy, newsQuery, newsQueries, movingFirstLine, questionToClause, eventPhrase, cleanOutcome, dejargon };
+// ---------- variety segments (2026-11-05) ----------
+// One line per segment story, number-first and always a probability: "Toss-up: X at 51%", "X: 61%, up 12 points this week",
+// "X steady at 82%", "X: Kalshi 41% vs Polymarket 49%". Never "will", never "Bettors".
+export const SEGMENT_KICKERS = { tossups: 'TOO CLOSE TO CALL', weekSwings: 'BIGGEST WEEK', quietFavorites: 'STEADY FAVORITES', disagreements: 'EXCHANGES DISAGREE' };
+const SOURCE_NAMES = { kalshi: 'Kalshi', polymarket: 'Polymarket' };
+export function segmentSubject(story) {
+  const t = String(story?.short || shortHeadline(story?.headline) || '').trim();
+  if (t && !/\d+%/.test(t)) return t;
+  const nm = moverName(story?.lead);
+  return nm.context ? `${nm.label} in ${nm.context}` : nm.label || t;
+}
+export function segmentLine(type, story) {
+  const m = story?.lead;
+  if (!m) return '';
+  const subj = segmentSubject(story);
+  const p = pct(m.yesPrice);
+  let line = '';
+  if (type === 'tossups') line = `Toss-up: ${subj} at ${p}`;
+  else if (type === 'weekSwings') line = `${subj}: ${p}, ${pts(m.change1w, 'this week')}`;
+  else if (type === 'quietFavorites') line = `${subj} steady at ${p}`;
+  else if (type === 'disagreements') {
+    const ex = (story.exchanges || []).map((e) => `${SOURCE_NAMES[e.source] || e.source} ${pct(e.yesPrice)}`);
+    line = `${subj}: ${ex.join(' vs ')}`;
+  }
+  return dedupeTimePhrases(line);
+}
+
+export default { segmentLine, segmentSubject, shapeTitle, swingLine, shortHeadline, pct, pts, money, marketLine, marketLabel, outcomeLabel, moverName, storyHeadline, storyDek, alertCopy, newsQuery, newsQueries, movingFirstLine, questionToClause, eventPhrase, cleanOutcome, dejargon };

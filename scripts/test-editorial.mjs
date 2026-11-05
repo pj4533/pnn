@@ -654,3 +654,62 @@ function localNormalize(evs) {
   eq(mfSubjectKey(st('a', 'Avengers: Doomsday best opening weekend')), mfSubjectKey(st('b', 'Avengers: Doomsday best opening week')), 'moving-first dup: opening weekend and week share a subject key');
   eq(mfSubjectKey(st('a', 'Avengers: Doomsday best opening weekend')) === mfSubjectKey(st('c', 'Supergirl best opening weekend')), false, 'moving-first dup: different films differ');
 }
+
+// ---------- variety segments (2026-11-05) ----------
+{
+  const { buildStories, buildSegments } = await import('../server/editorial/rank.mjs');
+  const { segmentLine } = await import('../server/editorial/copy.mjs');
+  const mk = (id, over = {}) => ({
+    id: `ks:${id}`, source: 'kalshi', title: `Will ${id} announce alpha${id} beta${id} merger?`, outcome: null, eventId: `ks:${id}`, eventTitle: `${id} alpha${id} beta${id} merger`,
+    category: '', tags: ['business'], yesPrice: 0.5, change1d: 0, change1w: 0, volume24h: 200_000, volumeTotal: 900_000, liquidity: 50_000,
+    closesAt: new Date(NOW + 30 * 864e5).toISOString(), updatedAt: new Date(NOW).toISOString(), ...over,
+  });
+  const ms = [
+    mk('TOSS', { yesPrice: 0.51, change1d: 0.01, change1w: 0.02 }),
+    mk('TOSSMOVE', { yesPrice: 0.5, change1d: 0.06, change1w: 0.06 }),
+    mk('TOSSTHIN', { yesPrice: 0.5, change1d: 0, volume24h: 3_000 }),
+    mk('WEEK', { yesPrice: 0.61, change1d: 0.01, change1w: 0.12 }),
+    mk('WEEKTODAY', { yesPrice: 0.7, change1d: 0.09, change1w: 0.2 }),
+    mk('QUIET', { yesPrice: 0.82, change1d: 0.005, change1w: 0.01 }),
+    mk('QUIETMOVE', { yesPrice: 0.82, change1d: 0.01, change1w: 0.09 }),
+    mk('QUIETHIGH', { yesPrice: 0.96, change1d: 0, change1w: 0 }),
+    mk('DIS', { yesPrice: 0.41, change1d: 0.0, change1w: 0.0 }),
+    { ...mk('DIS'), id: 'pm:DIS', source: 'polymarket', eventId: 'pm:DIS', yesPrice: 0.49, volume24h: 150_000 },
+    mk('AGREE', { yesPrice: 0.3 }), { ...mk('AGREE'), id: 'pm:AGREE', source: 'polymarket', eventId: 'pm:AGREE', yesPrice: 0.31 },
+  ];
+  // gated: every story has a headline except the moving-first-less ones listed below
+  const newsLookup = (s) => (/NOHEAD/.test(s.eventTitle) ? { items: [] } : { items: [{ title: `${s.eventTitle} headline`, source: 'Wire', publishedAt: new Date(NOW - 36e5).toISOString(), ageH: 1, score: 5, tier: 'exact' }], wire24: true });
+  const out = buildStories([...ms, mk('NOHEADTOSS', { yesPrice: 0.5, change1d: 0.0 })], config, { now: NOW, enrich: { newsLookup } });
+  const sg = out.segments || {};
+  const idsOf = (a) => (a || []).map((s) => s.id);
+  console.log(`\n=== SEGMENTS === ${Object.entries(sg).map(([k, v]) => `${k} ${v.length}`).join(', ')}`);
+  for (const [k, v] of Object.entries(sg)) for (const s of v) console.log(`  ${k}: ${s.segment.line}`);
+  eq(Object.keys(sg).join(','), 'tossups,weekSwings,quietFavorites,disagreements', 'segments keys');
+  eq(idsOf(sg.tossups).includes('ks:TOSS'), true, 'tossup: 51% steady airs');
+  eq(idsOf(sg.tossups).some((i) => /TOSSMOVE|TOSSTHIN|NOHEAD/.test(i)), false, 'tossup: movers, thin, headline-less stay off');
+  eq(idsOf(sg.weekSwings).includes('ks:WEEK'), true, 'weekSwing: +12 this week airs');
+  eq(idsOf(sg.weekSwings).includes('ks:WEEKTODAY'), false, 'weekSwing: today mover excluded');
+  eq(idsOf(sg.quietFavorites).includes('ks:QUIET'), true, 'quiet: 82% steady airs');
+  eq(idsOf(sg.quietFavorites).some((i) => /QUIETMOVE|QUIETHIGH/.test(i)), false, 'quiet: week mover and 96% excluded');
+  const dis = [...(sg.disagreements || [])].find((s) => /DIS/.test(s.id));
+  eq(!!dis, true, 'disagreement: 8 point gap airs');
+  eq(/Kalshi 41% vs Polymarket 49%/.test(dis?.segment?.line || ''), true, `disagreement line: ${dis?.segment?.line}`);
+  eq(idsOf(sg.disagreements).some((i) => /AGREE/.test(i)), false, 'agreeing exchanges are not a disagreement');
+  const all = Object.values(sg).flat();
+  eq(new Set(all.map((s) => s.id)).size, all.length, 'segments are disjoint');
+  for (const [k, v] of Object.entries(sg)) { eq(v.length <= 8, true, `${k} <= 8`); for (const s of v) if (!s.news?.length && s.newsTier !== 'none-moving-first') eq('no news', 'news', `${k} story carries news or MF`); }
+  for (const s of all) if (/\bwill\b|Bettors|undefined|NaN|¢|\bbps\b/i.test(s.segment.line) || !/\d+%/.test(s.segment.line)) { console.log('  FAIL segment line: ' + s.segment.line); process.exitCode = 1; }
+  eq(segmentLine('tossups', sg.tossups?.[0]).startsWith('Toss-up: '), true, 'tossup copy');
+  eq(/ steady at \d+%$/.test(segmentLine('quietFavorites', sg.quietFavorites?.[0])), true, 'quiet copy');
+  eq(/, (up|down) \d+ points this week$/.test(segmentLine('weekSwings', sg.weekSwings?.[0])), true, 'weekSwing copy');
+  // family cap: three toss-ups of one family yield one
+  const fam = ['A', 'B', 'C'].map((x) => mk(`FAM${x}`, { yesPrice: 0.5, tags: ['elections'], title: `Will Dem win ${x}-0${1} House race?`, eventTitle: `${x}-01 House race` }));
+  const o2 = buildSegments(buildStories(fam, config, { now: NOW }).stories, NOW, config, { gated: false });
+  eq(o2.tossups.length <= 1, true, `family cap: ${o2.tossups.length} toss-ups from one family`);
+  eq(buildStories(ms, config, { now: NOW }).segments.tossups.length >= 1, true, 'segments also build without a news gate');
+}
+{
+  const o = buildStories(markets, config, { now: NOW });
+  console.log(`  samples (ungated): ${Object.entries(o.segments).map(([k, v]) => `${k} ${v.length}`).join(', ')}`);
+  for (const s of Object.values(o.segments).flat().slice(0, 6)) console.log(`    ${s.segment.type}: ${s.segment.line}`);
+}

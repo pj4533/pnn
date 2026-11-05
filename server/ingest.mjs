@@ -110,6 +110,8 @@ export function startIngest(store, config, { sim = false } = {}) {
       return { ...s, news: attached, history: historyFor(s), newsMarks };
     });
   }
+  // variety segments (state.segments): each list is attached like the board so news/history match what airs
+  const attachSegments = (sg) => Object.fromEntries(Object.entries(sg || {}).map(([k, list]) => [k, attach(list)]));
   const attachDesks = (desks) => (desks || []).map((d) => ({ ...d, stories: attach(d.stories) }));
   // Stories that get fetched news + exchange history: the top of the board plus each desk's lead (deduped).
   function enrichTargets(state, n) {
@@ -182,7 +184,8 @@ export function startIngest(store, config, { sim = false } = {}) {
     const stories = attach(board);
     const closing = attach(out?.closing);
     const desks = attachDesks(out?.desks);
-    store.setState({ stories, movers: out?.movers || [], closing, desks });
+    const segments = attachSegments(out?.segments);
+    store.setState({ stories, movers: out?.movers || [], closing, desks, segments });
     coverage = newsCoverage({ stories, closing, desks, movers: out?.movers || [] });
     lastBuild.newsCoverage = coverage;
     if (!built) log('info', 'first build', { markets: markets.length, stories: stories.length });
@@ -213,7 +216,7 @@ export function startIngest(store, config, { sim = false } = {}) {
 
   function reattach() {
     const s = store.getState();
-    store.setState({ stories: attach(s.stories), closing: attach(s.closing), desks: attachDesks(s.desks) });
+    store.setState({ stories: attach(s.stories), closing: attach(s.closing), desks: attachDesks(s.desks), ...(s.segments ? { segments: attachSegments(s.segments) } : {}) });
   }
 
   const SG = new Set(['sports', 'games', 'esports']);

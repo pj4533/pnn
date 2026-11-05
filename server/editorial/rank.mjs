@@ -20,7 +20,7 @@
 // hour on $10K+ adds hourBoost(); change1h/flatMin come from PNN's own samples via ingest (null = no effect).
 
 import { classify } from './filter.mjs';
-import { storyHeadline, storyDek, marketLine, outcomeLabel, moverName, rungLabel, ladderParts, shortHeadline, shapeTitle, movingFirstLine } from './copy.mjs';
+import { storyHeadline, storyDek, marketLine, outcomeLabel, moverName, rungLabel, ladderParts, shortHeadline, shapeTitle, movingFirstLine, segmentLine, SEGMENT_KICKERS } from './copy.mjs';
 
 const DAY = 864e5;
 
@@ -845,6 +845,69 @@ function newsGate(live, enrich, nowMs, deadIds, dropped, config = {}) {
   };
 }
 
+// ---------- variety segments (2026-11-05) ----------
+// The same ranked (news-gated) stories, shown four more ways: toss-ups, the week's biggest swings, steady favorites and
+// exchange disagreements. Lists are disjoint (rarest first), <= max each, one per story family. Stories are shallow
+// clones carrying `segment: {type, kicker, line}`; the originals are untouched.
+const SEG_DEFAULTS = {
+  max: 8, minVolume: 25_000, minCloseH: 24,
+  tossup: { low: 0.42, high: 0.58, maxMove1d: 0.03 },
+  weekSwing: { minPoints: 0.08, maxToday: 0.05 },
+  quiet: { low: 0.65, high: 0.92, minVolume: 100_000, maxMove1d: 0.02, maxMove1w: 0.04 },
+  disagree: { points: 0.05 },
+};
+export function buildSegments(ranked, nowMs, config = {}, { gated = true } = {}) {
+  const C0 = config.segments || {};
+  const D = SEG_DEFAULTS;
+  const max = C0.max ?? D.max, minVol = C0.minVolume ?? D.minVolume, minCloseMs = (C0.minCloseH ?? D.minCloseH) * 36e5;
+  const T = { ...D.tossup, ...(C0.tossup || {}) }, W = { ...D.weekSwing, ...(C0.weekSwing || {}) };
+  const Q = { ...D.quiet, ...(C0.quiet || {}) }, X = { ...D.disagree, ...(C0.disagree || {}) };
+  const sens = (config.sensitive?.excludePatterns || []).map((x) => (x instanceof RegExp ? x : new RegExp(String(x), 'i')));
+  const vol = (s) => s.lead?.volume24h || 0;
+  const base = (s) => {
+    const m = s.lead;
+    if (!m || !Number.isFinite(m.yesPrice) || s.ladder || s.settling || s.thin || isSG(s) || isMarginBracket(s) || isDecay(m, nowMs)) return false;
+    if (gated && !s.news?.length && !isMF(s)) return false;
+    if (vol(s) < minVol) return false;
+    if (m.closesAt && Date.parse(m.closesAt) - nowMs < minCloseMs) return false;
+    if (s.category === 'geopolitics') return false;
+    const txt = `${s.eventTitle} ${m.title} ${m.outcome || ''}`;
+    return !sens.some((re) => re.test(txt));
+  };
+  const lg = (s) => Math.log10(10 + vol(s));
+  const specs = [
+    ['disagreements', (s) => s.agree === 'disagree' && s.exchanges?.length === 2
+      && Math.abs(s.exchanges[0].yesPrice - s.exchanges[1].yesPrice) >= X.points - 1e-9,
+      (s) => Math.abs(s.exchanges[0].yesPrice - s.exchanges[1].yesPrice) * lg(s)],
+    ['tossups', (s) => s.lead.yesPrice >= T.low && s.lead.yesPrice <= T.high && Number.isFinite(s.lead.change1d) && abs(s.lead.change1d) < T.maxMove1d,
+      (s) => lg(s) - abs(s.lead.yesPrice - 0.5) * 20],
+    ['weekSwings', (s) => Number.isFinite(s.lead.change1w) && abs(s.lead.change1w) >= W.minPoints
+      && !(abs(s.lead.change1d) >= W.maxToday) && !hotNow(s.lead, vol(s)) && s.kind !== 'mover',
+      (s) => abs(s.lead.change1w) * lg(s)],
+    ['quietFavorites', (s) => vol(s) >= Q.minVolume && s.lead.yesPrice >= Q.low && s.lead.yesPrice <= Q.high
+      && Number.isFinite(s.lead.change1d) && Number.isFinite(s.lead.change1w) && abs(s.lead.change1d) < Q.maxMove1d && abs(s.lead.change1w) < Q.maxMove1w
+      && !hotNow(s.lead, vol(s)),
+      (s) => lg(s)],
+  ];
+  const pool = (ranked || []).filter(base);
+  const used = new Set();
+  const out = {};
+  for (const [name, test, rank] of specs) {
+    const cand = pool.filter((s) => !used.has(s.id) && test(s)).sort((a, b) => rank(b) - rank(a));
+    const fams = new Set(), picked = [];
+    for (const s of cand) {
+      const f = familyOf(s);
+      if (fams.has(f)) continue;
+      fams.add(f);
+      used.add(s.id);
+      picked.push({ ...s, segment: { type: name, kicker: SEGMENT_KICKERS[name], line: segmentLine(name, s) } });
+      if (picked.length >= max) break;
+    }
+    out[name] = picked;
+  }
+  return { tossups: out.tossups, weekSwings: out.weekSwings, quietFavorites: out.quietFavorites, disagreements: out.disagreements };
+}
+
 // ---------- main ----------
 export function buildStories(markets, config = {}, { now = Date.now(), enrich = null } = {}) {
   const nowMs = typeof now === 'number' ? now : Date.parse(now);
@@ -1029,6 +1092,7 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     desks,
     movers,
     closing,
+    segments: buildSegments(ranked, nowMs, config, { gated: !!newsStats.gated }),
     stats: { input: (markets || []).length, kept, events: groups.size, dropped, news: newsStats },
     pending,   // stories held off air for want of a headline, best first (ingest searches news for them)
     aliases: Object.fromEntries(absorbed),   // merged-away event id -> aired story id
@@ -1050,4 +1114,4 @@ export function rankFinanceMoves(moves, { max = 3 } = {}) {
 }
 
 export { familyOf };
-export default { buildStories, inferRegion, airedSet, swingOf, isSettling, rankFinanceMoves };
+export default { buildStories, buildSegments, inferRegion, airedSet, swingOf, isSettling, rankFinanceMoves };

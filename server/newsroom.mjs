@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { log } from './log.mjs';
 import wireConfig from './wire-config.mjs';
 import { createWire } from './sources/wire.mjs';
-import { matchMarkets, analyzeCluster, headlineReject } from './editorial/match.mjs';
+import { matchMarkets, matchClusterStories, analyzeCluster, headlineReject } from './editorial/match.mjs';
 import { tokenSet, jaccard } from './editorial/text.mjs';
 import { isMarginBracket } from './editorial/rank.mjs';
 import { buildFlash, marketDataLine } from './editorial/flash.mjs';
@@ -55,10 +55,11 @@ const THEME = { elections: 'politics', politics: 'politics', geopolitics: 'world
 export function startNewsroom(store, config, { sim = false, getMarkets, getAliases, rebuild } = {}) {
   const F = { retryEveryMin: 2, retryForMin: 30, dupJaccard: 0.5, dupHours: 6, storyFlashCooldownMin: 90,
     sotdEveryMin: 5, sotdMinStories: 3, sotdMinScore: 9, sotdMaxRows: 8, sotdKeepHours: 12, marksMax: 6,
+    pkgKeep: 6, pkgMinStories: 2, pkgMaxRows: 4, pkgMinOutlets: 3, pkgClusterHours: 6, pkgKeepHours: 12, pkgEvalMin: 20, pkgMaxClusters: 30,
     boostMin: 10, maxFlashes: 10, wireItems: 30, crawlMaxAgeHours: 3, matchTimeoutMs: 30_000, minScore: 11, otherEventRel: 0.8, simFirstSec: 40, simEverySec: 180, ...(wireConfig.flash || {}) };
   const boosts = new Map();          // flash id -> {until, flash, marketIds:Set, eventIds:Set, storyId}
   const stats = { clustersFired: 0, clustersMatched: 0, flashesMade: 0, lastFlashAt: null, lastFlash: null,
-    retryQueued: 0, retried: 0, retryDropped: 0, dupesSkipped: 0, sotdPasses: 0, sotdId: null, sotdStories: 0, marks: 0 };
+    retryQueued: 0, retried: 0, retryDropped: 0, dupesSkipped: 0, sotdPasses: 0, sotdId: null, sotdStories: 0, marks: 0, pkgPasses: 0, pkgCount: 0, pkgMs: 0, pkgCandidates: 0 };
   const pending = [];                // clusters that fired before markets loaded: {cluster, firstAt}
   const recentFired = [];            // {id, tok, at, cluster} for repeat-fire dedupe and the SOTD pass
   const storyFlashAt = new Map();    // storyId -> ms of its last flash
@@ -120,7 +121,8 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
   Object.assign(store.feeds.wire, { feedsOk: 0, feedsTotal: 0, lastPoll: null, items: 0, ...statsView() });
   function statsView() { return { clustersFired: stats.clustersFired, clustersMatched: stats.clustersMatched, flashesMade: stats.flashesMade, lastFlashAt: stats.lastFlashAt,
     retryQueued: stats.retryQueued, retryPending: pending.length, retried: stats.retried, retryDropped: stats.retryDropped, dupesSkipped: stats.dupesSkipped,
-    sotdId: stats.sotdId, sotdStories: stats.sotdStories, sotdPasses: stats.sotdPasses, marks: stats.marks }; }
+    sotdId: stats.sotdId, sotdStories: stats.sotdStories, sotdPasses: stats.sotdPasses, marks: stats.marks,
+    pkgCount: stats.pkgCount, pkgPasses: stats.pkgPasses, pkgMs: stats.pkgMs, pkgCandidates: stats.pkgCandidates }; }
 
   // ---- story lookup: market/event id -> aired story id (board, desks, closing; merged-event aliases)
   function storyIdFor(id) {
@@ -389,6 +391,112 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
       store.setState({ sotd });
     } finally {
       sotdRunning = false;
+    }
+    refreshPackages(simClusters).catch((e) => log('warn', 'packages failed', { error: errMsg(e) }));
+  }
+
+  // ---- Story packages: every fresh multi-outlet wire cluster that strictly covers >= 2 aired stories becomes a package
+  // (state.packages, newest first, up to F.pkgKeep). Relevance is the story-news matcher's (match.mjs matchClusterStories:
+  // exact tier only, so question-type rules, subject / frame / outcome and scope checks all apply), never the loose key-word
+  // pass the single Story of the Day uses. Sports / games, sensitive and exchange / social sources never qualify.
+  const pkgs = new Map();            // id -> package
+  const pkgEval = new Map();         // cluster id -> {at, n, hits: [{storyId, item}]}
+  let pkgRunning = false;
+  const yieldLoop = () => new Promise((r) => setImmediate(r));
+  // the question's subject: its first capitalised word ("Samuel" of Samuel Alito, "Fed", "Anthropic"), lower-cased
+  const PKG_LEAD = /^(will|another|how|what|which|who|when|where|next|the|is|does|do|can|any)$/i;
+  function pkgSubject(st) {
+    const words = String(st.eventTitle || '').replace(/[“”"]/g, '').split(/\s+/);
+    for (const w of words) { const c = w.replace(/['’]s?$/i, '').replace(/[^\w-]/g, ''); if (/^[A-Z0-9]/.test(c) && !PKG_LEAD.test(c)) return c.toLowerCase(); }
+    return null;
+  }
+  const ownRow = (st, m, item) => ({ storyId: st.id, label: st.short || st.eventTitle || m.eventTitle || m.title, outcome: m.outcome || null,
+    yesPrice: m.yesPrice, change1d: m.change1d ?? null, source: m.source, marketId: m.id, volume24h: m.volume24h ?? null, updatedAt: m.updatedAt || null, thin: !!(st.thin || m.thin),
+    news: item ? { title: item.title, outlet: String(item.outlet || item.source || '').replace(/ via .*$/, '') } : null });
+  async function refreshPackages(simClusters = null) {
+    if (pkgRunning) return;
+    pkgRunning = true;
+    const t0 = Date.now();
+    try {
+      stats.pkgPasses++;
+      const now = Date.now();
+      const index = getMarkets?.() || [];
+      const pool = airingPool().filter((st) => st.lead && !SG.has(String(st.category || '').toLowerCase()) && !isMarginBracket(st) && !deadRow(st.lead));
+      const byStory = new Map(airingPool().map((st) => [st.id, st]));
+      if (!pool.length || !index.length) return;
+      const fresh = (c) => (Date.parse(c.items?.[0]?.publishedAt || c.lastSeen || c.firstSeen) || 0) >= now - F.pkgClusterHours * 3_600_000;
+      const live = wire ? wire.clusters({ limit: 60, minOutlets: F.pkgMinOutlets }) : [];
+      const fired = recentFired.map((r) => r.cluster);
+      const seen = new Set();
+      const cands = [...(simClusters || []), ...live, ...fired].filter((c) => c?.id && !seen.has(c.id) && seen.add(c.id)).map(cleanCluster)
+        .filter((c) => c && (c.independentOutlets ?? c.outlets?.length ?? 0) >= F.pkgMinOutlets && !SG.has(String(c.category || '').toLowerCase()) && fresh(c))
+        .sort((a, b) => (b.independentOutlets || 0) - (a.independentOutlets || 0)).slice(0, F.pkgMaxClusters);
+      stats.pkgCandidates = cands.length;
+      for (const [k, v] of pkgEval) if (now - v.at > 2 * 3_600_000) pkgEval.delete(k);
+      const sotdCluster = sotd?.id?.replace(/^sotd:/, '');
+      const built = [];
+      for (const c of cands) {
+        let ev = pkgEval.get(c.id);
+        if (!ev || ev.n !== c.items.length || now - ev.at > F.pkgEvalMin * 60_000) { ev = { at: now, n: c.items.length, hits: [], checked: new Set() }; pkgEval.set(c.id, ev); }
+        // match only the stories this cluster has not been checked against yet (the board changes between passes)
+        const todo = pool.filter((st) => !ev.checked.has(st.id));
+        if (todo.length) {
+          await yieldLoop();
+          for (const st of todo) ev.checked.add(st.id);
+          for (const h of matchClusterStories(c, todo, index, { now })) ev.hits.push({ storyId: h.story.id, item: h.item, score: h.score });
+          ev.hits.sort((a, b) => b.score - a.score);
+        }
+        // distinct events only, live rows only
+        // (at most two rows per subject, and the same question on both exchanges at the same price counts once)
+        const seenEv = new Set(), rows = [];
+        for (const h of ev.hits) {
+          const st = byStory.get(h.storyId);
+          const m = st?.lead;
+          if (!st || !m || deadRow(m)) continue;
+          const key = String(st.eventTitle || m.eventId || st.id).toLowerCase();
+          if (seenEv.has(key)) continue;
+          const subj = pkgSubject(st);
+          const same = subj ? rows.filter((r) => r.subj === subj) : [];
+          if (same.length >= 2 || same.some((r) => r.m.source !== m.source && Math.abs(r.m.yesPrice - m.yesPrice) < 0.04)) continue;
+          seenEv.add(key);
+          rows.push({ st, m, item: h.item, subj });
+        }
+        if (rows.length < F.pkgMinStories) continue;
+        rows.sort((x, y) => Math.abs(y.m.change1d || 0) - Math.abs(x.m.change1d || 0));
+        const top = rows.slice(0, F.pkgMaxRows);
+        built.push({ id: `pkg:${c.id}`, title: sotdTitle(c, top.map((r) => r.m)), headline: c.title, credit: credit(c.outlets), url: c.url || null,
+          newsAt: c.firstSeen || null, outlets: c.independentOutlets ?? c.outlets?.length ?? 0, count: rows.length, sotd: c.id === sotdCluster, category: top[0].st.category || null, thin: top.some((r) => r.st.thin || r.m.thin),
+          markets: top.map((r) => ownRow(r.st, r.m, r.item)), updatedAt: new Date(now).toISOString(), _score: rows.length * 10 + (c.independentOutlets || 0) });
+      }
+      // Keep earlier packages whose cluster has left the wire (price-refreshed from the board); drop any that lost their stories.
+      const builtIds = new Set(built.map((b) => b.id));
+      for (const [id, p] of pkgs) {
+        if (builtIds.has(id)) continue;
+        if (now - (Date.parse(p.newsAt) || 0) > F.pkgKeepHours * 3_600_000) continue;
+        const rows = p.markets.map((r) => { const st = byStory.get(r.storyId); const m = st && [st.lead, ...(st.markets || [])].find((x) => x?.id === r.marketId); return m && !deadRow(m) ? { ...r, yesPrice: m.yesPrice, change1d: m.change1d ?? null, volume24h: m.volume24h ?? r.volume24h ?? null, updatedAt: m.updatedAt || r.updatedAt } : null; }).filter(Boolean);
+        if (rows.length >= F.pkgMinStories) built.push({ ...p, markets: rows, _score: rows.length * 10 + (p.outlets || 0) });
+      }
+      // De-duplicate: the same cluster id never twice; a near-identical headline or >= 2 shared stories keeps the stronger one.
+      built.sort((a, b) => b._score - a._score);
+      const kept = [];
+      for (const b of built) {
+        const tok = tokenSet(b.headline || '');
+        const ids = new Set(b.markets.map((r) => r.storyId));
+        const dup = kept.find((k) => jaccard(tokenSet(k.headline || ''), tok) >= F.dupJaccard || k.markets.filter((r) => ids.has(r.storyId)).length >= 2);
+        if (!dup) kept.push(b);
+      }
+      kept.sort((a, b) => (Date.parse(b.newsAt) || 0) - (Date.parse(a.newsAt) || 0));
+      const list = kept.slice(0, F.pkgKeep).map(({ _score, ...p }) => p);
+      for (const p of list) if (!pkgs.has(p.id)) log('info', 'story package', { id: p.id, title: p.title, headline: p.headline, credit: p.credit, outlets: p.outlets,
+        markets: p.markets.map((r) => `${r.storyId} | ${r.label} ${Math.round(r.yesPrice * 100)}% | ${r.news?.outlet}: ${r.news?.title}`) });
+      pkgs.clear();
+      for (const p of list) pkgs.set(p.id, p);
+      stats.pkgCount = list.length;
+      store.setState({ packages: list });
+    } finally {
+      stats.pkgMs = Date.now() - t0;
+      Object.assign(store.feeds.wire, statsView());
+      pkgRunning = false;
     }
   }
 

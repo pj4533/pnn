@@ -118,6 +118,7 @@ export function hydrate(s) {
   const pick = (a) => (Array.isArray(a) ? a.map((i) => pool[i]).filter(Boolean) : []);
   s.stories = pick(s.stories);
   s.closing = pick(s.closing);
+  if (s.segments && typeof s.segments === 'object') s.segments = Object.fromEntries(Object.entries(s.segments).map(([k, l]) => [k, pick(l)]));
   s.desks = (s.desks || []).map((d) => ({ ...d, stories: pick(d.stories) }));
   delete s.pool;
   return s;

@@ -218,6 +218,19 @@ sotd: { id, title, credit, headline, leadStoryId,
 countdown: [{ id, title, at: ISO, storyId|null, label, yesPrice, change1d, source }]  // next 3 scheduled decisions
 ```
 
+### Variety segments and story packages (2026-11-05)
+```js
+segments: { tossups: Story[], weekSwings: Story[], quietFavorites: Story[], disagreements: Story[] }
+// rank.mjs buildSegments (thresholds: config.segments). News-gated stories only (news item or MARKETS MOVING FIRST); <= 8 per list, lists disjoint,
+// one per story family. Each story is a shallow clone with segment: {type, kicker, line}. ingest.mjs attach()es them like the board;
+// clientstate.mjs sends them as pool refs and data.js hydrate() turns them back into stories.
+packages: [{ id: 'pkg:<cluster>', title, headline, credit, url, newsAt, outlets, count, sotd, category, thin, updatedAt,
+             markets: [{ storyId, label, outcome, yesPrice, change1d, source, marketId, volume24h, updatedAt, thin, news: {title, outlet} }] }]
+// newsroom.mjs refreshPackages: a fresh (<= 6h) wire cluster with >= 3 outlets that strictly (exact-tier matcher) covers >= 2 aired stories; 2-4 rows; <= 6 kept, 12h lifetime.
+```
+New card kinds (cards.js `varietyCard`, director.js): TOSS-UP, THIS WEEK'S SWINGS, STEADY FAVORITE, EXCHANGES DISAGREE, STORY BEHIND THE ODDS. They ride on overlay id `focus`
+with `seg.kind` = tossup | swings | steady | disagree | package; the director weights them (1, 1, 1, 1, 2), with per-kind cooldowns and never the same kind twice in a row. Dev keys t, w, y, x, p.
+
 ### New SSE events (each also kept as the last ~10 in state: moves, listed, money)
 ```js
 'move':   { id, at, storyId, marketId, short, yesPrice, change1h, kind: 'move'|'still' }  // ON THE MOVE corner pop

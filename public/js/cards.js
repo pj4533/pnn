@@ -30,6 +30,7 @@ export const leadPts = (s, key = 'change1d') => ptsOf(s?.lead?.[key]);
 const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : '0');   // real minus sign, glows like the plus
 
 const TITLES = { focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK' };
+export const VARIETY_TITLES = { tossup: 'TOSS-UP', swings: "THIS WEEK'S SWINGS", steady: 'STEADY FAVORITE', disagree: 'EXCHANGES DISAGREE', package: 'STORY BEHIND THE ODDS' };
 const SWING_TITLES = { swing: 'BIGGEST SWINGS', longshot: 'LONGSHOTS ON THE MOVE', slipping: 'FAVORITES SLIPPING' };
 
 /** Election races carry "Market prices, not official results" (editorial rule). */
@@ -80,7 +81,8 @@ function swingCard(seg, now) {
   const from = Number.isFinite(sw.from) ? sw.from : m.yesPrice - (m.change1d || 0);
   const to = Number.isFinite(sw.to) ? sw.to : m.yesPrice;
   // same number as the widget: a 24h swing IS the lead's change1d (so card, dial, chyron and ticker round the same value); a last-hour swing is to - from
-  const d = ((sw.window !== '1h' && Number.isFinite(m.change1d) ? ptsOf(m.change1d) : ptsOf(Number.isFinite(sw.delta) ? sw.delta : to - from)) || 0);
+  const wk = sw.window === '1w';   // THIS WEEK'S SWINGS: the 7-day move, not the lead's day move
+  const d = (((!wk && sw.window !== '1h' && Number.isFinite(m.change1d)) ? ptsOf(m.change1d) : ptsOf(Number.isFinite(sw.delta) ? sw.delta : to - from)) || 0);
   const a = pctNum(from), b = pctNum(to);
   const counts = /^\d+$/.test(a) && /^\d+$/.test(b);          // '<1' / '>99' can't count: show them as text
   const title = sw.title || SWING_TITLES[sw.shape] || 'BIGGEST SWINGS';
@@ -91,8 +93,9 @@ function swingCard(seg, now) {
     <h1 class="bc-head fit" data-fit-h>${esc(s.short || s.headline)}</h1>
     ${newsLine(s, now)}
     ${lbl ? `<div class="sw-who fit">${esc(lbl)}</div>` : ''}
+    ${wk ? `<div class="sw-words fit">${esc(pointsText(d / 100, 'this week'))}</div>` : ''}
     <div class="sw">
-      <div class="sw-then"><span class="sw-l">YESTERDAY</span><span class="sw-tv">${esc(a)}<small>%</small></span></div>
+      <div class="sw-then"><span class="sw-l">${esc(sw.thenLabel || (wk ? 'A WEEK AGO' : 'YESTERDAY'))}</span><span class="sw-tv">${esc(a)}<small>%</small></span></div>
       <div class="sw-arrow">▶</div>
       <div class="sw-now"><span class="sw-l">NOW</span><span class="sw-nv"${counts ? ` data-from="${a}" data-to="${b}"` : ''}>${esc(counts ? a : b)}</span><span class="sw-p">%</span></div>
       <div class="sw-dl"><span class="sw-d">${signed(d)}</span><span class="sw-dc">${Math.abs(d) === 1 ? 'POINT' : 'POINTS'}</span></div>
@@ -107,6 +110,7 @@ function swingCard(seg, now) {
 export function segmentCard(seg, now = Date.now()) {
   const s = seg.story;
   if (!s?.lead) return '';
+  if (seg.kind && VARIETY_TITLES[seg.kind]) return varietyCard(seg, now);   // 2026-11-05 variety segments
   if (s.swing && typeof s.swing === 'object') return swingCard(seg, now);
   const m = s.lead;
   const title = seg.id === 'desk' ? (seg.desk?.title || `${String(seg.desk?.id || '').toUpperCase()} DESK`) : TITLES[seg.id] || '';
@@ -220,4 +224,143 @@ export function marketsCard(seg, now = Date.now()) {
     <div class="meta bc-meta fin-meta"><span class="fit meta-t"><b>${esc(fi.delayed ? 'Prices delayed' : 'Prices')}</b>${fi.source ? ` · ${esc(fi.source)}` : ''} · updated ${esc(ago(fi.updated, now))}</span></div>
     ${rows ? `<div class="meta bc-meta fin-meta2" data-drop="4"><span class="fit meta-t"><b>${esc(ex)}</b> · odds, not facts${vol > 0 ? ` · ${esc(money(vol))} traded in 24 hrs` : ''}</span></div>` : ''}
   </section>`;
+}
+
+// ---- variety segments (2026-11-05): the same data shown another way. seg = {id: 'focus', kind: 'tossup'|'swings'|'steady'|'disagree'|'package', story, item?, pkg?}.
+// They ride on seg.id 'focus' so overlay.render() lays them out like a STORY FOCUS card; seg.kind picks the card here.
+const durText = (d) => (d <= 1 ? 'a day' : d === 7 ? 'a week' : d === 14 ? 'two weeks' : d === 21 ? 'three weeks' : d >= 28 && d <= 31 ? 'a month' : `${d} days`);
+const vHead = (s, title, now, tag = '') => `<div class="bc-h"><span class="bc-seg fit">${esc(title)}</span>${tag}${s.settling ? '<span class="bc-tag">SETTLING</span>' : ''}</div>
+    <div class="bc-kick fit">${s.flash ? '<b class="bc-news">IN THE NEWS</b> · ' : ''}${esc(categoryName(s.category).toUpperCase())} · ${esc(s.eventTitle || '')}</div>
+    <h1 class="bc-head fit" data-fit-h>${esc(s.short || s.headline)}</h1>
+    ${newsLine(s, now)}`;
+const sideLabel = (m, fallback) => { const l = String(marketLabel(m) || '').trim(); return !l || BARE_NUM.test(l) ? fallback : l; };
+
+/** TOSS-UP: a big % near 50 and "TOO CLOSE TO CALL", with the two sides head to head. */
+function tossupCard(seg, now) {
+  const s = seg.story, m = s.lead, p = m.yesPrice;
+  const others = (s.markets || []).filter((x) => x.id !== m.id && Number.isFinite(x.yesPrice)).sort((a, b) => b.yesPrice - a.yesPrice);
+  const multi = (s.markets || []).length > 1 && others.length > 0;
+  const aName = multi ? sideLabel(m, 'Leading side') : 'Chance it happens', bName = multi ? sideLabel(others[0], 'Runner-up') : 'Chance it does not';
+  const bp = multi ? others[0].yesPrice : 1 - p;
+  const gap = Math.abs(Math.round(p * 100) - Math.round(bp * 100));
+  const d = leadPts(s);
+  return `<section class="card bigc bc-var bc-tossup" data-story="${esc(s.id)}">
+    ${vHead(s, VARIETY_TITLES.tossup, now)}
+    <div class="bc-num">
+      <div class="bc-n"><span class="bc-v">${esc(pctNum(p))}</span><span class="bc-p">%</span></div>
+      <div class="bc-side">
+        <div class="tu-ctc fit">TOO CLOSE TO CALL</div>
+        <div class="tu-gap fit">${gap === 0 ? 'Dead even' : `${gap} ${gap === 1 ? 'point' : 'points'} apart`}</div>
+        ${d ? `<div class="bc-wk fit" data-drop="3">${esc(pointsText(m.change1d, 'today'))}</div>` : ''}
+      </div>
+    </div>
+    <div class="tu-vs" data-drop="2">
+      <div class="tu-names"><span class="tu-a fit">${esc(aName)} <b>${esc(pct(p))}</b></span><span class="tu-b fit">${esc(bName)} <b>${esc(pct(bp))}</b></span></div>
+      <div class="tu-bar"><u class="tu-ua" style="width:${(p / Math.max(0.01, p + bp) * 100).toFixed(1)}%"></u><u class="tu-ub"></u></div>
+    </div>
+    ${exchangesBadge(s)}
+    ${electionNote(s)}
+    ${meta(s, { id: 'tossup' }, now)}
+  </section>`;
+}
+
+/** STEADY FAVORITE: the calm card: "steady at 82% for two weeks" with the range it stayed in. */
+function steadyCard(seg, now) {
+  const s = seg.story, m = s.lead, p = m.yesPrice, it = seg.item || {}, st = it.steady && typeof it.steady === 'object' ? it.steady : {};
+  const days = Math.max(1, Math.round(Number(st.days ?? it.days) || 7));
+  let lo = Number(st.lo ?? it.lo), hi = Number(st.hi ?? it.hi);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+    const cut = Date.now() / 1000 - days * 86400, h = (s.history || []).filter((x) => x && Number.isFinite(x.p) && x.t >= cut);
+    if (h.length >= 3) { lo = Math.min(...h.map((x) => x.p)); hi = Math.max(...h.map((x) => x.p)); } else { lo = NaN; hi = NaN; }
+  }
+  const range = Number.isFinite(lo) && Number.isFinite(hi);
+  if (range) { lo = Math.min(lo, p); hi = Math.max(hi, p); }
+  const lbl = outcomeSubtitle(s, m);
+  return `<section class="card bigc bc-var bc-steady" data-story="${esc(s.id)}">
+    ${vHead(s, VARIETY_TITLES.steady, now)}
+    <div class="bc-num">
+      <div class="bc-n"><span class="bc-v">${esc(pctNum(p))}</span><span class="bc-p">%</span></div>
+      <div class="bc-side">
+        ${lbl ? `<div class="bc-lbl fit" data-fit-h>${esc(lbl)}</div>` : ''}
+        <div class="st-words fit" data-fit-h>steady at ${esc(pct(p))} for ${esc(durText(days))}</div>
+        ${range ? `<div class="bc-wk fit" data-drop="3">Range over that time: ${esc(pct(lo))} to ${esc(pct(hi))}</div>` : ''}
+      </div>
+    </div>
+    <div class="st-meter" aria-hidden="true"><div class="st-track"><u style="width:${Math.max(0.5, p * 100)}%"></u>${range ? `<i style="left:${(lo * 100).toFixed(1)}%;width:${Math.max(1.2, (hi - lo) * 100).toFixed(1)}%"></i>` : ''}<b style="left:${(p * 100).toFixed(1)}%"></b></div>
+      <div class="st-scale"><span>0%</span><span>50%</span><span>100%</span></div></div>
+    ${bars(s)}
+    ${electionNote(s)}
+    ${meta(s, { id: 'steady' }, now)}
+  </section>`;
+}
+
+/** EXCHANGES DISAGREE: Kalshi and Polymarket side by side, with the gap between them. */
+function disagreeCard(seg, now) {
+  const s = seg.story, it = seg.item || {};
+  const src = Array.isArray(it.exchanges) && it.exchanges.length > 1 ? it.exchanges : s.exchanges;
+  const ex = (Array.isArray(src) ? src : []).filter((x) => x && Number.isFinite(x.yesPrice));
+  const k = ex.find((x) => x.source === 'kalshi') || ex[0], pm = ex.find((x) => x.source === 'polymarket') || ex.find((x) => x !== k) || ex[1];
+  if (!k || !pm) return '';
+  const gap = Math.abs(Math.round(k.yesPrice * 100) - Math.round(pm.yesPrice * 100));
+  const hi = k.yesPrice >= pm.yesPrice ? k : pm, lo = hi === k ? pm : k;
+  const lbl = outcomeSubtitle(s, s.lead);
+  const col = (x, cls) => `<div class="ex-c ${cls} ${x === hi && gap ? 'hi' : ''}"><span class="ex-n fit">${esc(exchangeName(x.source).toUpperCase())}</span>
+      <span class="ex-v"><b>${esc(pctNum(x.yesPrice))}</b><small>%</small></span>
+      <div class="ex-tr"><u style="width:${Math.max(0.5, x.yesPrice * 100)}%"></u></div>
+      <span class="ex-s fit" data-drop="3">${Number.isFinite(x.volume24h) ? `${esc(money(x.volume24h))} traded in 24 hrs` : esc(x.updatedAt ? `updated ${ago(x.updatedAt, now)}` : '')}</span></div>`;
+  return `<section class="card bigc bc-var bc-disagree" data-story="${esc(s.id)}">
+    ${vHead(s, VARIETY_TITLES.disagree, now)}
+    ${lbl ? `<div class="sw-who fit" data-drop="4">${esc(lbl)}</div>` : ''}
+    <div class="ex">
+      ${col(k, 'k')}
+      <div class="ex-gap"><span class="ex-gn">${gap}</span><span class="ex-gl">${gap === 1 ? 'POINT' : 'POINTS'}<br>APART</span></div>
+      ${col(pm, 'p')}
+    </div>
+    <div class="ex-words fit" data-drop="2">${gap ? `${esc(exchangeName(hi.source))} prices it ${gap} ${gap === 1 ? 'point' : 'points'} higher than ${esc(exchangeName(lo.source))}` : 'Both exchanges price it the same'}</div>
+    ${electionNote(s)}
+    ${meta(s, { id: 'disagree' }, now)}
+  </section>`;
+}
+
+/** STORY BEHIND THE ODDS: a headline and its credit, then 2 to 4 markets it touches with their odds and day move. Never "because of". */
+export function packageCard(seg, now = Date.now()) {
+  const pkg = seg.pkg || {}, s = seg.story;
+  const rows = (pkg.markets || []).filter((x) => x && Number.isFinite(x.yesPrice)).slice(0, 4).map((x) => ({ ...x, pts: ptsOf(x.change1d) || 0 }));
+  const headline = String(pkg.headline || '').trim();
+  if (!headline || rows.length < 2) return '';
+  const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const title = String(pkg.title || '').trim(), sameTitle = !title || norm(title) === norm(headline);
+  const nw = { title: headline, source: pkg.credit || 'The wires', publishedAt: pkg.newsAt || pkg.publishedAt };
+  const top = [...rows].sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts))[0];
+  const sources = [...new Set(rows.map((x) => x.source).filter(Boolean))].map(exchangeName).join(' + ') || 'Prediction markets';
+  const vol = rows.reduce((a, x) => a + (Number.isFinite(x.volume24h) ? x.volume24h : 0), 0);
+  const elect = rows.some((x) => /\b(win|wins|race|mayor|senate|governor|house|election|nominee)\b/i.test(x.label || ''));
+  return `<section class="card bigc bc-var bc-pkg" data-story="${esc(s.id)}">
+    <div class="bc-h"><span class="bc-seg fit">${esc(VARIETY_TITLES.package)}</span>${pkg.thin ? '<span class="bc-tag">THIN MARKETS</span>' : ''}</div>
+    <div class="bc-kick fit">WHAT THE WIRES ARE REPORTING · ${rows.length} MARKETS IT TOUCHES</div>
+    <h1 class="bc-head fit" data-fit-h>${esc(sameTitle ? headline : title)}</h1>
+    ${sameTitle ? `<div class="pkg-credit fit">${esc(newsMeta(nw, now).toUpperCase())}</div>` : newsLineHtml(nw, now, '')}
+    <div class="sotd-board pkg-board">${rows.map((x, i) => `<div class="sotd-r ${x === top ? 'hi' : ''}" ${x.storyId ? `data-story="${esc(x.storyId)}"` : ''} ${i >= 3 ? 'data-drop="2"' : ''}>
+        <span class="sotd-l fit">${esc(x.label)}</span><span class="sotd-v">${esc(pct(x.yesPrice))}</span><span class="sotd-m ${moveCls(x.change1d)}">${x.pts ? esc(signed(x.pts)) : '0'}</span></div>`).join('')}</div>
+    <div class="sotd-key fit" data-drop="3">Today's move in points · markets the story is about, not a cause and effect</div>
+    ${elect ? '<div class="bc-note fit" data-drop="4">Market prices, not official results</div>' : ''}
+    <div class="meta bc-meta"><span class="fit meta-t"><b>${esc(sources)}</b> · updated ${esc(ago(s.lead?.updatedAt, now))}${vol > 0 ? ` · <b>${esc(money(vol))}</b> traded in 24 hrs` : ''}</span></div>
+  </section>`;
+}
+
+function varietyCard(seg, now) {
+  const s = seg.story;
+  switch (seg.kind) {
+    case 'tossup': return tossupCard(seg, now);
+    case 'steady': return steadyCard(seg, now);
+    case 'disagree': return disagreeCard(seg, now);
+    case 'package': return packageCard(seg, now);
+    case 'swings': {
+      const m = s.lead, w = Number.isFinite(m.change1w) ? m.change1w : 0, it = seg.item?.week || seg.item?.swing || {};
+      const delta = Number.isFinite(it.delta) ? it.delta : w, to = Number.isFinite(it.to) ? it.to : m.yesPrice, from = Number.isFinite(it.from) ? it.from : to - delta;
+      const sw = { from, to, delta, window: '1w', shape: 'week', title: VARIETY_TITLES.swings, thenLabel: 'A WEEK AGO', flipped: (from < 0.5) !== (to < 0.5) };
+      return swingCard({ ...seg, story: { ...s, swing: sw } }, now);
+    }
+    default: return '';
+  }
 }

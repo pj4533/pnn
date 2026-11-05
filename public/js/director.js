@@ -10,9 +10,9 @@
 //   - a settling story (>=95% / <=5% after a big move) airs once, then leaves every bag until it stops settling;
 //   - the chyron carries "ALSO MOVING: …" (a mover not on screen) or the tease instead of repeating the card's headline.
 // ?fast=1 runs the clock 10x for testing; window.__pnn.airLog lists what aired. Client 'air'/'draw' logs go to the server.
-// Keys: → next card, Space pause, 1–8 force top/focus/movers/week/desk/sotd/countdown/markets now.
-import { report, pct, money, exchangeName, ago } from './util.js';
-import { pointsText } from './cards.js';
+// Keys: → next card, Space pause, 1–8 force top/focus/movers/week/desk/sotd/countdown/markets now; t/w/y/x/p force toss-up / week swings / steady / exchanges disagree / package.
+import { report, pct, money, exchangeName, ago, newsOf, isMovingFirst } from './util.js';
+import { pointsText, VARIETY_TITLES } from './cards.js';
 import { finCards, finItems, finStory } from './finance.js';
 
 // The kinds of card in the mix (weights: how often each kind is picked; never the same kind twice in a row).
@@ -25,7 +25,28 @@ const RUNDOWN = [
   { id: 'sotd', ms: 13000, w: 0 },           // scheduled
   { id: 'countdown', ms: 10000, w: 0 },      // scheduled
   { id: 'markets', ms: 11000, w: 0 },        // scheduled: at most one per 5-6 cards (a price chart needs the time)
+  // variety segments (2026-11-05): the same data another way. They ride on overlay id 'focus' (seg.kind says which card); each
+  // needs `gap` cards since its last airing (about 1 per 8, packages about 1 per 6), and is skipped when state has no data for it.
+  { id: 'tossup', ms: 9000, w: 1 },
+  { id: 'swings', ms: 9000, w: 1 },
+  { id: 'steady', ms: 9000, w: 1 },
+  { id: 'disagree', ms: 10000, w: 1 },
+  { id: 'package', ms: 12000, w: 2 },
 ];
+const VGAP = { tossup: 8, swings: 8, steady: 8, disagree: 8, package: 6 };
+const VKEYS = { t: 'tossup', w: 'swings', y: 'steady', x: 'disagree', p: 'package' }; // dev keys
+const VALIAS = { // state.segments = {tossups, weekSwings, quietFavorites, disagreements} (server); the other names are tolerated aliases; a flat array of {kind, ...} also works
+  tossup: ['tossup', 'tossups', 'tossUp', 'tossUps', 'toss-up'], swings: ['weekSwings', 'swings', 'weeklySwings', 'week-swings'],
+  steady: ['quietFavorites', 'steady', 'steadyFavorites', 'steadyFavorite', 'steady-favorites'], disagree: ['disagreements', 'disagree', 'exchangesDisagree', 'exchanges'],
+};
+const VTEASE = { tossup: 'Toss-up', swings: "This week's swings", steady: 'Steady favorite', disagree: 'Exchanges disagree', package: 'The story behind the odds' };
+const wkPts = (s, it) => Math.abs(Number.isFinite(it?.week?.delta) ? it.week.delta : Number.isFinite(it?.swing?.delta) ? it.swing.delta : s.lead.change1w ?? 0);
+const VQUAL = { // a last client-side sanity check on what the server sent (never air a card its own title contradicts)
+  tossup: (s) => s.lead.yesPrice >= 0.35 && s.lead.yesPrice <= 0.65,
+  swings: (s, it) => wkPts(s, it) >= 0.05,
+  steady: (s) => s.lead.yesPrice >= 0.6,
+  disagree: (s) => (Array.isArray(s.exchanges) ? s.exchanges : []).filter((x) => x && Number.isFinite(x.yesPrice)).length >= 2,
+};
 const DEF = Object.fromEntries(RUNDOWN.map((d) => [d.id, d]));
 const SCHED = { top: [6, 8], sotd: [9, 11], countdown: [11, 13], markets: [4, 5] }; // after a random a–b cards
 const SCHED_ORDER = ['top', 'sotd', 'countdown', 'markets'];
@@ -38,6 +59,7 @@ const SPEED = Number(new URLSearchParams(location.search).get('fast')) > 0 ? 10 
 const T0 = Date.now();
 const clock = () => T0 + (Date.now() - T0) * SPEED; // scaled "now" for freshness
 const ms$ = (ms) => ms / SPEED;
+const SEGNAME = (s) => s.kind || s.id;
 const MINI_POOL = 12;         // TOP STORIES minis draw from board ranks 2..12
 const KEYS = ['top', 'focus', 'movers', 'week', 'desk', 'sotd', 'countdown', 'markets'];
 const DESK_TAG = { economy: 'ECONOMY', tech: 'TECH', world: 'WORLD', culture: 'CULTURE', politics: 'POLITICS', sports: 'SPORTS & GAMES' };
@@ -54,6 +76,7 @@ export function createDirector({ overlay, chyron, scene }) {
   let plan = [];           // the next two cards, already drawn (for the NEXT tease)
   // plan-time bookkeeping (the last PLANNED card, which airs after everything already planned)
   let pLast = null, pGroup = null;
+  const sinceV = Object.fromEntries(Object.entries(VGAP).map(([k, g]) => [k, Math.floor(Math.random() * g)])); // cards since each variety kind last aired
   const since = { top: 0, sotd: 0, countdown: 0, markets: 0 }, after = { top: rand(SCHED.top), sotd: rand([4, 6]), countdown: rand([6, 8]), markets: rand([2, 4]) };
   const note = (id, seg) => {
     if (!id) return;
@@ -121,6 +144,7 @@ export function createDirector({ overlay, chyron, scene }) {
     sotd: (s) => Array.isArray(s.sotd?.markets) && s.sotd.markets.length > 0 && !!s.sotd.title,
     countdown: (s) => futureCountdown(s).length >= 2, // one lone entry is a thin card; the corner chip still shows it
     markets: (s) => finCards(s).length > 0,
+    ...Object.fromEntries(Object.keys(VGAP).map((k) => [k, () => varietyEntries(k).length > 0])),
   };
   const finStoryFor = (id) => { const fi = typeof id === 'string' && id.startsWith('fin:') ? finItems(state).find((x) => x.id === id) : null; return fi ? finStory(fi) : null; }; // a clicked ticker quote
   const deskStory = (eventId) => { for (const d of desksOf(state)) { const x = d.stories.find((s) => s.id === eventId); if (x) return x; } return null; };
@@ -139,13 +163,65 @@ export function createDirector({ overlay, chyron, scene }) {
   }
   function moverStory(id) {
     const m = state.movers?.find((x) => (x.storyId || x.eventId) === id);
-    if (!m) return null;
+    return m ? marketStory(m, id) : null;
+  }
+  function marketStory(m, id) {
     return {
       id, eventTitle: m.eventTitle || m.title, category: m.category, sources: [m.source], lead: m, markets: [m], kind: 'mover',
       headline: moverHeadline(m), dek: '', thin: !!m.thin, history: null, news: Array.isArray(m.news) ? m.news : m.news ? [m.news] : [], swing: null, exchanges: null,
       visual: { type: 'dial', region: null, theme: m.category },
     };
   }
+
+  // ---- variety segments (2026-11-05). state.segments / state.packages are read defensively: any missing piece skips the kind.
+  // An item is a story id ({storyId, ...extras}) or a story-like object; the live board copy wins (fresh numbers). Every story that
+  // airs carries a news item or is a labeled MARKETS MOVING FIRST story (existing rule), else the item is dropped here.
+  function varietyItems(kind) {
+    const sg = state?.segments;
+    if (!sg || typeof sg !== 'object') return [];
+    if (Array.isArray(sg)) return sg.filter((x) => x && (x.kind === kind || x.segment === kind || x.type === kind));
+    for (const k of VALIAS[kind]) { const v = sg[k]; if (Array.isArray(v)) return v; if (v && Array.isArray(v.items || v.stories)) return v.items || v.stories; }
+    return [];
+  }
+  function itemStory(it) {
+    if (!it || typeof it !== 'object') return null;
+    const base = it.story && typeof it.story === 'object' ? it.story : it;
+    const id = (typeof it.storyId === 'string' && it.storyId) || it.eventId || base.id;
+    let st = (id && storyFor(id)) || (base.lead ? base : null) || (Number.isFinite(base.yesPrice) ? marketStory(base, id || base.id) : null);
+    if (!st?.lead || !Number.isFinite(st.lead.yesPrice)) return null;
+    if (Array.isArray(it.exchanges) && it.exchanges.length > 1) st = { ...st, exchanges: it.exchanges };
+    if (!newsOf(st) && it.news) st = { ...st, news: Array.isArray(it.news) ? it.news : [it.news] };
+    return newsOf(st) || isMovingFirst(st) ? st : null;
+  }
+  function varietyList(kind) {
+    const seen = new Set(), out = [];
+    for (const it of varietyItems(kind)) {
+      const st = itemStory(it);
+      if (!st || seen.has(st.id) || !VQUAL[kind](st, it)) continue;
+      seen.add(st.id); out.push({ id: st.id, story: st, item: it, settling: !!st.settling });
+    }
+    return live(out);
+  }
+  const pkgId = (p) => `pkg:${String(p.id || p.packageId || p.headline).replace(/^pkg:/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}`;
+  function pkgStory(p, id) {
+    const rows = p.markets.filter((m) => m && Number.isFinite(m.yesPrice)).slice(0, 4)
+      .map((m) => ({ ...m, id: m.id || m.storyId || `${id}:${m.label}`, updatedAt: m.updatedAt || p.updatedAt || state.generatedAt }));
+    const lead = [...rows].sort((a, b) => Math.abs(b.change1d ?? 0) - Math.abs(a.change1d ?? 0))[0];
+    const title = p.title || p.short || p.headline;
+    return {
+      id, eventTitle: title, short: title, headline: p.headline, category: p.category || storyFor(rows[0].storyId)?.category || 'world',
+      sources: [...new Set(rows.map((m) => m.source).filter(Boolean))], lead, markets: rows, kind: 'news', dek: '', thin: !!p.thin, history: null, swing: null, exchanges: null,
+      news: [{ title: p.headline, source: p.credit || 'The wires', url: p.url, publishedAt: p.newsAt || p.publishedAt }], visual: { type: 'dial', region: null, theme: p.category || 'world' },
+    };
+  }
+  function packageList() {
+    const a = state?.packages;
+    const arr = Array.isArray(a) ? a : a && Array.isArray(a.items) ? a.items : [];
+    return arr.filter((p) => p && typeof p === 'object' && String(p.headline || '').trim() && Array.isArray(p.markets) && p.markets.filter((m) => m && Number.isFinite(m.yesPrice)).length >= 2)
+      .map((p) => { const id = pkgId(p); return { id, pkg: p, story: pkgStory(p, id), settling: false }; });
+  }
+  const varietyEntries = (kind) => (kind === 'package' ? packageList() : varietyList(kind));
+  const varietySeg = (kind, e) => ({ id: 'focus', kind, story: e.story, ...(kind === 'package' ? { pkg: e.pkg } : { item: e.item }) });
 
   // NEWS MEETS MARKETS: the aired story for a flash (by storyId, then by any matched market/event), else a minimal
   // story built from the flash's own market rows (same shape as moverStory) so the 3D and STORY FOCUS can show it.
@@ -177,6 +253,9 @@ export function createDirector({ overlay, chyron, scene }) {
       const ms = seg.countdown.slice(0, 3).map((c) => ({ id: c.id, yesPrice: c.yesPrice, closesAt: c.at, label: c.title, outcome: c.label }));
       story = { id: `countdown:${ms.map((m) => m.id).join(',')}`, eventTitle: 'Next big decisions', category: 'economy', lead: ms[0], markets: ms, closesAt: ms[0].closesAt, visual: { type: ms.length > 1 ? 'week' : 'countdown', region: null, theme: 'economy' } };
     }
+    // variety cards reuse existing holograms: the package on the SOTD board, the rest on a dial (disagree: outcomes when there are several markets)
+    if (seg.kind === 'package' && seg.pkg) { story = { ...seg.story, markets: seg.story.markets.map((m) => ({ label: m.label, yesPrice: m.yesPrice, change1d: m.change1d, source: m.source, storyId: m.storyId })) }; name = 'sotd'; }
+    else if (seg.kind) story = { ...story, swing: null, visual: { ...(story.visual || {}), type: seg.kind === 'disagree' && (story.markets || []).length > 1 ? 'outcomes' : 'dial' } };
     return { story, name, segName: name === 'top' || name === 'sotd' ? name : 'focus' }; // cards: the card's story
   }
   function sceneShow(seg) {
@@ -242,6 +321,12 @@ export function createDirector({ overlay, chyron, scene }) {
       if (id !== 'focus') logDraw(id, list, picked);
       return picked[0] ? withRank({ id, story: picked[0] }) : null;
     }
+    if (VGAP[id]) {
+      const list = varietyEntries(id);
+      if (!list.length) return null;
+      const picked = draw(`v:${id}`, list, 1, pGroup); logDraw(`v:${id}`, list, picked);
+      return picked[0] ? varietySeg(id, picked[0]) : null;
+    }
     if (id === 'top') return topSeg();
     if (id === 'markets') {
       const list = finCards(state).map(finStory);
@@ -276,6 +361,7 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.id === 'sotd') return has.sotd(state) ? { ...seg, sotd: state.sotd, story: sotdStory(state.sotd) } : null;
     if (seg.id === 'countdown') return has.countdown(state) ? build('countdown') : null;
     if (seg.id === 'standby') return seg;
+    if (seg.kind) { const e = varietyEntries(seg.kind).find((x) => x.id === seg.story?.id); return e ? varietySeg(seg.kind, e) : null; }
     if (seg.id === 'markets') { const fi = finCards(state).find((x) => x.id === seg.story?.id); return fi ? { ...seg, story: finStory(fi) } : null; }
     const desk = seg.desk ? desksOf(state).find((d) => d.id === seg.desk.id) : null;
     if (seg.id === 'desk' && !desk) return null;
@@ -310,10 +396,10 @@ export function createDirector({ overlay, chyron, scene }) {
     postAir({ kind: 'draw', bag: name, pool: list.length, picked: picked.map((x) => ({ id: x.id, rank: rankIn(x.id, list) })) });
   }
   function logAir(seg) {
-    const id = seg?.story?.id || seg?.sotd?.id || (seg?.id === 'countdown' ? 'countdown' : null); const key = `${seg?.id}|${seg?.desk?.id || ''}|${id}|${seg?.index}`;
+    const id = seg?.story?.id || seg?.sotd?.id || (seg?.id === 'countdown' ? 'countdown' : null); const key = `${seg?.kind || seg?.id}|${seg?.desk?.id || ''}|${id}|${seg?.index}`;
     if (!id || key === lastAirKey) return; lastAirKey = key;
     const list = seg.id === 'movers' ? state.movers : seg.id === 'week' ? state.closing : seg.id === 'desk' ? seg.desk?.stories : seg.id === 'focus' || seg.id === 'top' ? state.stories : null;
-    postAir({ kind: 'air', seg: seg.id, desk: seg.desk?.id, id, rank: rankIn(id, list), swing: seg.story?.swing ? seg.story.swing.shape : undefined, short: (seg.sotd?.title || seg.story?.short || seg.story?.headline || '').slice(0, 70) });
+    postAir({ kind: 'air', seg: SEGNAME(seg), desk: seg.desk?.id, id, rank: rankIn(id, list), swing: seg.story?.swing ? seg.story.swing.shape : undefined, short: (seg.sotd?.title || seg.story?.short || seg.story?.headline || '').slice(0, 70) });
   }
 
   // ---- tease + ALSO MOVING
@@ -323,9 +409,10 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.id === 'sotd') return `Story of the Day: ${seg.sotd?.title || ''}`.trim();
     if (seg.id === 'countdown') return 'Countdown desk';
     if (seg.id === 'markets') return `Markets: ${seg.story?.short || ''}`.trim();
+    if (seg.kind && VTEASE[seg.kind]) return `${VTEASE[seg.kind]}: ${seg.story?.short || seg.story?.eventTitle || ''}`.trim();
     return seg.story?.short || seg.story?.eventTitle || seg.story?.headline || '';
   };
-  const onScreen = (seg) => new Set([seg?.story?.id, ...(seg?.minis || []).map((x) => x.id), ...(seg?.sotd?.markets || []).map((x) => x.storyId)].filter(Boolean));
+  const onScreen = (seg) => new Set([seg?.story?.id, ...(seg?.minis || []).map((x) => x.id), ...(seg?.sotd?.markets || []).map((x) => x.storyId), ...(seg?.pkg?.markets || []).map((x) => x.storyId)].filter(Boolean));
   function alsoFor(seg) {
     const ids = onScreen(seg);
     const pool = (state?.movers || []).filter((m) => m && Number.isFinite(m.yesPrice) && Math.abs(m.change1d ?? 0) >= 0.02 && !ids.has(m.storyId || m.eventId) && !m.thin
@@ -361,8 +448,9 @@ export function createDirector({ overlay, chyron, scene }) {
     current = seg; curAlt = alt;
     logAir(seg);
     try { overlay.render(seg, seg.id === 'top' ? topState(seg) : state); } catch (e) { report('overlay.render', e); }
-    try { chyron.setLower(seg.id, seg.story, { durationMs, tag: seg.desk ? DESK_TAG[seg.desk.id] || 'DESK' : undefined, alt }); } catch (e) { report('chyron.setLower', e); }
+    try { chyron.setLower(SEGNAME(seg), seg.story, { durationMs, tag: seg.desk ? DESK_TAG[seg.desk.id] || 'DESK' : undefined, alt }); } catch (e) { report('chyron.setLower', e); }
     try { overlay.setNext?.(teaseOf(plan[0]), teaseOf(plan[1])); } catch (e) { report('overlay.setNext', e); }
+    if (seg.kind && VARIETY_TITLES[seg.kind]) { const t = document.querySelector('.seg-t'); if (t && t.textContent !== VARIETY_TITLES[seg.kind]) t.textContent = VARIETY_TITLES[seg.kind]; } // top-bar title (overlay.js only knows 'focus')
     sceneShow(seg);
   }
 
@@ -378,7 +466,7 @@ export function createDirector({ overlay, chyron, scene }) {
       if (k === 'top' && recent(live(state.stories)[0]?.id) && since.top < after.top + 6) continue;
       order.push(k);
     }
-    let pool = RUNDOWN.filter((d) => d.w > 0 && ok(d.id) && d.id !== pLast);
+    let pool = RUNDOWN.filter((d) => d.w > 0 && d.id !== pLast && (!VGAP[d.id] || sinceV[d.id] >= VGAP[d.id]) && ok(d.id));
     if (!pool.length && !order.length) pool = RUNDOWN.filter((d) => ok(d.id));
     while (pool.length) {
       const tot = pool.reduce((a, x) => a + (x.w || 1), 0); let r = Math.random() * tot, j = pool.length - 1;
@@ -396,7 +484,8 @@ export function createDirector({ overlay, chyron, scene }) {
     seg ||= fallback;
     if (!seg) return null;
     for (const k of SCHED_ORDER) { if (seg.id === k) { since[k] = 0; after[k] = rand(SCHED[k]); } else since[k]++; }
-    pLast = seg.id; pGroup = groupOf(seg.story);
+    for (const k of Object.keys(VGAP)) sinceV[k] = seg.kind === k ? 0 : sinceV[k] + 1;
+    pLast = SEGNAME(seg); pGroup = groupOf(seg.story);
     return seg;
   }
   const fillPlan = () => { while (plan.length < 2) { const s = planOne(); if (!s) break; plan.push(s); } };
@@ -405,7 +494,7 @@ export function createDirector({ overlay, chyron, scene }) {
     paint(seg, { durationMs: ms$(ms), alt: seg.id === 'standby' ? null : alsoFor(seg) });
     if (seg.id === 'top') { note(seg.story?.id, 'top'); seg.minis.forEach((x) => note(x.id, 'top-mini')); }
     else if (seg.id === 'sotd') note(seg.story?.id, 'sotd');
-    else if (seg.id !== 'countdown' && seg.id !== 'standby') note(seg.story?.id, seg.id);
+    else if (seg.id !== 'countdown' && seg.id !== 'standby') note(seg.story?.id, SEGNAME(seg));
     clearTimeout(timer); clearTimeout(prepTimer);
     if (paused || held) return;
     timer = setTimeout(advance, ms$(ms));
@@ -423,19 +512,20 @@ export function createDirector({ overlay, chyron, scene }) {
     onAir = seg;
     fillPlan();
     if (!seg) { paint({ id: 'standby' }); timer = setTimeout(advance, 2000); return; } // never leave an empty card up
-    air(seg, DEF[seg.id]?.ms || 9000);
+    air(seg, DEF[SEGNAME(seg)]?.ms || 9000);
   }
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') { paused = !paused; if (!paused) advance(); else clearTimeout(timer); e.preventDefault(); }
     else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') advance();
     else if (KEYS[Number(e.key) - 1]) jump(KEYS[Number(e.key) - 1]);
+    else if (VKEYS[e.key] && !e.metaKey && !e.ctrlKey && !e.altKey) jump(VKEYS[e.key]);
   });
 
   function jump(id) {
     if (!state || !has[id]?.(state)) return;
     const seg = build(id);
-    if (seg) { if (current?.story?.settling && current.id !== 'top') settled.add(current.story.id); onAir = seg; pLast = id; air(seg, DEF[id].ms); }
+    if (seg) { if (current?.story?.settling && current.id !== 'top') settled.add(current.story.id); onAir = seg; pLast = id; if (VGAP[id]) sinceV[id] = 0; air(seg, DEF[id].ms); }
   }
 
   return {

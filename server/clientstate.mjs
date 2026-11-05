@@ -131,12 +131,13 @@ export function clientStateJson(state) {
     return i;
   };
   const refs = (list) => (Array.isArray(list) ? list.filter((s) => s && typeof s === 'object').map(ref) : []);
-  const { stories, closing, desks, movers, finance, wire, ...rest } = state;
+  const { stories, closing, desks, movers, finance, wire, segments, ...rest } = state;
   const head = {
     ...rest,
     v: 2,
     stories: refs(stories),
     closing: refs(closing),
+    segments: Object.fromEntries(Object.entries(segments || {}).map(([k, l]) => [k, refs(l)])), // variety lists: pool refs (state.segments)
     desks: (desks || []).map((d) => ({ ...d, stories: refs(d.stories) })),
     movers: (movers || []).map(slimMover),
     finance: slimFinance(finance),

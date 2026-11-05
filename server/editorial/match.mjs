@@ -983,4 +983,25 @@ export function filterHeadlinesForStory(story, items, marketIndex = [], opts = {
   return matchStoryNews(story, buildHeadlineIndex(arr), marketIndex, { max: 3, ...opts });
 }
 
-export default { matchMarkets, analyzeCluster, searchQueries, searchPolymarket, searchKalshi, kalshiSearchToV2, TOPICS, buildHeadlineIndex, matchStoryNews, filterHeadlinesForStory, storyEntities };
+/**
+ * Story packages (2026-11-05): which aired stories does ONE wire cluster strictly cover? Each story is run through the same
+ * story-news matcher (question-type rules, subject / frame / outcome checks, scope and race rules) against the cluster's own
+ * headlines only, and kept only on an exact-tier hit (the headline names the story's own subject and question; event-level
+ * hits never count). Returns [{story, item, score, tier}], best first.
+ */
+export function matchClusterStories(cluster, stories, marketIndex = [], { now = Date.now(), maxAgeMs = 12 * 3_600_000, minScore = 4 } = {}) {
+  const items = (cluster?.items || []).filter((x) => x?.title);
+  if (!items.length || !stories?.length) return [];
+  const hIndex = buildHeadlineIndex(items);
+  const out = [];
+  for (const story of stories) {
+    let hits = [];
+    try { hits = matchStoryNews(story, hIndex, marketIndex, { now, max: 3, maxAgeMs, minScore }); } catch { hits = []; }
+    const h = hits.find((x) => x.tier === 'exact' && x.score >= minScore);
+    if (!h) continue;
+    out.push({ story, item: h.item, score: h.score, tier: h.tier });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+export default { matchClusterStories, matchMarkets, analyzeCluster, searchQueries, searchPolymarket, searchKalshi, kalshiSearchToV2, TOPICS, buildHeadlineIndex, matchStoryNews, filterHeadlinesForStory, storyEntities };

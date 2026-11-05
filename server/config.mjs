@@ -412,6 +412,18 @@ export default {
     ],
   },
 
+  // Variety segments (2026-11-05): the same news-gated stories shown as toss-ups, week swings, steady favorites and
+  // exchange disagreements (rank.mjs buildSegments -> state.segments). Probabilities, not points of view.
+  segments: {
+    max: 8,                 // stories per list
+    minVolume: 25_000,      // 24h USD on the lead market
+    minCloseH: 24,          // skip markets closing within a day (steady / toss-up claims mean little there)
+    tossup: { low: 0.42, high: 0.58, maxMove1d: 0.03 },
+    weekSwing: { minPoints: 0.08, maxToday: 0.05 },   // |change1w| >= 8 pts, but not already today's mover
+    quiet: { low: 0.65, high: 0.92, minVolume: 100_000, maxMove1d: 0.02, maxMove1w: 0.04 },
+    disagree: { points: 0.05 },   // Kalshi vs Polymarket gap
+  },
+
   sim: {
     eventsFile: 'research/samples/polymarket-events-top20-2026-11-04.json',
     marketsFile: 'research/samples/polymarket-markets-top100-2026-11-04.json',
