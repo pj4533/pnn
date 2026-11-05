@@ -140,3 +140,11 @@ async function keepAwake() {
 keepAwake();
 document.addEventListener('visibilitychange', keepAwake);
 document.addEventListener('pointerdown', keepAwake, { passive: true });
+
+// Tap the PNN logo to reload: the iPad home-screen app has no browser reload button.
+document.addEventListener('click', (e) => {
+  const m = e.target.closest?.('.bug-mark');
+  if (!m) return;
+  m.classList.add('reloading');
+  setTimeout(() => location.reload(), 350);
+});

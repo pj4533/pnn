@@ -117,3 +117,10 @@ body.alerting .frame, body.alerting .ov-strip { opacity: 0; transition: opacity 
 .beat-whip { animation: beatWhip var(--bd) cubic-bezier(.2,.9,.2,1) var(--bdel) backwards; }
 @keyframes beatWhip { 0% { opacity: 0; transform: translateX(8vw) skewX(-14deg); filter: blur(6px); } 65% { opacity: 1; transform: translateX(-.6vw) skewX(4deg); filter: blur(1px); } 100% { opacity: 1; transform: none; filter: none; } }
 @media (prefers-reduced-motion: reduce) { .beat > *, .beat, .beat::after { animation-duration: .01s !important; } }
+
+/* Tap the PNN logo to reload (iPad home-screen app has no reload button). Subtle: no extra UI until tapped. */
+#overlay .bug-mark { pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bug-mark.reloading { animation: bugReload .6s ease-in-out infinite alternate; }
+.bug-mark.reloading::after { content: 'RELOADING'; position: absolute; left: 0; top: 100%; margin-top: .4vh; font: 700 max(var(--min), .7vw)/1 var(--font-mono); letter-spacing: .12em; color: var(--cyan); white-space: nowrap; }
+.bug-mark { position: relative; }
+@keyframes bugReload { from { opacity: 1; } to { opacity: .35; } }
