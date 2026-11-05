@@ -399,3 +399,8 @@ The user rejected the terrain-mood pass ("it's all like planets... one template 
 - **Bug fixed:** scenes with a low-res layer (curlSwarm, kaleidoTunnel, laserCathedral) computed the hologram-area dimming with the full-screen size instead of their layer's size, so the dim zone landed in the lower-left quarter. `renderLayer` now sets `res` to the target's size.
 - **Hologram-area dimming raised:** 0.55 → 0.7 (world.js), and 0.45/0.6 → 0.7/0.78 for the outrun moods.
 - **iOS home-screen app:** status bar style `black` instead of `black-translucent`, which drew the time and battery over the PNN bug and the clock. Re-add the home-screen icon to pick it up.
+- **iPad overlap fix (2026-11-05):**
+  - In the home-screen app, iPadOS puts `position: fixed; bottom: 0` above the home-indicator band while `100vh` is the full screen. The bottom-anchored chyron and countdown chip drifted up against the vh-placed TOP STORIES cards, which slid under the chyron.
+  - The chyron is now `top: 79vh` and the chip is top-anchored in vh too, so everything uses one unit.
+  - The 3D stage rect now excludes the NEXT BIG DECISION chip, so holograms and replay labels frame above it instead of under it.
+  - Verified at 1194x834 (iPad Pro 11): cards end above the chyron, replay labels clear the chip, fitReport clean.

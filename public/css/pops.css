@@ -21,7 +21,7 @@
 body.alerting #pops, body.flashing #pops { opacity: 0; visibility: hidden; }
 
 /* Countdown chip: state.countdown[0], mm:ss in its last hour. */
-#chip { position: fixed; right: 1.6vw; bottom: 22.4vh; z-index: 15; max-width: 30vw; pointer-events: none; }
+#chip { position: fixed; right: 1.6vw; top: 77.6vh; transform: translateY(-100%); z-index: 15; max-width: 30vw; pointer-events: none; } /* vh-anchored (iPad home-screen 'bottom' drift) */
 .chip { display: flex; align-items: center; gap: .8vw; padding: .7vh .9vw; background: rgba(7,2,26,.86); border: 1px solid var(--amber); box-shadow: 0 0 1vw rgba(255,177,59,.4); }
 .chip-k { flex: 0 0 auto; display: flex; flex-direction: column; line-height: 1.05; }
 .chip-k b { font: 900 max(var(--min), .72vw) var(--font-display); letter-spacing: .14em; color: var(--amber); white-space: nowrap; }

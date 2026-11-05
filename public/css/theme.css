@@ -38,7 +38,9 @@ body.has-scene #backdrop { display: none; }
 
 #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; z-index: 1; }
 #overlay { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
-#chyron { position: fixed; left: 0; right: 0; bottom: 0; height: 21vh; z-index: 20; pointer-events: none; }
+/* top: 79vh (not bottom: 0): everything else is placed in vh, and in an iPad home-screen app 'bottom: 0' sits above the
+   home-indicator band while 100vh is the full screen, so the chyron rode up over the TOP STORIES cards. One unit = no drift. */
+#chyron { position: fixed; left: 0; right: 0; top: 79vh; height: 21vh; z-index: 20; pointer-events: none; }
 #alerts { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
 #scanlines { position: fixed; inset: 0; z-index: 25; pointer-events: none; opacity: .12;
   background: repeating-linear-gradient(to bottom, transparent 0, transparent 2px, rgba(0,0,0,.6) 3px); mix-blend-mode: multiply; }

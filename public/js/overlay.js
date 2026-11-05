@@ -104,6 +104,13 @@ export function createOverlay(root) {
     feedsEl.innerHTML = row + (state?.sim ? '<span class="feed sim">REPLAY DATA</span>' : '');
   }
 
+  function baseStage() {
+    // viewport fractions of the open 3D area for the current layout
+    const seg = document.body.dataset.segment;
+    if (seg === 'top') return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.63 };
+    if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown') return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
+    return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.78 };
+  }
   const api = {
     /** seg: {id, story?, index?, count?}. */
     render(seg, state, now = Date.now()) {
@@ -179,11 +186,14 @@ export function createOverlay(root) {
     },
     setConnected(ok) { conn.hidden = !!ok; },
     get stageRect() {
-      // viewport fractions of the open 3D area for the current layout (informational for the scene)
-      const seg = document.body.dataset.segment;
-      if (seg === 'top') return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.63 };
-      if (seg === 'desk' || seg === 'movers' || seg === 'week' || seg === 'focus' || seg === 'sotd' || seg === 'countdown') return { x0: 0.49, x1: 0.992, y0: 0.084, y1: 0.78 }; // full-screen cards take the left 48%
-      return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.78 };
+      const r = baseStage();
+      // the NEXT BIG DECISION chip sits in the stage's lower-right corner: frame the hologram above it
+      const chip = document.getElementById('chip');
+      if (chip && chip.offsetParent !== null && chip.childElementCount) {
+        const c = chip.getBoundingClientRect(), top = c.top / window.innerHeight;
+        if (c.width > 0 && top > r.y0 + 0.25 && top < r.y1) r.y1 = top - 0.01;
+      }
+      return r;
     },
   };
   return api;

@@ -146,4 +146,4 @@ body[data-segment="sotd"] .frame, body[data-segment="countdown"] .frame { left: 
 /* on full-screen cards the card's own header carries the banner, so the top bar gives its title slot to the tease */
 body:not([data-segment="top"]):not([data-segment="standby"]) .ov-top.has-next .seg-t { display: none; }
 .seg { align-items: center; }
-body[data-segment="top"] #chip { bottom: 36.6vh; }
+body[data-segment="top"] #chip { top: 63.4vh; }
