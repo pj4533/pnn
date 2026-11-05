@@ -90,7 +90,6 @@ html.hero-pulse .hl-spill.on { opacity: 1; }
 
 /* ---- 5) frame: the four brackets (they drew a rectangle around the eye) are retired; the label sits above the hero ellipse */
 .frame .c { display: none; }
-.frame-lbl { color: var(--story); background: rgba(7, 2, 26, .55); padding: .2vh .5vw; text-shadow: 0 0 .3vw rgba(0, 0, 0, .9), 0 0 .5vw rgba(0, 0, 0, .7); transition: left .12s linear, top .12s linear; }
 
 /* ---- chyron joins the room: story-tinted lower third and a pool of projector light under the widget */
 .cy-t1 { border-color: color-mix(in srgb, var(--story) 60%, transparent);

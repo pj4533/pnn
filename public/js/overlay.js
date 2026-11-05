@@ -19,7 +19,7 @@ export function createOverlay(root) {
     <div class="conn" hidden>RECONNECTING</div>
     <div class="ov-left fit-stack"></div>
     <div class="ov-strip"></div>
-    <div class="frame"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><span class="frame-lbl fit"></span></div>`;
+    <div class="frame"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i></div><!-- no "LIVE 3D //" tag: the widgets name their own subject (user, 2026-11-05) -->`;
   const $ = (s) => root.querySelector(s);
   const left = $('.ov-left'), strip = $('.ov-strip'), frame = $('.frame');
   const segT = $('.seg-t'), segS = $('.seg-s'), feedsEl = $('.feeds'), conn = $('.conn');
@@ -50,7 +50,6 @@ export function createOverlay(root) {
   }
   let lastNext = [null, null];   // re-fit the NEXT tease on resize / iPad rotation (its shrink is width-dependent)
   window.addEventListener('resize', () => { if (lastNext[0]) api.setNext(...lastNext); });
-  let frameOverride = null, lastFrameLabel = '';  // flash label override (the 3D shows the flash's story, not the card's)
   function settle(host) {
     for (const a of host.getAnimations({ subtree: true })) {
       const it = a.effect?.getTiming?.().iterations;
@@ -174,8 +173,6 @@ export function createOverlay(root) {
       if (fresh) { const b = takeBeat(); swap(left, html, key, b); swap(strip, stripHtml, key, b); countUps(left, true); lastFreshAt = performance.now(); }
       else { left.innerHTML = html; strip.innerHTML = stripHtml; settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
       if (seg.id !== 'standby') addLink(left);
-      lastFrameLabel = label;
-      frame.querySelector('.frame-lbl').textContent = (frameOverride ?? label) ? `LIVE 3D // ${String(frameOverride ?? label).toUpperCase()}` : '';
       frame.classList.toggle('short', seg.id === 'top');
       scheduleFit(root);
     },
@@ -199,11 +196,7 @@ export function createOverlay(root) {
       });
     },
     /** While something other than the card drives the 3D (a news flash), the frame label names that story. null restores. */
-    setFrameLabel(t) {
-      frameOverride = t || null;
-      const l = frameOverride ?? lastFrameLabel;
-      frame.querySelector('.frame-lbl').textContent = l ? `LIVE 3D // ${String(l).toUpperCase()}` : '';
-    },
+    setFrameLabel() {},   // the LIVE 3D tag was removed; kept as a no-op for callers
     setConnected(ok) { conn.hidden = !!ok; },
     get stageRect() {
       const r = baseStage();

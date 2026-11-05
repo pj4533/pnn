@@ -60,8 +60,13 @@ Reported by the user on the iPad, 2026-11-05 07:30.
       - Watchlist: top ~20 mega-caps, indices (S&P, Nasdaq-100, Dow, VIX), Treasury 2Y/10Y/30Y, and oil/gold/dollar.
       - Earnings markets: only the well-traded pairings (largest company, Fed, yields, S&P ranges, recession, oil). No thin single-stock earnings markets.
       - Spec: research/financial-data.md.
-13. **Remove the "LIVE 3D // <event>" frame tag entirely (the user decided this).** The widgets name their own subject.
-    - Drop the tag markup and its fit and flash-override logic (`overlay.setFrameLabel`).
-    - Let the stage rect start at the frame top.
-    - Verify nothing else referenced it.
-    - Owner: orchestrator, after the next-round workflow.
+13. DONE (2026-11-05): the "LIVE 3D //" tag is removed. While verifying, I found and fixed a related bug: widgets declared hand-written fit boxes that left out their titles, axes and footers, so on the smaller TOP STORIES stage the replay's labels spilled behind the card and under the minis. The camera now fits each widget's box grown to every label sprite it draws (`withLabels` in scene/index.js). Verified at 1194x834: the TOP STORIES dial and the focus replay fit fully, fitReport is empty and the console is clean.
+14. **Open after round 2 (from the verifier's report):**
+    - Finance headlines aren't checked for direction (a Dow "down 1.6%" move was paired with "Dow rises…").
+    - The finance widget's "YESTERDAY'S CLOSE 7,688.6" is clipped at 1194.
+    - TikTok Pro App Store question paired with an unrelated TikTok Shop story; App Store "#1 app" needs a question-type rule; LIV Golf "timeline" still airs.
+    - At 52% the dial needle crosses the TOSS-UP label.
+    - The outcomes widget shows a double ▲ next to the lead bar.
+    - Economy stories still turn the stage green (`THEMES.economy.b` in scene/holo.js).
+    - The alert dial's label styling is unchecked.
+    - Perf part 2: real Safari/iPad telemetry, then fix hotspots. Headless shows a ~900ms cold-start hitch from label texture uploads and shader compiles.

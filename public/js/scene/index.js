@@ -121,6 +121,23 @@ export function createScene(canvas, opts = {}) {
     return { x0, x1, y0, y1, behind };
   }
   // fit pose.box inside RECT: binary-search the camera distance along the pose direction, then recentre
+  // Widgets declare a hand-written fit box that often covers only the chart, not its title/axis/footer labels; on the
+  // smaller TOP STORIES stage those labels spilled behind the card. Grow the box to every label sprite the widget draws.
+  const _lb = new THREE.Box3(), _lp = new THREE.Vector3();
+  function withLabels(pose, root) {
+    if (!pose || !pose.box || !root) return pose;
+    root.updateMatrixWorld(true);
+    const box = pose.box.clone();
+    root.traverse((o) => {
+      if (!o.isSprite || o.visible === false) return;
+      o.getWorldPosition(_lp);
+      const sx = Math.abs(o.scale.x) / 2, sy = Math.abs(o.scale.y) / 2;
+      const cx = (0.5 - (o.center?.x ?? 0.5)) * 2 * sx, cy = (0.5 - (o.center?.y ?? 0.5)) * 2 * sy;
+      _lb.min.set(_lp.x + cx - sx, _lp.y + cy - sy, _lp.z - 0.5); _lb.max.set(_lp.x + cx + sx, _lp.y + cy + sy, _lp.z + 0.5);
+      box.union(_lb);
+    });
+    return { ...pose, box };
+  }
   function fitPose(pose) {
     if (!pose.box) return { position: pose.position.clone(), target: pose.target.clone() };
     camera.updateProjectionMatrix();
@@ -295,7 +312,7 @@ export function createScene(canvas, opts = {}) {
     if (built.signals) hero.setStory(built.signals);
     hero.emit('arrive', 1);
     world.event('story', { x: built.station.x, z: built.station.z, color: built.pal.b });
-    if (fly) flyTo(current.pose());
+    if (fly) flyTo(withLabels(current.pose(), current.root));
     rig.orbitDir = (built.pal.seed & 4) ? 1 : -1;
     // background beat: when the scene's hold is up, the scene transition fires on this card change
     const beat = built.vis !== 'alert' ? world.beat({ station: built.station, pal: built.pal, storyId: built.storyId }) : null;

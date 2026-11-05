@@ -57,8 +57,6 @@ body[data-segment="focus"] .frame { left: 25.6vw; }
 .frame .tr { right: 0; top: 0; border-right-width: 2px; border-top-width: 2px; }
 .frame .bl { left: 0; bottom: 0; border-left-width: 2px; border-bottom-width: 2px; border-color: rgba(255,43,214,.75); }
 .frame .br { right: 0; bottom: 0; border-right-width: 2px; border-bottom-width: 2px; border-color: rgba(255,43,214,.75); }
-.frame-lbl { position: absolute; left: 1.2vw; top: .6vh; max-width: calc(100% - 2.4vw); font: 600 max(var(--min), .75vw) var(--font-mono); letter-spacing: .08em; color: var(--cyan);
-  text-shadow: 0 0 .4vw var(--cyan); white-space: nowrap; overflow: hidden; opacity: .9; }
 body.alerting .frame, body.alerting .ov-strip { opacity: 0; transition: opacity .3s; }
 
 /* Click-to-focus: cards, board rows and ticker items cut the broadcast to that story. */
