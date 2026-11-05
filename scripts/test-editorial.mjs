@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildStories, boardCat } from '../server/editorial/rank.mjs';
 import { detectBreaking, resetBreaking } from '../server/editorial/breaking.mjs';
-import { pct, pts, newsQuery, questionToClause, storyHeadline } from '../server/editorial/copy.mjs';
+import { pct, pts, newsQuery, questionToClause, storyHeadline, shortHeadline, marketLabel } from '../server/editorial/copy.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const S = (f) => JSON.parse(fs.readFileSync(path.join(ROOT, 'research/samples', f), 'utf8'));
@@ -294,6 +294,39 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
   eq(fid.has('ks:OFFBIG'), true, 'breaking: $250K+ fires'); eq(fid.has('ks:MARGIN'), false, 'breaking: margin bracket skipped');
   for (const a of fired) if (a.headline.length > 80 || /[“”]/.test(a.headline)) { console.log('  FAIL alert headline ' + a.headline); process.exitCode = 1; }
   resetBreaking();
+}
+
+// ---------- question-titled events and "this week" placement (2026-11-05) ----------
+{
+  const mk = (o) => ({ id: 'cp:' + (o.outcome || o.title), source: 'polymarket', yesPrice: 0.94, change1d: 0, change1w: null, volume24h: 50000, ...o });
+  const hdl = (m, kind = 'mover') => { const h = storyHeadline({ lead: m, kind }); return [h, shortHeadline(h)]; };
+  const bad = (label, str) => {
+    if (/\b(Where|Who|Which|When|What) (will|has|is)\b/i.test(str) || /\bwill\b/i.test(str) || / x [A-Z]/.test(str)) { console.log(`  FAIL ${label}: raw question/will/x in "${str}"`); process.exitCode = 1; }
+  };
+  const subjWeek = (label, str) => {
+    // "this week" may only appear inside a move phrase ("up 24 points this week") or a settle window, never right after a name/race
+    if (/\b(race|next PM|prime minister|James Bond|Company[^,:]*|2026) this week\b/i.test(str)) { console.log(`  FAIL ${label}: glued "this week" in "${str}"`); process.exitCode = 1; }
+  };
+  const talks = { eventTitle: 'Where will next Russia x Ukraine peace talks take place this week?', title: 'Will the next Russia x Ukraine peace talks take place in UAE this week?', outcome: 'UAE' };
+  for (const [tag, extra] of [['still', {}], ['day', { change1d: 0.1 }], ['week', { change1w: 0.2 }]]) {
+    for (const [i, str] of hdl(mk({ ...talks, ...extra })).entries()) { bad(`where-${tag}-${i}`, str); eq(/UAE/.test(str) && /host/.test(str), true, `where ${tag} ${i} names UAE as host: "${str}"`); }
+  }
+  eq(marketLabel(mk(talks)), 'UAE to host the next Russia-Ukraine peace talks this week', 'where label');
+  eq(hdl(mk({ ...talks, change1d: 0.1 }))[1].includes('Russia-Ukraine'), true, 'where short keeps the topic');
+  for (const m of [
+    mk({ eventTitle: 'Next James Bond actor', title: 'Will Callum Turner be the next James Bond?', outcome: 'Callum Turner', yesPrice: 0.3, change1w: 0.2 }),
+    mk({ eventTitle: 'Prime Minister of Israel after the next election?', title: 'Will Gadi Eizenkot be the next PM', outcome: 'Gadi Eizenkot', yesPrice: 0.56, change1w: 0.24 }),
+    mk({ eventTitle: '2nd Largest Company end of Dec 2026?', title: 'Will NVIDIA be the 2nd largest company end of Dec 2026?', outcome: 'NVIDIA', yesPrice: 0.5, change1w: 0.2 }),
+    mk({ eventTitle: 'Largest Company end of November 2026?', title: 'Will Apple be the largest company end of Nov 2026?', outcome: 'Apple', yesPrice: 0.5, change1w: 0.2 }),
+    mk({ eventTitle: 'Who will win the Nobel Peace Prize?', title: 'Foo Bar', outcome: 'Foo Bar', yesPrice: 0.6, change1w: 0.2 }),
+    mk({ eventTitle: 'Which country will host the 2030 Olympics?', title: 'France', outcome: 'France', yesPrice: 0.6, change1d: 0.2 }),
+  ]) {
+    for (const [i, str] of hdl(m).entries()) { bad(`q-${m.outcome}-${i}`, str); subjWeek(`wk-${m.outcome}-${i}`, str); }
+  }
+  const eiz = hdl(mk({ eventTitle: 'Prime Minister of Israel after the next election?', title: 'Will Gadi Eizenkot be the next PM', outcome: 'Gadi Eizenkot', yesPrice: 0.56, change1w: 0.24 }))[0];
+  eq(/up 24 points this week/.test(eiz), true, `week move reads as a move phrase: "${eiz}"`);
+  eq(/year end/.test(hdl(mk({ eventTitle: 'Largest Company end of November 2026?', title: 'Will Apple be the largest company end of Nov 2026?', outcome: 'Apple', yesPrice: 0.5, change1w: 0.2 }))[0]), false, 'November is not year end');
+  eq(marketLabel(mk({ eventTitle: 'Who will win the Nobel Peace Prize?', title: 'Foo Bar', outcome: 'Foo Bar' })), 'Foo Bar to win the Nobel Peace Prize', 'who label');
 }
 
 // ---------- local fallback normalizer (mirrors the contract Market shape) ----------

@@ -6,6 +6,7 @@ import { createWorld } from './world.js';
 import { createPost } from './post.js';
 import { createFx } from './fx.js';
 import { createGlobe } from './globe.js';
+import { exchangeName, money, ago } from '../util.js';
 import { createOutcomes } from './holograms/outcomes.js';
 import { createDial } from './holograms/dial.js';
 import { createRibbon } from './holograms/ribbon.js';
@@ -192,9 +193,16 @@ export function createScene(canvas, opts = {}) {
   function globeHolo(ctx, story) {
     const region = story.visual?.region || null;
     const prob = story.lead?.yesPrice ?? 0.5;
+    const prev = Math.min(1, Math.max(0, prob - (story.lead?.change1d ?? 0)));
+    // the leaderboard needs 2+ outcomes; subject names what the % is of; info feeds the source/volume footer
+    const ms = story.markets || [];
+    const outcomes = ms.length >= 2 ? ms.slice(0, 4).map((m) => ({ name: m.outcome || m.title || '', p: m.yesPrice ?? 0, d: m.change1d ?? 0 })) : null;
+    const subject = ms.length >= 2 ? (story.eventTitle || '') : (story.lead?.outcome || story.eventTitle || story.lead?.title || '');
+    const vol = ms.reduce((a, m) => a + (m.volume24h || 0), 0);
+    const info = { source: story.lead?.source ? exchangeName(story.lead.source) : null, vol: vol > 0 ? money(vol) : null, updated: story.lead?.updatedAt ? ago(story.lead.updatedAt) : null, thin: !!story.thin };
     return {
       root: globe.root, dead: false, visible: false, station: GLOBE_STATION.clone(),
-      show() { this.visible = true; globe.show({ region, prob, palette: ctx.pal, seed: ctx.seed }); },
+      show() { this.visible = true; globe.show({ region, prob, prev, outcomes, subject, info, palette: ctx.pal, seed: ctx.seed }); },
       hide() { this.visible = false; globe.hide(); },
       tick() { if (!this.visible && !globe.root.visible) this.dead = true; },
       pose: () => globe.pose(),
@@ -343,7 +351,7 @@ export function createScene(canvas, opts = {}) {
         pal.pick = (i) => [pal.a, pal.b, COL.white][i % 3]; pal.hex = (i) => ['#ff3a2e', '#ffab2e', '#ffffff'][i % 3];
         const ctx = { scene, fx, world, station, pal, seed: pal.seed, rnd: pal.rnd, globe };
         const story = { id: alert.storyId, lead: { yesPrice: alert.to, change1d: alert.to - alert.from } };
-        const holo = createDial(ctx, story, { alert: { from: alert.from, to: alert.to, minutes: alert.minutes || 0 } });
+        const holo = createDial(ctx, story, { alert: { from: alert.from, to: alert.to, minutes: alert.minutes || 0, label: alert.short || alert.label || alert.headline || '' } });
         curKey = 'alert:' + (alert.id || '');
         swapTo({ holo, pal, station, vis: 'alert' });
       } catch (e) { reportErr('showAlert', e); }

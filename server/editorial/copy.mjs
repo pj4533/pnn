@@ -85,6 +85,12 @@ const shortOutcome = (o) => String(o || '').replace(/^(Sen\.|Rep\.|Gov\.|Dr\.)\s
 export function eventPhrase(eventTitle) {
   let t = stripQ(stripParens(stripQ(dejargon(eventTitle))));
   let m;
+  // "Where/Who/Which/What/When ..." events are questions: never paste them after "in"/"for". When the question maps to
+  // an infinitive ("Where will the next talks take place" -> "to host the next talks") that is the phrase.
+  if (/^(where|which|who|what|how many|when)\b/i.test(t)) {
+    const inf = questionInfinitive(t);
+    return inf ? { phrase: inf, prep: '', quoted: true, inf } : { phrase: `“${t}?”`, prep: 'in', quoted: true };
+  }
   if ((m = t.match(/^(Republican|Democratic) Presidential Nominee (\d{4})$/i))) return { phrase: `the ${m[2]} ${cap(m[1])} nomination`, prep: 'for' };
   if ((m = t.match(/^Presidential Election Winner (\d{4})$/i))) return { phrase: `the ${m[1]} presidential race`, prep: 'in' };
   if ((m = t.match(/^(.+?) (Senate|House|Governor|Gubernatorial|Mayoral) Election Winner$/i))) return { phrase: `the ${m[1]} ${m[2].toLowerCase() === 'gubernatorial' ? 'governor' : m[2]} race`.replace(/ Governor race/, ' governor race').replace(/ Mayoral race/, ' mayor race'), prep: 'in' };
@@ -97,7 +103,10 @@ export function eventPhrase(eventTitle) {
   if ((m = t.match(/^Grammy winner:\s*(.+)$/i))) return { phrase: `${m[1]} at the Grammys`, prep: 'for' };
   if ((m = t.match(/^(.+?) winner$/i)) && !/^(who|which|what)\b/i.test(m[1]) && m[1].split(/\s+/).length <= 7) return { phrase: `the ${m[1].replace(/^the /i, '')} race`, prep: 'in' };
   if ((m = t.match(/^(\d{4}) (Democratic|Republican) VP nominee$/i))) return { phrase: `the ${m[1]} ${cap(m[2])} VP pick`, prep: 'for' };
-  if ((m = t.match(/^Largest Company end of (\w+)(?: (\d{4}))?$/i))) return { phrase: 'the race for largest company at year end', prep: 'in' };
+  if ((m = t.match(/^(?:(\d+)(?:st|nd|rd|th) )?Largest Company end of (\w+)(?: (\d{4}))?$/i))) {
+    const ord = m[1] ? `${m[1]}${{ 1: 'st', 2: 'nd', 3: 'rd' }[m[1]] || 'th'}-` : '';
+    return { phrase: `the race for ${ord}largest company ${/^dec/i.test(m[2]) ? 'at year end' : `at the end of ${MONTH_FULL[m[2].slice(0, 3).toLowerCase()] || m[2]}`}`, prep: 'in' };
+  }
   if ((m = t.match(/^(.+?) Mayoral Election$/i))) return { phrase: `the ${m[1]} mayor race`, prep: 'in' };
   if ((m = t.match(/^Balance of Power:?\s*(\d{4}) Midterms$/i))) return { phrase: `control of Congress after the ${m[1]} midterms`, prep: 'for' };
   if ((m = t.match(/^(Prime Minister|President|Chancellor|Speaker) of (.+?) after the next election$/i))) return { phrase: `the race for ${m[2]}'s next ${m[1].toLowerCase()}`, prep: 'in' };
@@ -120,6 +129,18 @@ export function eventPhrase(eventTitle) {
   return { phrase: t.replace(/\.\.\.$/, '').trim(), prep: 'in' };
 }
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+// "Who/Which/Where will ..." -> the infinitive the answer completes: "Where will next Russia x Ukraine peace talks take
+// place this week" -> "to host the next Russia-Ukraine peace talks this week". null when it does not map cleanly.
+export function questionInfinitive(title) {
+  const t = String(title || '').replace(/\?\s*$/, '').replace(/\s+/g, ' ').trim().replace(/\b([A-Z][\w.]*) x ([A-Z])/g, '$1-$2');
+  let m;
+  if ((m = t.match(/^Where will (.+?) (?:take place|be held|be hosted|happen|occur)(?: (this week|this month|today|tomorrow|next week|next month|in \d{4}|by .+|before .+|on .+))?$/i))) {
+    const X = /^(next|first|second|third|final|upcoming)\b/i.test(m[1]) ? `the ${m[1]}` : m[1];
+    return `to host ${X}${m[2] ? ' ' + m[2] : ''}`;
+  }
+  if ((m = t.match(/^(?:Who|Which [a-z]+(?: [a-z]+)?|What [a-z]+(?: [a-z]+)?) will (?!the\b|a\b|an\b)([a-z]+) (.+)$/i))) return `to ${m[1].toLowerCase()} ${m[2]}`;
+  return null;
+}
 
 // ---------- question -> clause ----------
 const VERBS = new Set(('win lose be confirm increase decrease cut raise hike pass sign announce approve reach hit hold leave resign remain ' +
@@ -170,6 +191,7 @@ const PRE = [
   // the ... general elections for Maine US Senate and Texas US Senate?" -> "Will the Texas Senate race be closer than Maine's"
   [/^Will (.+?) US (Senate|House|Governor) have the smallest margin of victory in .*? for (.+?) US \2 and (.+?) US \2$/i,
     (_, a, office, x, y) => `Will the ${a} ${office} race be closer than ${a === x ? y : x}'s`],
+  [/\bat market close on IPO day\b/gi, 'at the close of its first trading day'],
   [/^Will (.+?) IPO\b/, 'Will $1 go public'],
   // central banks take "the" ("Bank of Mexico decreases ..." -> "the Bank of Mexico cuts ...")
   [/^(Will )?(Bank of [A-Z]|Reserve Bank of|European Central Bank|Federal Reserve\b|People's Bank of|Swiss National Bank|National Bank of)/, (_, w, b) => `${w || ''}the ${b}`],
@@ -226,7 +248,7 @@ export function questionToClause(title) {
   if (!m) {
     // statement title with a present-tense verb: "Billionaire wealth tax passes in California election 2026?"
     if (!/\?\s*$/.test(String(title || ''))) return null;
-    const pp = t.match(/^([A-Z][^?]*?) (?:([a-z]+ly) )?(released|closed|reopened|confirmed|approved|announced|passed|signed|launched|named|fired|arrested|indicted|charged|convicted|sentenced|pardoned|extradited|formed|elected|nominated|banned|delisted|acquired|cancel(?:l)?ed|delayed|impeached|removed|replaced) ((?:by|before|on|in|at|as|after|this|next)\b.*)$/);
+    const pp = t.match(/^([A-Z][^?]*?) (?:([a-z]+ly) )?(released|filed|closed|reopened|confirmed|approved|announced|passed|signed|launched|named|fired|arrested|indicted|charged|convicted|sentenced|pardoned|extradited|formed|elected|nominated|banned|delisted|acquired|cancel(?:l)?ed|delayed|impeached|removed|replaced) ((?:by|before|on|in|at|as|after|this|next)\b.*)$/);
     if (pp && !/\.\.\.$/.test(t)) {
       const subj = pp[1].replace(/^(Next|First|New) /, (w) => `the ${w.trim().toLowerCase()} `);
       return `${subj} ${isPluralSubject(pp[1].split(/\s+/)) ? 'are' : 'is'} ${pp[2] ? pp[2] + ' ' : ''}${pp[3]} ${pp[4]}`;
@@ -274,6 +296,7 @@ const YEAR = String(new Date().getUTCFullYear());
 const NUMW = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 function tighten(clause) {
   return clause
+    .replace(/\b([A-Z][a-zA-Z.]+) x ([A-Z][a-zA-Z.]+)\b/g, '$1-$2')
     // "the Alaska, Iowa, Kansas, Maine, Michigan, Ohio, and Texas Senate seats" -> "all seven key Senate seats"
     .replace(/\bthe ((?:[A-Z][a-z]+(?: [A-Z][a-z]+)?, ){3,}(?:and )?[A-Z][a-z]+(?: [A-Z][a-z]+)?) (Senate|House|governor)(\s+(?:seats|races))\b/g,
       (_, list, office, noun) => `all ${NUMW[list.split(/,\s*(?:and\s+)?/).length] || list.split(',').length} key ${office}${noun}`)
@@ -288,6 +311,7 @@ function tighten(clause) {
     .replace(/\b(Senate|House|governor|mayoral) election\b/g, '$1 race')
     .replace(/\bgubernatorial (election|race)\b/g, 'governor race')
     .replace(/ (Above|Below|At least|More than|Less than) (?=[\d$])/g, (w) => w.toLowerCase())
+    .replace(/(seat count .*?) in the US (?:House|Senate) elections$/, '$1')
     .replace(/\bmidterm elections\b/g, 'midterms')
     .replace(/\binterest rates\b/gi, 'rates')
     .replace(/\bafter the (\w+) \d{4} meeting\b/gi, 'in $1')
@@ -319,6 +343,7 @@ const MONTHS_RE = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\.?
 const REL_NORM = { over: 'above', 'greater than': 'above', 'higher than': 'above', under: 'below', 'lower than': 'below' };
 // Kalshi's long nouns -> what a newsreader would say. Meaning is never changed.
 const NOUN_FIX = [
+  [/^number of (?:US |U\.S\. )?(House|Senate) seats won by (Democratic|Republican) (?:Party )?candidates$/i, (_, o, p) => `${/^d/i.test(p) ? 'Democrats' : 'Republicans'}' ${o} seat count`],
   [/^average (?:US |national )?gas prices?$/i, 'National gas price'],
   [/^(?:average |national )?diesel prices?$/i, 'National diesel price'],
   [/^WTI crude oil settlement price$/i, 'WTI oil'],
@@ -398,6 +423,7 @@ function whenOf(m, tail) {
 const MONTH_FULL = { jan: 'January', feb: 'February', mar: 'March', apr: 'April', may: 'May', jun: 'June', jul: 'July', aug: 'August', sep: 'September', oct: 'October', nov: 'November', dec: 'December' };
 function tidyWhen(t) {
   return tighten(String(t || '')
+    .replace(/^in the (?:US )?(?:House|Senate) elections?$/i, '')
     .replace(new RegExp(`^at the end of (${MONTHS_RE} \\d{1,2})`, 'i'), 'on $1')
     .replace(/\bat \d{1,2}(?::\d\d)?\s*[AP]M(?: [A-Z]{2,4})?\b/gi, '')
     .replace(new RegExp(`\\b(${MONTHS_RE}) 0(\\d)\\b`, 'g'), '$1 $2')
@@ -600,7 +626,7 @@ export function marketLabel(m) {
   const subj = subjectFor(m);
   if (subj) {
     const ev = eventPhrase(m.eventTitle);
-    return ev.quoted ? subj : `${shortOutcome(subj)}, ${ev.phrase.replace(/^the /, '')}`.replace(/^(.)/, (c) => c.toUpperCase());
+    return ev.quoted ? (ev.inf ? `${subj} ${tighten(ev.inf)}` : subj) : `${shortOutcome(subj)}, ${ev.phrase.replace(/^the /, '')}`.replace(/^(.)/, (c) => c.toUpperCase());
   }
   const lp = (!m.outcome || isLadderRung(m)) && ladderParts(m);
   if (lp) return lp.phrase + ':';
@@ -645,8 +671,19 @@ function oddsLine(m, mode, { max = HEADLINE_MAX } = {}) {
   const sc = shortClause(m.title);
   if (subj) {
     const short = shortOutcome(m.outcome).replace(/\s*\([^)]*\)$/, '');
-    const wh = ev.quoted && String(m.eventTitle || '').replace(/:.*$/, '').match(/^Who will (?!the\b|a\b|an\b)([a-z]+) (.+?)\??$/);
-    const evp = ev.quoted ? (wh ? ` to ${wh[1]} ${tighten(stripQ(wh[2]))}` : '') : ` ${ev.prep} ${ev.phrase}`;
+    const evp = ev.quoted ? '' : ` ${ev.prep} ${ev.phrase}`;
+    // "Where will the next talks take place?" -> "UAE's odds to host the next Russia-Ukraine peace talks jump to 94%"
+    const inf = ev.inf && tighten(ev.inf);
+    const infLine = () => {
+      if (moved) {
+        const vp = moveVerb(dd, true, seed);
+        return pickShortest([`${possessive(subj)} odds ${inf} ${vp} to ${p}${whenMoved}`, `${p} chance ${subj} ${inf}, ${chg}`, `${subj} ${inf}: ${p}, ${chg}`], max);
+      }
+      const hold = seed % 3 === 0 ? 'steady at' : 'holds at';
+      const tail = weekMove ? `, ${chg}` : '';
+      return pickShortest([`${subj} ${hold} ${withArticle(p)} chance ${inf}${tail}`, `${subj} ${inf}: ${p}${tail}`, `${subj} ${inf}: ${p}`], max);
+    };
+    if (inf && /^Where\b/i.test(String(m.eventTitle || ''))) return infLine();
     // "Who will announce a presidential run?" -> "Chance Ron DeSantis announces presidential run before 2027"
     const last = short.split(/\s+/).pop();
     if (ev.quoted && sc && sc.includes(last)) {
@@ -655,9 +692,11 @@ function oddsLine(m, mode, { max = HEADLINE_MAX } = {}) {
         ? [`Chance ${c}: ${p}, ${chg}`, `${p} chance ${c}, ${chg}`, `Chance ${c}: ${p}`]
         : [`${p} chance ${c}`, `Chance ${c}: ${p}`], max);
     }
+    if (inf) return infLine();
     if (moved || weekMove) {
       const v = moveVerb(dd, false, seed), vp = moveVerb(dd, true, seed);
-      const when = moved ? whenMoved : ' this week';
+      // "this week" belongs to the move ("up 24 points this week"), never glued onto the subject or race
+      const when = moved ? whenMoved : `, ${chg}`;
       const a = seed % 2
         ? [`${possessive(subj)} odds ${vp} to ${p}${evp}${when}`, `${subj} ${v} to ${p}${evp}${when}`]
         : [`${subj} ${v} to ${p}${evp}${when}`, `${possessive(subj)} odds ${vp} to ${p}${evp}${when}`];
@@ -694,11 +733,12 @@ function oddsLine(m, mode, { max = HEADLINE_MAX } = {}) {
     const cs = [c2, sc].filter((x, i, arr) => x && arr.indexOf(x) === i);
     if (moved || weekMove) {
       const v = moveVerb(dd, false, seed), vp = moveVerb(dd, true, seed);
-      const when = moved ? whenMoved : ' this week';
-      // "Odds <clause> jump to 63%" only reads cleanly when the clause is short
+      const when = moved ? whenMoved : '';
+      // "Odds <clause> jump to 63%" only reads cleanly when the clause is short (and, for a week move, the move phrase
+      // already says "this week", so that form is skipped)
       const forms = (c) => [
         `Chance ${c}: ${p}, ${chg}`,
-        c.length <= 48 && `Odds ${c} ${vp} to ${p}${when}`,
+        c.length <= 48 && (moved || !weekMove) && `Odds ${c} ${vp} to ${p}${when}`,
         `${p} chance ${c}, ${chg}`,
       ].filter(Boolean);
       void v;
@@ -747,6 +787,7 @@ const SHORT_SHAPES = [
   [new RegExp(String.raw`^Chance (?:of )?(.+?): ${NUM}${MOVE_TAIL}$`), (m) => m[1]],
   [new RegExp(String.raw`^(.+?): ${NUM} chance${MOVE_TAIL}$`), (m) => m[1]],
   [new RegExp(String.raw`^Odds (.+?) ${VERB} (?:to )?${NUM}$`), (m) => m[1]],
+  [new RegExp(String.raw`^(.+?)'s? odds (to .+?) ${VERB} to ${NUM}$`), (m) => `${m[1]} ${m[2]}`],
   [new RegExp(String.raw`^(.+?)(?:'s?)? odds ${VERB} (?:to )?${NUM} (in|for|to) (.+)$`), (m) => `${m[1]} ${m[2]} ${m[3]}`],
   [new RegExp(String.raw`^(.+?) ${VERB} (?:to )?(?:a )?${NUM}(?: chance)? (in|for|to) (.+)$`), (m) => `${m[1]} ${m[2]} ${m[3]}`],
   [new RegExp(String.raw`^(.+?) ${VERB} (?:to )?(?:a )?${NUM}(?: chance)?$`), (m) => m[1]],
@@ -771,6 +812,7 @@ const TIGHTEN = [
 export function shortHeadline(headline) {
   let t = String(headline || '').trim();
   if (!t) return t;
+  t = t.replace(/,\s*(?:up|down) \d+ points? (?:today|this week|in the last hour)$/, '');   // the card shows the move
   t = t.replace(/(?<!\bpoints?) in the last hour$/, '');   // "X jumps to 45% in the Senate race in the last hour"
   for (const [re, f] of SHORT_SHAPES) { const m = t.match(re); if (m) { t = f(m); break; } }
   for (const [re, rep] of TIGHTEN) t = t.replace(re, rep);
