@@ -4,7 +4,7 @@
 // each bar grows to yesterday, pauses, then runs to today; the biggest mover gets a frame, a BIGGEST MOVE tag, a ring, and the camera pulls in.
 // Input: story.markets = state.sotd.markets [{ label, yesPrice, change1d, source }], story.eventTitle. Missing fields never throw.
 import * as THREE from '../../../vendor/three/three.module.js';
-import { Holo, COL, clamp01, ease, boxAt } from '../holo.js';
+import { Holo, COL, clamp01, ease, pctSeq, boxAt } from '../holo.js';
 import { lineSeg } from './parts.js';
 
 const MAX = 8;
@@ -103,6 +103,7 @@ export function createSotd(ctx, story) {
     const pts = Math.round(Math.abs(d) * 100);
     const chip = lab(pts ? `${d > 0 ? '▲' : '▼'} ${pts} PTS` : 'FLAT', { w: 400, h: 192, height: 2.0, font: '800 84px Rajdhani', color: colHex, glow: colHex, align: 'left',
       sub: `WAS ${Math.round(prev * 100)}%`, subColor: '#dfe8ff', subFont: '700 76px Rajdhani', mainY: 0.32, subY: 0.78 }, CHIP_X, y, 0.5);
+    pct.warm([...pctSeq(0, prev), ...pctSeq(prev, value)]);   // prewarm: 0 -> yesterday -> today
     rows.push({ g, bar, dbar, tick, nm, pct, chip, value, prev, delay: 0.45 + i * 0.1, lead, y, shown: -1, done: false });
   });
 

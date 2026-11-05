@@ -5,7 +5,7 @@
 import * as THREE from '../../../vendor/three/three.module.js';
 import * as AH from '../holo.js'; // alias imports for the alert dial below (kept separate from the plain-dial imports)
 import * as AP from './parts.js';
-import { Holo, COL, clamp01, ease, pctText } from '../holo.js';
+import { Holo, COL, clamp01, ease, pctText, pctSeq } from '../holo.js';
 import { arcMesh, floorRing, lineSeg } from './parts.js';
 
 const D2R = Math.PI / 180;
@@ -238,6 +238,7 @@ export function createDial(ctx, story, opts = {}) {
   // ---- animation ----
   let shownTxt = '', popped = false, popT = -1, lastSetT = -1;
   const counting = !!(isAlert || sw);
+  if (counting) big.warm(pctSeq(prev, value));   // prewarm: every value the readout counts through
   holo.tick = function (dt, t) {
     this.baseTick(dt);
     const ts = this.tShow;

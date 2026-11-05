@@ -33,6 +33,7 @@ function syncRect() {
 }
 const scene = {
   showStory(story, segment, force = false) { lastStory = [story, segment]; if (flashLock && !force) return; if (sceneImpl) { syncRect(); safe('scene.showStory', () => sceneImpl.showStory?.(story, segment)); } },
+  prepareStory(story, segment) { if (sceneImpl && !flashLock) safe('scene.prepareStory', () => sceneImpl.prepareStory?.(story, segment)); },
   showAlert(a) { if (sceneImpl) safe('scene.showAlert', () => sceneImpl.showAlert?.(a)); },
   clearAlert() { if (sceneImpl) safe('scene.clearAlert', () => sceneImpl.clearAlert?.()); },
   setTicker(ms) { lastTicker = ms; if (sceneImpl) safe('scene.setTicker', () => sceneImpl.setTicker?.(ms)); },

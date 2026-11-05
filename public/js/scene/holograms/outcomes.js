@@ -3,7 +3,7 @@
 // green/red change chip on every bar, and a white tick at yesterday's level. The build-in plays the story: bars grow to yesterday's
 // value, hold, then climb or fall to today's while the % counts and the chips pop in. No hemicycle of "seats" (user feedback 2026-11-04).
 import * as THREE from '../../../vendor/three/three.module.js';
-import { Holo, COL, clamp01, ease, pctText, boxAt } from '../holo.js';
+import { Holo, COL, clamp01, ease, pctText, pctSeq, boxAt } from '../holo.js';
 import { lineSeg } from './parts.js';
 import { OUTCOME_COLORS } from '../../util.js';
 
@@ -130,6 +130,7 @@ export function createOutcomes(ctx, story, opts = {}) {
       ? { w: 384, h: 128, height: 1.7, font: '900 104px Orbitron', color: '#ffffff', glow: it.hex, align: 'left' }
       : { w: 512, h: 192, height: 2.2, font: '900 130px Orbitron', color: '#ffffff', glow: it.hex });
     pct.sprite.position.z = 0.7;
+    pct.warm(pctSeq(it.prev, it.p));   // prewarm: yesterday -> now
     let chip = null;
     if (it.moved && (horiz || it !== feat)) {   // a vertical feature bar carries its change in the bracket label instead
       const up = it.d > 0, txt = `${up ? '▲' : '▼'} ${Math.abs(Math.round(it.d * 100))} ${Math.abs(Math.round(it.d * 100)) === 1 ? 'PT' : 'PTS'}`;

@@ -1,7 +1,7 @@
 // PNN 3D stage. createScene(canvas) -> { showStory(story, segmentName: 'top'|'focus'|'movers'|'week'|'sotd'), showAlert(alert), clearAlert(), setTicker(markets), resize(w, h), dispose() }
 // The scene owns the WebGL canvas only. Text lives in the 2D overlays; holograms carry just outcome names and percentages.
 import * as THREE from '../../vendor/three/three.module.js';
-import { TIME, COL, palette, ease, damp, attachLabelRenderer, pumpLabels, labelsFrameStart, labelsCommit, holdLabels } from './holo.js';
+import { TIME, COL, palette, ease, damp, attachLabelRenderer, pumpLabels, labelsFrameStart, labelsCommit, holdLabels, prewarmLabels } from './holo.js';
 import { createWorld } from './world.js';
 import { createPost } from './post.js';
 import { createFx } from './fx.js';
@@ -280,7 +280,7 @@ export function createScene(canvas, opts = {}) {
       dispose() {},
     };
   }
-  function build(story, seg) {
+  function build(story, seg, into = scene) {
     let vis = seg === 'movers' ? 'movers' : seg === 'week' ? 'week' : seg === 'sotd' ? 'sotd' : (story?.visual?.type || 'dial');
     // a swing story with real history replays its price path instead of a plain dial (outcomes keep the sweeping podium)
     const replayable = !!story?.swing && Array.isArray(story?.history) && story.history.length >= 8;
@@ -289,7 +289,7 @@ export function createScene(canvas, opts = {}) {
     const seed = pal.seed;
     const station = vis === 'globe' ? GLOBE_STATION : seedStation(seed);
     let holoRef = null;
-    const ctx = { scene, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed, rnd: pal.rnd, globe, hero };
+    const ctx = { scene: into, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed, rnd: pal.rnd, globe, hero };
     const o = { seg };
     const dialOrReplay = () => (replayable ? createRibbon(ctx, story, o) : createDial(ctx, story, o));
     let holo;
@@ -427,6 +427,10 @@ export function createScene(canvas, opts = {}) {
     perf.ev('scene.warmup', api.timing.warmupMs, 'holograms');
   }
 
+  const segOf = (name) => (['top', 'focus', 'movers', 'week', 'sotd'].includes(name) ? name : 'top');
+  const keyOf = (story, seg) => (seg === 'sotd' ? `sotd:${story.id ?? ''}` : `${seg === 'movers' ? 'movers' : story?.visual?.type}:${story?.id ?? ''}:${seg === 'week' ? 'week' : seg === 'top' ? 'top' : 'card'}`);
+  const prepScene = new THREE.Group();   // never rendered: prewarm builds only collect label contents
+  let prepKey = null;
   const api = {
     fps: 0, envQ: 2, timing: { warmupMs: 0, envWarmMs: 0, frames: [] },
     forceBeat(type) { return world.env.forceBeat(type); },
@@ -435,14 +439,14 @@ export function createScene(canvas, opts = {}) {
     envEvent(type, data) { try { world.event(type, data); if (type === 'flash') hero.emit('flash', 1); } catch (e) { reportErr('envEvent', e); } },
     showStory(story, segmentName = 'top') {
       try {
-        const seg = ['top', 'focus', 'movers', 'week', 'sotd'].includes(segmentName) ? segmentName : 'top';
+        const seg = segOf(segmentName);
         if (seg === 'sotd' && !(story?.markets?.length)) return;
         last = { story, seg };
         if (alertActive) return;
-        const key = seg === 'sotd' ? `sotd:${story.id ?? ''}` : `${seg === 'movers' ? 'movers' : story?.visual?.type}:${story?.id ?? ''}:${seg === 'week' ? 'week' : seg === 'top' ? 'top' : 'card'}`;
+        const key = keyOf(story, seg);
         if (key === curKey && current && !current.dead) return;
         if (!story && seg !== 'movers') return;
-        curKey = key;
+        curKey = key; prepKey = null;
         const b0 = performance.now();
         const built = build(story, seg);
         const b1 = performance.now();
@@ -450,6 +454,25 @@ export function createScene(canvas, opts = {}) {
         perf.ev('widget.build', b1 - b0, built.vis);
         perf.ev('widget.swap', performance.now() - b1, built.vis);
       } catch (e) { reportErr('showStory', e); }
+    },
+    /** The rundown's next card, a few seconds before it airs: build its widget off-scene only to collect its label
+     *  contents (and count-up values), which the label cache draws + uploads in spare hold frames (holo.js prewarm). */
+    prepareStory(story, segmentName = 'top') {
+      try {
+        const seg = segOf(segmentName);
+        if ((seg === 'sotd' && !(story?.markets?.length)) || (!story && seg !== 'movers')) return;
+        const key = keyOf(story, seg);
+        if (key === curKey || key === prepKey) return;
+        prepKey = key;
+        // right after the next frame is submitted (rAF, then a task), so the off-scene build never lands mid-frame
+        requestAnimationFrame(() => setTimeout(() => {
+          if (!running || alertActive || prepKey !== key || key === curKey) return;
+          const p0 = performance.now();
+          let vis = '';
+          const n = prewarmLabels(() => { const b = build(story, seg, prepScene); vis = b.vis; return () => { b.holo?.dispose?.(); prepScene.clear(); }; });
+          perf.ev('widget.prewarm', performance.now() - p0, `${vis} ${n}`);
+        }, 0));
+      } catch (e) { reportErr('prepareStory', e); }
     },
     showAlert(alert) {
       if (!alert) return;

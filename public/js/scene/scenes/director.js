@@ -440,8 +440,11 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     const tr = post?.getTransRT?.();
     if (trans && tr) {
       sh.res.value.copy(halfRes);
-      renderLayer(trans.A); r.setRenderTarget(tr.a); r.clear(); rInst(trans.A, trans.A.stage, camera);
-      renderLayer(trans.B); r.setRenderTarget(tr.b); r.clear(); rInst(trans.B, trans.B.stage, camera);
+      // the wormhole samples only A before its midpoint and only B after it (FRAG.wormhole: inA = uP < .5), so the
+      // other scene's render is skipped: half the scene cost for its whole 2.8 s (iPad: 9.2% long frames), same pixels
+      const wh = trans.type === 'wormhole', useA = !wh || T.U.uP.value < 0.5, useB = !wh || !useA;
+      if (useA) { renderLayer(trans.A); r.setRenderTarget(tr.a); r.clear(); rInst(trans.A, trans.A.stage, camera); }
+      if (useB) { renderLayer(trans.B); r.setRenderTarget(tr.b); r.clear(); rInst(trans.B, trans.B.stage, camera); }
       sh.res.value.copy(fullRes);
       T.U.tA.value = tr.a.texture; T.U.tB.value = tr.b.texture;
       r.setRenderTarget(readBuffer); r.clear();

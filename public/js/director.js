@@ -167,7 +167,8 @@ export function createDirector({ overlay, chyron, scene }) {
     };
   }
 
-  function sceneShow(seg) {
+  /** The scene's (story, segment) for a card: what sceneShow airs and what prepNext prewarms. */
+  function sceneArgs(seg) {
     let story = seg.story, name = seg.id;
     if (seg.id === 'sotd' && seg.sotd) { story = { ...seg.sotd, eventTitle: seg.sotd.title, lead: seg.story?.lead, category: seg.story?.category }; name = 'sotd'; }
     // COUNTDOWN DESK: an orbital clock per scheduled decision (the card's first entry rarely has a board story,
@@ -176,11 +177,25 @@ export function createDirector({ overlay, chyron, scene }) {
       const ms = seg.countdown.slice(0, 3).map((c) => ({ id: c.id, yesPrice: c.yesPrice, closesAt: c.at, label: c.title, outcome: c.label }));
       story = { id: `countdown:${ms.map((m) => m.id).join(',')}`, eventTitle: 'Next big decisions', category: 'economy', lead: ms[0], markets: ms, closesAt: ms[0].closesAt, visual: { type: ms.length > 1 ? 'week' : 'countdown', region: null, theme: 'economy' } };
     }
+    return { story, name, segName: name === 'top' || name === 'sotd' ? name : 'focus' }; // cards: the card's story
+  }
+  function sceneShow(seg) {
+    const { story, name, segName } = sceneArgs(seg);
     const sig = `${name}|${story?.id}`; // price ticks no longer rebuild the hologram (it re-scanned in mid-card)
     if (sig === sceneSig) return;
     sceneSig = sig;
-    const segName = name === 'top' || name === 'sotd' ? name : 'focus'; // cards: the card's story
     if (scene?.showStory && story) { try { scene.showStory(story, segName); } catch (e) { report('scene.showStory', e); } }
+  }
+  // perf round 3: a few seconds before the card changes, let the scene prewarm the next card's hologram labels
+  // (drawn + uploaded in spare hold frames, so the reveal does not stall on canvas rasters). No effect on what airs.
+  const PREP_LEAD_MS = 5000;
+  let prepTimer = 0;
+  function prepNext() {
+    if (!state || paused || held || !scene?.prepareStory) return;
+    const seg = plan[0] && refresh(plan[0]);
+    if (!seg) return;
+    const { story, segName } = sceneArgs(seg);
+    if (story) { try { scene.prepareStory(story, segName); } catch (e) { report('scene.prepareStory', e); } }
   }
 
   // Candidate stories for BIGGEST MOVERS: the board story when the mover is its lead, else a one-market mover story (one per story id).
@@ -391,9 +406,10 @@ export function createDirector({ overlay, chyron, scene }) {
     if (seg.id === 'top') { note(seg.story?.id, 'top'); seg.minis.forEach((x) => note(x.id, 'top-mini')); }
     else if (seg.id === 'sotd') note(seg.story?.id, 'sotd');
     else if (seg.id !== 'countdown' && seg.id !== 'standby') note(seg.story?.id, seg.id);
-    clearTimeout(timer);
+    clearTimeout(timer); clearTimeout(prepTimer);
     if (paused || held) return;
     timer = setTimeout(advance, ms$(ms));
+    prepTimer = setTimeout(prepNext, Math.max(ms$(ms) / 2, ms$(ms) - ms$(PREP_LEAD_MS)));
   }
 
   function advance() {
