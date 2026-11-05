@@ -635,3 +635,22 @@ function localNormalize(evs) {
   }
   return res;
 }
+
+// ---------- time phrases say it once (news gate leftovers 2026-11-05) ----------
+{
+  const { dedupeTimePhrases: dd } = await import('../server/editorial/copy.mjs');
+  eq(dd('Google market share this week above 15.1% this week'), 'Google market share this week above 15.1%', 'dedupe plain repeat');
+  eq(dd('Chance Google share this week above 15.1% this week: 52%, up 6 points this week'), 'Chance Google share above 15.1%: 52%, up 6 points this week', 'dedupe keeps the move phrase');
+  eq(dd('Gas price today: 52%, up 4 points today'), 'Gas price: 52%, up 4 points today', 'dedupe today');
+  eq(dd('Fed holds at 80% chance this week, up 4 points today'), 'Fed holds at 80% chance this week, up 4 points today', 'different phrases untouched');
+  const h = storyHeadline({ kind: 'mover', lead: { id: 'x1', source: 'kalshi', title: 'Will Google market share be above 15.1% this week?', eventTitle: 'Google market share this week', yesPrice: 0.52, change1w: 0.1, change1d: 0, volume24h: 50000 } });
+  eq((h.match(/this week/gi) || []).length <= 1, true, `storyHeadline repeats no time phrase: "${h}"`);
+}
+
+// ---------- moving-first near-duplicates (news gate leftovers 2026-11-05) ----------
+{
+  const { mfSubjectKey } = await import('../server/editorial/rank.mjs');
+  const st = (id, eventTitle) => ({ id, eventTitle, lead: { id, title: eventTitle, tags: [] } });
+  eq(mfSubjectKey(st('a', 'Avengers: Doomsday best opening weekend')), mfSubjectKey(st('b', 'Avengers: Doomsday best opening week')), 'moving-first dup: opening weekend and week share a subject key');
+  eq(mfSubjectKey(st('a', 'Avengers: Doomsday best opening weekend')) === mfSubjectKey(st('c', 'Supergirl best opening weekend')), false, 'moving-first dup: different films differ');
+}

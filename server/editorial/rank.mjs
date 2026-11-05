@@ -685,6 +685,16 @@ export function newsFactor(n) {
 // Exported so the wire, search and flash paths can share it.
 const JUNK_TITLE_RE = /\s[-|–—:·]\s*(home|home ?page|official (web ?)?site|welcome|index)\s*$|^\s*(home|home ?page|calendar|about( us)?|contact( us)?|press releases?|news( releases)?|newsroom|index|search( results)?|log ?in|sign ?in|events?|subscribe|untitled|page not found|404\b.*|access denied)\s*$/i;
 const D4_FALLBACK = /\b(war|wars|warfare|military|missiles?|troops?|airstrikes?|bomb(s|ing|ed)?|attack(s|ed|ing)?|cease-?fire|invasion|kill(s|ed|ing)?|dead(ly)?|dies?|died|deaths?|murder\w*|assassinat\w*|shooting|terror\w*|hostages?|massacre|genocide|fatal\w*|stabb\w*)\b/i;
+// Patterns are compiled once (a global flag would make .test stateful, so it is dropped): headline and moving-first checks
+// ran `new RegExp` per pattern per story per build.
+const reCache = new Map();
+function asRe(p) {
+  let r = reCache.get(p);
+  if (!r) { r = p instanceof RegExp ? new RegExp(p.source, p.flags.replace('g', '')) : new RegExp(p, 'i'); reCache.set(p, r); }
+  return r;
+}
+const benignReCache = new Map();
+const benignRe = (b) => { let r = benignReCache.get(b); if (!r) benignReCache.set(b, (r = new RegExp(b.source || b, 'gi'))); r.lastIndex = 0; return r; };
 const blockedCache = new Map();
 export function headlineBlocked(title, config = {}) {
   const t = String(title || '').replace(/\s+/g, ' ').trim();
@@ -695,9 +705,9 @@ export function headlineBlocked(title, config = {}) {
   const key = `${S ? 'c' : 'd'}|${t}`;
   if (blockedCache.has(key)) return blockedCache.get(key);
   const benign = S?.headlineBenign;
-  const tt = benign ? t.replace(new RegExp(benign.source || benign, 'gi'), ' ') : t;
+  const tt = benign ? t.replace(benignRe(benign), ' ') : t;
   const pats = S ? [...(S.excludePatterns || []), ...(S.headlinePatterns || [])] : [D4_FALLBACK];
-  const hit = pats.some((p) => (p instanceof RegExp ? new RegExp(p.source, p.flags.replace('g', '')) : new RegExp(p, 'i')).test(tt));
+  const hit = pats.some((p) => asRe(p).test(tt));
   const r = hit ? 'sensitive' : null;
   if (blockedCache.size > 20000) blockedCache.clear();
   blockedCache.set(key, r);
@@ -752,9 +762,21 @@ export function movingFirstOf(s, now, config = {}) {
   // conflict (D4 belt and braces): no headline frames these, so they never air without one
   const text = [s.eventTitle, lead.title, lead.eventTitle, lead.outcome, ...(s.markets || []).flatMap((m) => [m.title, m.outcome])].filter(Boolean).join(' · ');
   const pats = [...(MF.excludePatterns?.length ? MF.excludePatterns : [MF_EXCLUDE_DEFAULT]), ...(config.sensitive?.excludePatterns || [])];
-  if (pats.some((p) => (p instanceof RegExp ? new RegExp(p.source, p.flags.replace('g', '')) : new RegExp(p, 'i')).test(text))) return null;
+  if (pats.some((p) => asRe(p).test(text))) return null;
   const strong = abs(move) >= (MF.strongPoints ?? 0.08) && evVol >= (MF.strongVolume ?? 25_000);
   return { points: Math.round(move * 1000) / 1000, volume24h: Math.round(evVol), strong, since };
+}
+
+// One moving-first story per family / event subject: "Avengers: Doomsday opening weekend" and "...opening week" are the same
+// story. The subject is the content words of the event title (time and measure words dropped), so only titles that differ by those words match.
+const MF_SUBJ_STOP = new Set(('will the a an of in on at to for by be is are and or who what when which how much many new best top most first next last ' +
+  'this week weekend month year day today tonight opening open box office gross total over under above below before after than more less ' +
+  'win wins winner price market odds record highest lowest number').split(' '));
+export function mfSubjectKey(s) {
+  const f = familyOf(s);
+  if (f && !f.startsWith('event:')) return f;
+  const w = String(s.eventTitle || s.lead?.title || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((x) => x && !MF_SUBJ_STOP.has(x));
+  return w.length >= 2 ? `subj:${[...new Set(w)].sort().join('|')}` : `event:${s.id}`;
 }
 
 const NEWS_EVAL_MAX = 1500;   // lower-ranked stories never reach air; skip their lookups
@@ -807,6 +829,16 @@ function newsGate(live, enrich, nowMs, deadIds, dropped, config = {}) {
   // re-rank by the news-weighted score; ties keep the diversified order
   const v = (x) => (x.s._v ?? x.s.score) * x.s.newsScore;   // the diversified (family-damped) value, news-weighted
   ok.sort((a, b) => v(b) - v(a) || a.i - b.i);
+  // at most one moving-first story per family / event subject (the best-ranked stays)
+  let mfDup = 0;
+  const mfSeen = new Set();
+  for (let k = 0; k < ok.length; k++) {
+    const s = ok[k].s;
+    if (!isMF(s)) continue;
+    const key = mfSubjectKey(s);
+    if (mfSeen.has(key)) { deadIds.add(s.id); ok.splice(k--, 1); mfDup++; mfCount--; } else mfSeen.add(key);
+  }
+  if (mfDup) dropped['news:moving-first-dup'] = mfDup;
   return {
     ranked: ok.map((x) => x.s), pending,
     news: { gated: true, ms: Date.now() - t0, withNews: ok.length - mfCount, pending: pending.length, sgDropped: sgDrop, sgScoreDropped: sgScore, movingFirst: mfCount, headlinesBlocked: blocked },

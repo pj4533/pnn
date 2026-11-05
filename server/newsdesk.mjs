@@ -23,7 +23,7 @@ export const NEWS_GATED = new Set(['sports', 'games', 'esports']);
 export function createNewsdesk({ getArchive = () => [], getMarkets = () => [] } = {}) {
   const cache = new Map();     // storyId -> {key, archive, res}
   const search = new Map();    // storyId -> {at, items, found}
-  const stats = { lookups: 0, computed: 0, searchSet: 0, searchFound: 0 };
+  const stats = { lookups: 0, computed: 0, searchSet: 0, searchFound: 0, full: 0, incremental: 0 };
 
   const outletOf = (n) => String(n.outlet || n.source || '').replace(/ via .*$/, '').trim();
   // r: the matcher result ({item, score, tier, about}); tier/about default to 'exact'/null (missing on old state shapes)
@@ -38,25 +38,78 @@ export function createNewsdesk({ getArchive = () => [], getMarkets = () => [] } 
   };
   // every attached headline (wire, search, saved search hits, flash) passes the D4 sensitive patterns and the junk / retail
   // outlet drops, even if it was saved before those filters existed
-  const clean = (n) => !badNewsSource(n);
+  const cleanMemo = new WeakMap();   // archive item -> verdict (the sensitive / junk / retail patterns are a dozen regexes per headline)
+  const clean = (n) => { let v = cleanMemo.get(n); if (v === undefined) cleanMemo.set(n, (v = !badNewsSource(n))); return v; };
+  const cutMemo = new WeakMap();
+  const cut = (it) => { let v = cutMemo.get(it); if (v === undefined) cutMemo.set(it, (v = looksCut(it.title))); return v; };
   const marketKey = (s) => [s.lead?.id, ...(s.markets || []).map((m) => m.id)].join(',');
 
-  function compute(story, archive, now) {
+  // Wire matching is incremental per story (build.newsMs, news gate leftovers 2026-11-05): the archive is a new array on
+  // every revision but its items are the same objects, so a story re-scores only the items that arrived since its last
+  // match and keeps its earlier results (those still in the archive). A full re-match runs when the story's markets change
+  // and every 30 minutes (corroboration bonuses and the market index drift slowly). A delta index is shared by every story.
+  const archSets = new WeakMap();      // archive array -> Set of its items
+  const deltas = new WeakMap();        // previous archive -> {archive, items, index}
+  const setOf = (a) => { let x = archSets.get(a); if (!x) archSets.set(a, (x = new Set(a))); return x; };
+  function deltaFor(prevArchive, archive) {
+    const d = deltas.get(prevArchive);
+    if (d && d.archive === archive) return d;
+    const had = setOf(prevArchive);
+    const items = archive.filter((x) => !had.has(x));
+    const nd = { archive, items, index: items.length ? buildHeadlineIndex(items) : null };
+    deltas.set(prevArchive, nd);
+    return nd;
+  }
+  const RAW_MAX = 24;
+  function wireMatches(story, archive, now, gated, prev) {
+    const opts = { now, max: RAW_MAX, entity: gated, maxAgeMs: 72 * H };
+    const mk = getMarkets() || [];
+    const key = marketKey(story);
+    let raw;
+    if (!prev || prev.mkey !== key || !prev.raw || now - prev.fullAt > 30 * 60_000) {
+      raw = matchStoryNews(story, buildHeadlineIndex(archive), mk, opts);
+      stats.full++;
+      wireFullAt = now;
+    } else {
+      const cur = setOf(archive);
+      const d = deltaFor(prev.archive, archive);
+      const keep = prev.raw.filter((r) => cur.has(r.item) && now - (Date.parse(r.item.publishedAt) || 0) <= 72 * H);
+      const add = d.index ? matchStoryNews(story, d.index, mk, opts) : [];
+      stats.incremental++;
+      const ts = (x) => Date.parse(x.item.publishedAt) || 0;
+      const k = (x) => ts(x) / H + x.score * 0.5 - (x.tier === 'event' ? 6 : 0);
+      const seen = new Set();
+      raw = [...keep, ...add].sort((a, b) => k(b) - k(a)).filter((x) => { const t = String(x.item.title).toLowerCase(); if (seen.has(t)) return false; seen.add(t); return true; }).slice(0, RAW_MAX);
+      wireFullAt = prev.fullAt;
+    }
+    wireRaw = raw;
+    return raw.slice(0, 8);
+  }
+  let wireRaw = null, wireFullAt = 0, srOut = null;
+
+  function compute(story, archive, now, prev = null) {
     const gated = NEWS_GATED.has(story.category);
     let wire = [];
     try {
-      wire = matchStoryNews(story, buildHeadlineIndex(archive), getMarkets() || [], { now, max: 8, entity: gated, maxAgeMs: 72 * H })
-        .filter((r) => !looksCut(r.item.title) && clean(r.item))
+      wire = wireMatches(story, archive, now, gated, prev)
+        .filter((r) => !cut(r.item) && clean(r.item))
         .map((r) => toNews(r.item, 'wire', r.score, r, now));
     } catch { wire = []; }
-    let sr = gated ? [] : (search.get(story.id)?.items || []).filter((n) => !looksCut(n.title) && !nonLatin(n.title) && !nonLatin(n.source) && clean(n) && now - (Date.parse(n.publishedAt) || 0) <= 7 * 24 * H);
-    // re-check saved search hits with the current matcher (data/news-search.json outlives matcher fixes)
-    if (sr.length) {
-      try {
-        const ok = new Map(matchStoryNews(story, buildHeadlineIndex(sr), getMarkets() || [], { now, max: 10, maxAgeMs: 7 * 24 * H }).map((r) => [r.item, r]));
-        sr = sr.filter((n) => ok.has(n)).map((n) => toNews(n, 'search', ok.get(n).score, ok.get(n), now));
-      } catch { /* keep */ }
+    // saved search hits only change with the search entry (the cache key carries its time): reuse the last verdict
+    const srKey = `${marketKey(story)}|${search.get(story.id)?.at || 0}`;
+    let sr;
+    if (prev?.srKey === srKey && prev.sr) sr = prev.sr;
+    else {
+      sr = gated ? [] : (search.get(story.id)?.items || []).filter((n) => !looksCut(n.title) && !nonLatin(n.title) && !nonLatin(n.source) && clean(n) && now - (Date.parse(n.publishedAt) || 0) <= 7 * 24 * H);
+      // re-check saved search hits with the current matcher (data/news-search.json outlives matcher fixes)
+      if (sr.length) {
+        try {
+          const ok = new Map(matchStoryNews(story, buildHeadlineIndex(sr), getMarkets() || [], { now, max: 10, maxAgeMs: 7 * 24 * H }).map((r) => [r.item, r]));
+          sr = sr.filter((n) => ok.has(n)).map((n) => toNews(n, 'search', ok.get(n).score, ok.get(n), now));
+        } catch { /* keep */ }
+      }
     }
+    srOut = { srKey, sr };
     const ageH = (n) => (now - (Date.parse(n.publishedAt) || 0)) / H;
     const all = [...wire, ...sr];
     const seen = new Set();
@@ -84,8 +137,10 @@ export function createNewsdesk({ getArchive = () => [], getMarkets = () => [] } 
     const hit = cache.get(story.id);
     if (hit && hit.archive === archive && hit.key === key) return hit.res;
     stats.computed++;
-    const res = compute(story, archive, now);
-    cache.set(story.id, { key, archive, res });
+    wireRaw = null; wireFullAt = 0; srOut = null;
+    const res = compute(story, archive, now, hit?.raw ? { archive: hit.archive, raw: hit.raw, mkey: hit.mkey, fullAt: hit.fullAt, srKey: hit.srKey, sr: hit.sr } : null);
+    const fullAt = wireFullAt || now;
+    cache.set(story.id, { key, archive, res, raw: wireRaw, mkey: marketKey(story), fullAt, srKey: srOut?.srKey, sr: srOut?.sr });
     if (cache.size > 6000) for (const k of [...cache.keys()].slice(0, 1000)) cache.delete(k);
     return res;
   }

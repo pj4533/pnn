@@ -73,7 +73,7 @@ export const TOPICS = [
   T('gold', /\bgold\b/i, /\bgold\b/i, ['gold', 'ounce'], 'gold price', 5),
   T('putin', /\b(Putin|Kremlin)\b/, /\bputin\b/i, ['putin', 'kremlin'], 'putin', 6),
   T('scotus', /\b(Supreme Court|SCOTUS|Chief Justice|Justices?\s+(Roberts|Thomas|Alito|Sotomayor|Kagan|Gorsuch|Kavanaugh|Barrett|Jackson))\b/i,
-    /\b(supreme court|scotus|justice|roberts|alito|sotomayor|kagan|gorsuch|kavanaugh|barrett)\b/i,
+    /\b(supreme court|scotus|(?<!department of )justice(?! (dept|department)\b)|roberts|alito|sotomayor|kagan|gorsuch|kavanaugh|barrett)\b/i,
     ['scotus', 'justice', 'chief', 'roberts', 'thomas', 'alito', 'sotomayor', 'kagan', 'gorsuch', 'kavanaugh', 'barrett', 'court'], 'supreme court', 6),
   T('openai', /\b(OpenAI|ChatGPT|GPT-?\d[\w.]*|Sam Altman|Altman)\b/i, /\b(openai|chatgpt|gpt-?\d|altman)\b/i, ['openai', 'chatgpt', 'altman', 'sam', 'gpt'], 'openai', 7),
   T('google-ai', /\b(Gemini|DeepMind|Google|Alphabet)\b/, /\b(google|gemini|alphabet|deepmind)\b/i, ['google', 'gemini', 'alphabet', 'deepmind'], 'google gemini', 5),
@@ -623,12 +623,25 @@ const QTYPES = [
   // not a history piece ("LIV Golf timeline: From the league's beginning to where things now stand")
   { key: 'shutdown', q: /\b(shut ?downs?|shut(s|ting)? down|fold(s|ing)?|cease(s)? operations?|wind(s|ing)? down|dissol\w+|go(es)? out of business|liquidat\w+)\b/i,
     h: /\b(shut ?downs?|shut(s|ting)? down|shuttered|end of|the end|ends?|ending|ended|fold(s|ed|ing)?|collaps\w*|demise|future|dissol\w+|wind(s|ing)? down|clos(e|es|ed|ing|ure)|cease\w*|pull(s|ed)? (the )?plug|funding|bankrupt\w*|insolven\w*|liquidat\w+|merg(e|er|es|ed|ing)|merger|takeover|cancel\w*|survive|survival|doomed|crisis|uncertain\w*|in doubt|exit|quit|disband\w*|scrap\w*|axed?|PIF|public investment fund)\b/i },
+  // a new justice: "Justice Dept. Steps Up Criminal Investigation of Supreme Court Abortion Leak" is not about a vacancy or a
+  // confirmation. The headline needs nomination / confirmation / retirement / Senate context.
+  { key: 'new-justice', q: /\b(next|new) (supreme court )?justice\b|\bjustice\b[^?]*\b(confirmed|nominated)\b|\bconfirm\w*[^?]*\bsupreme court\b|\bsupreme court (nominee|vacancy|seat)\b/i,
+    h: /\b(confirm\w*|nominat\w*|nominees?|vacanc\w*|retire\w*|step(s|ping)? down|steps? aside|replace\w*|successors?|shortlist\w*|short list|senate|judiciary committee|hearings?|seat|bench|appoint\w*|pick|picks|candidates?|contenders?|frontrunners?|front-runners?)\b/i },
+  // a justice's own departure ("Alito announces retirement", "Thomas departure as Supreme Court justice"): the headline must be
+  // about the departure or the vacancy it creates, not the Justice Department's leak probe
+  { key: 'justice-departure', q: /(?=.*\b(supreme court|justices?)\b)(?=.*\b(retire\w*|departure|depart|resign\w*|step(s|ping)? down|leave the (supreme )?court)\b)/i,
+    h: /\b(retire\w*|depart\w*|resign\w*|step(s|ping)? (down|aside)|leaves? the (supreme )?court|vacanc\w*|replace\w*|successors?|nominat\w*|nominees?|shortlist\w*|senate|bench|health|hospital\w*|age|term limits?|confirm\w*)\b/i },
   // album sales ("First Week Album Equivalent Units"): a sales / chart / debut headline, not a store listing of the record
   { key: 'album-units', q: /\b(album equivalent units|first[- ]week (sales|units)|equivalent units)\b/i,
     h: /\b(units|sales|sold|sells|selling|first[- ]week|debut\w*|billboard|charts?|charting|streams?|streaming|copies|tracking|projected|projections?|forecast\w*|no\. ?1|number one|#1)\b/i },
   // a sports award race on a team / conference outcome ("ACC" for the Heisman) needs the award named: "ACC POY Awards" is not it
   { key: 'award', q: /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i, h: null },
 ];
+// Award / prize races (Oscars, Emmys, Nobel ...): an event-level headline has to be about the race itself, not about a person
+// who merely mentions it ("Matt Damon reveals his wife's aneurysm the week before the Oscars").
+const AWARD_RACE_Q = /\b(oscars?|academy awards?|emmys?|grammys?|golden globes?|tonys?|baftas?|nobel|best (picture|actor|actress|director|film|song|album|animated|documentary)|person of the year|mvp|rookie of the year)\b/i;
+const RACE_ABOUT_HEAD = /\b(nominat\w*|nominees?|frontrunners?|front-runners?|predict\w*|contenders?|favou?rites?|shortlist\w*|short list\w*|snubs?|snubbed|odds|race|campaign\w*|awards? season|winners?|wins|ballot|voters?|voting|shortlisted|lineup|line-up|buzz|early picks?|power rankings?)\b/i;
+const PERSONAL_HEAD = /\b(wife|husband|aneurysm|surgery|surgeon|divorc\w*|baby|pregnan\w*|engage[dm]\w*|wedding|married|marriage|girlfriend|boyfriend|cancer|illness|hospital\w*|funeral|obituary|dies|died|dead|death|arrest\w*|lawsuit|sues?|sued|rehab|diagnos\w*|health scare|reveals? (that )?(his|her|their)|opens up|memoir|breakup|split)\b/i;
 const AWARD_RE = /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i;
 // Market-price levels (2026-11-05): "Brent above $97.99 on Nov 6" needs a headline about that asset's price that is < 24h old
 // ("Brent Crude $104, Lowest Since 7 Oct" from yesterday contradicts the market), and the asset must be what the headline
@@ -693,7 +706,19 @@ function questionMiss(T, title, ageH, leadHit) {
   return null;
 }
 
-/** Entity terms of a story (cached on the story object): see matchStoryNews. */
+// Stories are rebuilt every pass, so terms are memoized by story signature (event + lead + market ids): the same story
+// re-matched against a new wire revision reuses them. The market index (idf) drifts slowly, so an entry lives 10 minutes.
+const termsCache = new Map();
+function storyTermsCached(story, idx, now) {
+  const sig = `${story.id}|${story.eventTitle}|${story.lead?.title}|${story.lead?.outcome}|${story.lead?.id}|${(story.markets || []).map((m) => m.id).join(',')}`;
+  const hit = termsCache.get(sig);
+  if (hit && (hit.idx === idx || now - hit.at < 600_000)) return hit.T;
+  const T = storyTerms(story, idx);
+  if (termsCache.size > 8000) termsCache.clear();
+  termsCache.set(sig, { idx, at: now, T });
+  return T;
+}
+/** Entity terms of a story: see matchStoryNews. */
 function storyTerms(story, idx) {
   const ms = [];
   const seenM = new Set();
@@ -792,7 +817,7 @@ export function storyEntities(story) {
 export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now(), max = 3, maxAgeMs = 48 * 3_600_000, entity = false, minScore = 3 } = {}) {
   if (!story || !hIndex?.list?.length) return [];
   const idx = buildIndex(marketIndex);
-  const T = storyTerms(story, idx);
+  const T = storyTermsCached(story, idx, now);
   const cands = new Set();
   for (const t of T.E) for (const i of hIndex.byTok.get(t) || []) cands.add(i);
   for (const t of T.topics) for (const i of hIndex.byTopic.get(t.key) || []) cands.add(i);
@@ -890,6 +915,8 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
       const hOff = officesIn(h.it.title);
       const officeOk = !T.offices.size || !hOff.size || [...hOff].some((o) => T.offices.has(o));
       evOk = officeOk && fsHits >= 1 && (subjOk || rivalOk || officialOk);
+      // an award race takes an event-level headline only when it is about the race, not a person's private life
+      if (evOk && AWARD_RACE_Q.test(T.storyText) && (PERSONAL_HEAD.test(h.it.title) || !RACE_ABOUT_HEAD.test(h.it.title))) evOk = false;
       if (process.env.PNN_MATCH_DEBUG) console.error(evOk ? 'event ok' : 'event no', { subjOk, rivalOk, officialOk, officeOk, fsHit, pRuns, fsTop }, h.it.title.slice(0, 60));
     }
     if (!ok && evOk) { ok = true; tier = 'event'; }

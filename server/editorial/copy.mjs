@@ -702,7 +702,27 @@ function moveVerb(d, plural, seed) {
 }
 const possessive = (s) => (/s$/.test(s) ? `${s}'` : `${s}'s`);
 
-function oddsLine(m, mode, { max = HEADLINE_MAX } = {}) {
+// A time phrase says it once: "Google market share this week above 15.1% this week" -> "... above 15.1% this week".
+// When one copy sits in a move phrase ("up 5 points this week") that one stays; otherwise the later one goes.
+const TIME_PHRASE = /\b(this week|this month|this year|today|tonight|tomorrow|next week|next month|in the last hour)\b/gi;
+export function dedupeTimePhrases(str) {
+  let out = String(str ?? '');
+  for (let pass = 0; pass < 4; pass++) {
+    const hits = [...out.matchAll(TIME_PHRASE)].map((x) => ({ k: x[1].toLowerCase(), i: x.index, len: x[0].length }));
+    const dupe = hits.find((h, n) => hits.findIndex((o) => o.k === h.k) !== n);
+    if (!dupe) break;
+    const same = hits.filter((h) => h.k === dupe.k);
+    const inMove = (h) => /\bpoints? $/.test(out.slice(Math.max(0, h.i - 8), h.i));
+    const drop = same.find(inMove) ? same.find((h) => !inMove(h)) || same[same.length - 1] : same[same.length - 1];
+    let a = drop.i, b = drop.i + drop.len;
+    while (a > 0 && out[a - 1] === ' ') a--;
+    out = (out.slice(0, a) + out.slice(b)).replace(/\s{2,}/g, ' ').replace(/\s+([,:;.])/g, '$1');
+  }
+  return out.trim();
+}
+
+function oddsLine(m, mode, opts) { return dedupeTimePhrases(oddsLineRaw(m, mode, opts)); }
+function oddsLineRaw(m, mode, { max = HEADLINE_MAX } = {}) {
   const p = pct(m.yesPrice);
   const d = m.change1d ?? 0;
   const w = m.change1w ?? 0;

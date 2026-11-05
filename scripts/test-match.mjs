@@ -69,6 +69,10 @@ const MARKETS = [
   ["ks:KXOSCARACTR-27-ANN","ks:KXOSCARACTR-27","Oscar winner: Best Actress","Will Anne hathaway win Best Actress at the Oscars?","Anne hathaway",0.02,"culture",0],
   ["ks:KXOSCARACTR-27-ZEN","ks:KXOSCARACTR-27","Oscar winner: Best Actress","Will Zendaya win Best Actress at the Oscars?","Zendaya",0.02,"culture",0],
   ["ks:KXOSCARACTR-27-CYN","ks:KXOSCARACTR-27","Oscar winner: Best Actress","Will Cynthia Erivo win Best Actress at the Oscars?","Cynthia Erivo",0.01,"culture",0],
+  ["ks:KXOSCARPIC-27-ODY","ks:KXOSCARPIC-27","Oscar Winner: Best Picture","Will The Odyssey win Best Picture at the Oscars?","The Odyssey",0.31,"culture",0],
+  ["ks:KXOSCARPIC-27-YCS","ks:KXOSCARPIC-27","Oscar Winner: Best Picture","Will You Can See Everything win Best Picture at the Oscars?","You Can See Everything",0.12,"culture",0],
+  ["ks:KXOSCARPIC-27-TBB","ks:KXOSCARPIC-27","Oscar Winner: Best Picture","Will The Black Ball win Best Picture at the Oscars?","The Black Ball",0.08,"culture",0],
+  ["ks:KXSCOTUSN-25DEC31-27",0,"Will a new Supreme Court justice be confirmed by Dec 31, 2026?","Will a new Supreme Court justice be confirmed by Dec 31, 2026?",null,0.12,"politics",0],
   ["pm:2060104","pm:409920","Dancing with the Stars S35: Winner?","Will Harry Shum Jr. win Dancing With the Stars: Season 35?","Harry Shum Jr.",0.0925,"culture",0],
   ["pm:2060100","pm:409920","Dancing with the Stars S35: Winner?","Will Maura Higgins win Dancing With the Stars: Season 35?","Maura Higgins",0.0055,"culture",0],
   ["pm:4393420","pm:991303","Bank of Canada Decision in December?","Will the Bank of Canada make no change to the target for the overnight rate at the December interest rate announcement?","No Change",0.625,"economy",0],
@@ -161,6 +165,8 @@ const MUST = [
   ['pm:498879', "Josh O'Connor", hl('Brosnan endorses Callum Turner as next Bond', 'Deadline'), 'event'],
   // "Eisenkot" in the headline, "Eizenkot" in the market: a transliteration, so the lead itself is named (exact)
   ['pm:1219790', 'Gadi Eizenkot', hl('Joint List says it will back Eisenkot to form Israel’s next government', 'Al Jazeera'), null],
+  ['ks:KXOSCARPIC-27', 'The Odyssey', hl('Oscars 2027 Best Picture predictions: The Odyssey leads a crowded frontrunner field', 'Variety'), null],
+  ['ks:KXSCOTUSN-25DEC31-27', null, hl('Senate confirms Trump pick for Supreme Court justice after hearings', 'Politico'), null],
   ['ks:KXHOUSERACE-AZ05-26', 'Elizabeth Lee', hl('Mark Lamb moves ahead in race for AZ-5', 'KTAR'), 'event'],
   ['ks:KXHOUSERACE-AZ05-26', 'Mark Lamb', hl('Mark Lamb moves ahead in race for AZ-5', 'KTAR'), 'exact'],
   ['ks:KXMIDTERMMOV-OHGOVD', 'ks:KXMIDTERMMOV-OHGOVD-P8', hl("Democrat Amy Acton wins Ohio's race for governor", 'AP'), 'exact'],
@@ -192,6 +198,11 @@ const REJECT = [
   ['pm:31195', null, hl('Vladimir Putin, Rezaei meet as Turkey probes deadly Iran border fire', 'The Jerusalem Post')],
   ['pm:1273034', null, hl('Federal Reserve Board - Home', 'Federal Reserve (.gov)')],
   ['pm:1273034', null, hl('Calendar', 'Federal Reserve (.gov)')],
+  // news gate leftovers 2026-11-05: an event-level hit must be about the race / award itself, not a person's private life
+  // that mentions it; and a "Justice Department" headline is not about a Supreme Court justice
+  ['ks:KXOSCARPIC-27', 'The Odyssey', hl('Matt Damon Reveals Wife Suffered a Brain Aneurysm and Had Surgery the ‘Week Before the Oscars’ Where ‘Oppenheimer’ Won Best Picture', 'Variety')],
+  ['ks:KXSCOTUSN-25DEC31-27', null, hl('Justice Dept. Steps Up Criminal Investigation of Supreme Court Abortion Leak', 'The New York Times')],
+  ['pm:212877', null, hl('Justice Dept. Steps Up Criminal Investigation of Supreme Court Abortion Leak', 'The New York Times')],
   // event level stays strict: a rival named without the event's frame, a frame word shared by another story
   ['pm:498879', "Josh O'Connor", hl('Callum Turner joins the cast of a new Netflix thriller', 'Deadline')],
   ['ks:KXRATEHIKE-2026', 'Exactly 2', hl('Cut number of police forces in England to as few as nine, review recommends', 'The Guardian')],

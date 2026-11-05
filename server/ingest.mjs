@@ -22,6 +22,7 @@ import { createFinance } from './finance.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const errMsg = (e) => String(e?.message || e).slice(0, 300);
 
+const newsMsLog = [];   // [timestamp, newsMs] of the last 10 minutes of builds (health: newsMsMax10m / newsMsP50)
 export function startIngest(store, config, { sim = false } = {}) {
   const P = config.poll;
   const latest = { polymarket: [], kalshi: [], airable: [] };
@@ -146,7 +147,9 @@ export function startIngest(store, config, { sim = false } = {}) {
       out = buildStories(markets, config, { now, enrich });
       const dead = Object.fromEntries(Object.entries(out?.stats?.dropped || {}).filter(([k]) => k.startsWith('dead:')));
       const ns = out?.stats?.news || {};
-      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead, newsMs: ns.ms ?? null, newsDropped: { none: out?.stats?.dropped?.['news:none'] || 0, sportsGames: ns.sgDropped || 0, sgScore: ns.sgScoreDropped || 0, movingFirstCapped: out?.stats?.dropped?.['news:moving-first-capped'] || 0, headlinesBlocked: ns.headlinesBlocked || 0 } };
+      if (ns.ms != null) { const t = Date.now(); newsMsLog.push([t, ns.ms]); while (newsMsLog.length && t - newsMsLog[0][0] > 600_000) newsMsLog.shift(); }
+      const nm = newsMsLog.map((x) => x[1]).sort((a, b) => a - b);
+      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead, newsMs: ns.ms ?? null, newsMsMax10m: nm.length ? nm[nm.length - 1] : null, newsMsP50: nm.length ? nm[nm.length >> 1] : null, newsDropped: { none: out?.stats?.dropped?.['news:none'] || 0, sportsGames: ns.sgDropped || 0, sgScore: ns.sgScoreDropped || 0, movingFirstCapped: out?.stats?.dropped?.['news:moving-first-capped'] || 0, headlinesBlocked: ns.headlinesBlocked || 0 } };
       pending = out?.pending || [];
     } catch (e) {
       log('error', 'buildStories failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) });
