@@ -82,7 +82,7 @@ export function createDirector({ ctx, modules, post = null, opts = {} }) {
   function applyGuard() {
     const sky = A.sky, skyB = B.sky;
     const L = Math.max(lum(sky.mid), lum(sky.horizon) * 0.18) * (1 - k) + Math.max(lum(skyB.mid), lum(skyB.horizon) * 0.18) * k;
-    ctx.guardAmt.value = L > 0.06 ? 0.6 : 0.45;   // dome-space luminance (horizon is scaled 0.18 by sky.js)
+    ctx.guardAmt.value = L > 0.06 ? 0.78 : 0.7;   // hologram area stays calm (raised 2026-11-05)   // dome-space luminance (horizon is scaled 0.18 by sky.js)
   }
 
   function tick(dt, t, camera) {

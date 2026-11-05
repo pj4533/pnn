@@ -17,7 +17,7 @@ export function createWorld(scene, { renderer, camera, opts = {} } = {}) {
 
   // shared noise texture + guard uniforms (one guard mechanism for every scene)
   const envCtx = createEnvCtx(THREE, { time: TIME, alert, accent, accent2 });
-  envCtx.guardAmt.value = 0.55;
+  envCtx.guardAmt.value = 0.7;   // calmer behind the hologram (user: right side hard to read with busy scenes)
   const director = createSceneDirector({
     renderer, camera, mainScene: scene, opts,
     ctxShared: { time: TIME, alert, accent, accent2, guardRect: envCtx.guardRect, guardAmt: envCtx.guardAmt, noise: envCtx.noiseTex },

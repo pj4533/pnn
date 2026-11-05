@@ -135,7 +135,7 @@ export function makeLabel(text, opts = {}) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
-  mat.color.setScalar(o.bright);
+  mat.color.setScalar(Math.min(o.bright, 0.7)); // stay under the bloom threshold (0.78): brighter labels smeared into glow
   const sprite = new THREE.Sprite(mat);
   sprite.renderOrder = 50;
   sprite.scale.set(o.height * (o.w / o.h), o.height, 1);
@@ -158,14 +158,16 @@ export function makeLabel(text, opts = {}) {
     ctx.textAlign = o.align; ctx.textBaseline = 'middle';
     const mainY = o.h * (hasSub ? (o.mainY ?? 0.36) : 0.5);
     ctx.font = fitFont(o.font, cur.text, o.w - pad * 2);
-    ctx.shadowColor = cur.glow; ctx.shadowBlur = o.h * 0.1;
+    // legibility first: a dark outline under the letters, then a small tight glow (was a wide double glow)
+    ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(6,0,22,0.88)'; ctx.lineWidth = o.h * 0.05;
+    ctx.shadowBlur = 0; ctx.strokeText(cur.text, x, mainY);
+    ctx.shadowColor = cur.glow; ctx.shadowBlur = o.h * 0.035;
     ctx.fillStyle = cur.color;
-    ctx.fillText(cur.text, x, mainY);
-    ctx.shadowBlur = o.h * 0.03;
     ctx.fillText(cur.text, x, mainY);
     if (hasSub) {
       ctx.font = fitFont(o.subFont, cur.sub, o.w - pad * 2);
-      ctx.shadowColor = o.subColor || cur.glow; ctx.shadowBlur = o.h * 0.05;
+      ctx.shadowBlur = 0; ctx.lineWidth = o.h * 0.035; ctx.strokeText(cur.sub, x, o.h * (o.subY ?? 0.8));
+      ctx.shadowColor = o.subColor || cur.glow; ctx.shadowBlur = o.h * 0.02;
       ctx.fillStyle = o.subColor;
       ctx.fillText(cur.sub, x, o.h * (o.subY ?? 0.8));
     }

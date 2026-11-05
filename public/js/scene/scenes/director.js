@@ -199,7 +199,15 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
   // every draw of an instance goes through here so its uploads (memory deltas) are attributed to it for the leak check
   // (a layer RT re-sized by allocLayer re-uploads on its first draw: director-owned, so it is excluded)
   function rInst(inst, scene, cam, rtTex = 0) { const m = renderer.info.memory, g = m.geometries, t = m.textures; renderer.render(scene, cam); inst.upG += m.geometries - g; inst.upT += Math.max(0, m.textures - t - rtTex); }
-  function renderLayer(inst) { if (inst.layer) { renderer.setRenderTarget(inst.layer.rt); rInst(inst, inst.layer.scene, ortho, 1); } }
+  // A scene's low-res layer: the guard (hologram-area dimming) uses gl_FragCoord/res, so res must be THIS target's size,
+  // not the screen's — with full-screen res the dim zone landed in the lower-left quarter and the hologram area stayed bright.
+  function renderLayer(inst) {
+    if (!inst.layer) return;
+    const rt = inst.layer.rt, prev = sh.res.value.clone();
+    sh.res.value.set(rt.width, rt.height);
+    renderer.setRenderTarget(rt); rInst(inst, inst.layer.scene, ortho, 1);
+    sh.res.value.copy(prev);
+  }
   function warmDraw(inst) {
     if (!post) return;
     const tr = post.getTransRT?.(), rb = post.readBuffer;

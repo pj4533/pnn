@@ -393,3 +393,9 @@ The user rejected the terrain-mood pass ("it's all like planets... one template 
 - **Keep awake:** the Screen Wake Lock is requested on load, on tap and when the tab becomes visible again; it's silently skipped where unsupported.
 - **Portrait shows a "Rotate to landscape" prompt.** PNN is a widescreen broadcast, and portrait left half the screen empty with tiny text.
 - **Bug fixed:** the NEXT tease kept its portrait-shrunk font after rotating to landscape (below the .7vw floor). It now refits on resize. Verified at the iPad Air size, 1180x820 landscape after rotating from 820x1180: fitReport clean on every segment, console clean.
+
+## 2026-11-05: right-side readability (the user reported this from the iPad)
+- **3D labels:** brightness is capped at 0.7, under the bloom threshold of 0.78 (at 0.8 they smeared into glow). Each label gets a dark outline, and its built-in glow dropped from a wide double glow to a single tight one.
+- **Bug fixed:** scenes with a low-res layer (curlSwarm, kaleidoTunnel, laserCathedral) computed the hologram-area dimming with the full-screen size instead of their layer's size, so the dim zone landed in the lower-left quarter. `renderLayer` now sets `res` to the target's size.
+- **Hologram-area dimming raised:** 0.55 → 0.7 (world.js), and 0.45/0.6 → 0.7/0.78 for the outrun moods.
+- **iOS home-screen app:** status bar style `black` instead of `black-translucent`, which drew the time and battery over the PNN bug and the clock. Re-add the home-screen icon to pick it up.
