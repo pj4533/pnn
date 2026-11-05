@@ -55,11 +55,20 @@ const BUILTIN_NOISE = [
   { category: 'mentions', re: /#\s*(of\s+)?tweets|\btweets? (this|next) week\b|\bhow many (tweets|posts)\b/i },
   // Multi-leg combos: "Democrats hold 240 or more seats ... AND hold 54 or more seats ..." (capital AND is Kalshi's leg joiner).
   { category: 'novelty', re: /\b(hold|win|wins|holds)\b[^•]*\sAND\s[^•]*\b(hold|win|wins|holds)\b/ },
+  // Photo-count and appearance-count series ("Number of distinct days with a Getty Images editorial photo of Trump",
+  // "How many days will Trump be photographed this week?"): a count of press photos is a novelty, not news.
+  { category: 'novelty', re: /\bGetty Images\b|\bdistinct days\b|\bphotographed this (week|month)\b|\beditorial photo\b/i },
   { category: 'sports', re: /\b(o\/u \d|spread:|total sets|set \d winner|game \d winner|\(bo\d\)|win on \d{4}-\d{2}-\d{2})/i },
 ];
 
 // "Highest temperature in Warsaw on November 5?", "NYC high temp today", "Will it rain in Seattle on Nov 6?"
 const DAILY_WEATHER = /\b(highest|lowest|high|low|max(imum)?|min(imum)?) temp(erature)?\b.*\b(on|today|tomorrow)\b|\b(rain|snow)\b.*\bon (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w* \d/i;
+
+// A wh-question whose outcome the exchange did not give us ("When will OpenAI IPO?" with no sub-title) cannot be said as a
+// probability, and quoting it on air reads as a raw question: it never airs. With an outcome, copy.mjs rewrites it
+// ("Oil is the largest source of ..."), so only the outcome-less ones drop.
+const WH_QUESTION = /^(?:[^:?]{0,30}:\s*)?(?:when|which|who|whom|what|where|how (?:many|much|high|low|long|often))\b[^?]{0,90}\b(?:will|would)\b/i;
+const NO_OUTCOME = /^(none|other|all|all \d+|yes|no|field|any other)?$/i;
 
 // Title keyword -> category, used only when tags do not map. Order matters (first match wins).
 const TITLE_CATEGORIES = [
@@ -199,6 +208,7 @@ export function classify(market, config = {}, { now = Date.now() } = {}) {
     return { keep: false, category: p.category, reason: `title:${p.category}` };
   }
   if (isSg) category = gamesCat ? 'games' : 'sports';
+  if (WH_QUESTION.test(String(m.title || '').trim()) && NO_OUTCOME.test(String(m.outcome || '').trim())) return { keep: false, category, reason: 'unstatable' };
 
   // 3b. Structural noise from source tags: short-cycle recurring series (daily temperature, daily oil close,
   // hourly approval...) whose 'previous price' is just the listing price, and cumulative strike ladders.

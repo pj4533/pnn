@@ -99,4 +99,53 @@ if (!flag('--no-probes')) {
     'New York restaurant week returns with record bookings',
   ]) await show(probe(t), 'P-', probeSearch);
 }
-process.exit(0);
+
+// ---- independence + quality rules (offline, deterministic; 2026-11-05 news-quality pass)
+{
+  const { badNewsSource, looksCut, learnWords, garbledTitle } = await import('../server/sources/news.mjs');
+  const { matchStoryNews, buildHeadlineIndex, scopeMismatch, geoMiss } = await import('../server/editorial/match.mjs');
+  let fails = 0;
+  const check = (ok, what) => { if (!ok) fails++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`); };
+  console.log('\n=== INDEPENDENCE + QUALITY (offline)');
+  for (const [o, t] of [['Kalshi News', "Hegseth's cabinet exit odds hit 57% after midterms"], ['Polymarket', 'Fed hike odds'], ['Robinhood', 'Mortgage rate this week Prediction Market'],
+    ['DraftKings Network', 'NFL picks'], ['Facebook', "'Godzilla Minus Zero' with a $60M opening"], ['NewzTodays', 'Russian diesel imports blocked by New Jersey'], ['Patch', 'Fairfield Gas Prices Run A Little Above State Average'],
+    ['Yahoo Finance', 'Kalshi traders bet on the next Fed chair'], ['Reuters', 'russian diesel imports blocked by new jersey despite trump']]) {
+    check(!!badNewsSource({ title: t, outlet: o }), `blocked: ${o} / ${t.slice(0, 50)}`);
+  }
+  for (const [o, t] of [['Reuters', 'Fed holds rates steady and signals a December hike is possible'], ['Gold Derby', 'Best Actor Oscar odds: John Malkovich leads'], ['The Verge', 'iPhone 18 launch date leaks'], ['CNBC', 'Gold climbs above $4,000 after Democrats win Congress']]) {
+    check(!badNewsSource({ title: t, outlet: o }), `allowed: ${o} / ${t.slice(0, 50)}`);
+  }
+  check(!!badNewsSource({ title: 'Gold climbs', outlet: 'Investing News Network', sourceUrl: 'https://kalshi.com/x' }), 'blocked by source domain');
+  check(garbledTitle('russian diesel imports blocked by new jersey despite trump') && !garbledTitle('Russian diesel imports blocked by New Jersey'), 'garbled lowercase title');
+  learnWords(['Parties form a coalition government after the election', 'coalition talks stall again today', 'hostilities resume near the border while leaders meet'].concat(Array.from({ length: 400 }, (_, i) => `Word${'abcdefghij'[i % 10]}ing test headline number ${'qrstuvwxyz'[i % 10]}ample item ${i}`)));
+  check(looksCut('Israel’s Election Ended With No Clear Winner. These Parties Are Trying to Form a Coalitio'), 'cut: "... Form a Coalitio"');
+  check(looksCut('Trump says he will meet the leaders of the Gulf states and'), 'cut: dangling "and"');
+  check(looksCut('Senators weigh a new plan for the budget …'), 'cut: ellipsis');
+  check(!looksCut('Israel’s Election Ended With No Clear Winner. These Parties Are Trying to Form a Coalition.'), 'not cut: full headline');
+  check(!looksCut('Iran’s Khamenei warns Trump loss at polls won’t end US hostility'), 'not cut: "hostility" (inflection of a known word)');
+  // weak-match rules on a synthetic index
+  const mk = (i, eventTitle, outcome, extra = {}) => ({ id: `m${i}`, eventId: `e${i}`, eventTitle, title: eventTitle, outcome, yesPrice: 0.4, volume24h: 50000, category: 'economy', source: 'polymarket', ...extra });
+  const filler = Array.from({ length: 80 }, (_, i) => mk(100 + i, `Filler topic ${i} number ${i * 7} ${['alpha', 'bravo', 'charlie', 'delta', 'echo'][i % 5]}${i}`, 'Yes'));
+  const nat = mk(1, 'National gas price above $3.80 in November?', 'Yes');
+  const idxM = [nat, ...filler];
+  const story = (m, extra = {}) => ({ id: `s${m.id}`, lead: m, markets: [m], eventTitle: m.eventTitle, category: m.category, ...extra });
+  const now = Date.now();
+  const hl = (title, outlet = 'Probe') => ({ title, outlet, publishedAt: new Date(now - 3_600_000).toISOString(), category: 'general' });
+  check(scopeMismatch(nat.eventTitle, 'Fairfield Gas Prices Run A Little Above State Average'), 'local story on a national market is a scope mismatch');
+  check(!scopeMismatch(nat.eventTitle, 'AAA: national average gas price falls to $3.52'), 'national headline on a national market is fine');
+  check(geoMiss("Canada's GDP growth rate MoM in September", 'Czech Retail Sales Rise 0.1% MoM in September'), 'other country on a named-country question');
+  check(!geoMiss("Canada's GDP growth rate MoM in September", 'Canada economy grows 0.1% in September, Statistics Canada says'), 'same country passes');
+  const hits = matchStoryNews(story(nat), buildHeadlineIndex([hl('Fairfield Gas Prices Run A Little Above State Average'), hl('National gas price falls for the fourth week, AAA says')]), idxM, { now });
+  check(hits.length <= 1 && !hits.some((h) => /Fairfield/.test(h.item.title)), 'story matcher drops the Patch-style local gas story');
+  // flash matcher: key entity (rarest words of the market must be in the news)
+  const la = mk(2, 'Louisiana data center moratorium by June 30?', 'Yes');
+  const idx2 = [la, ...filler];
+  const { matchMarkets } = await import('../server/editorial/match.mjs');
+  const loose = await matchMarkets({ title: 'Data Center IPOs surge as AI demand grows', items: [{ title: 'Data Center IPOs surge as AI demand grows' }] }, idx2, { search: false });
+  check(!loose.length, 'flash: "Data Center IPOs" does not land on a Louisiana data-center moratorium market');
+  const tight = await matchMarkets({ title: 'Louisiana lawmakers weigh a data center moratorium', items: [{ title: 'Louisiana lawmakers weigh a data center moratorium' }] }, idx2, { search: false });
+  check(tight.length > 0, 'flash: the Louisiana moratorium headline still matches its market');
+  console.log(fails ? `\n${fails} FAILED` : '\nall independence/quality checks passed');
+  if (fails) process.exitCode = 1;
+}
+process.exit(process.exitCode || 0);

@@ -62,7 +62,7 @@ void main(){
   fade *= max(1. + 0.7*uStory.x*uSign, 0.2);                       // up: head-lights lead, down: tail-lights lead
   float s2 = fract(seed*91.7);
   vec3 col = mix(uCol0, uCol1, s2); col = mix(col, uAcc, 0.22);
-  col = mix(col, uStoryCol, 0.08 + 0.15*abs(uStory.x) + 0.45*rimK);
+  col = mix(col, uStoryCol, 0.05 + 0.08*abs(uStory.x) + 0.35*rimK);
   vC = vec4(col, fade*(0.8+0.5*s2)*(1.+3.*ring)*(1.+0.5*rimK*(0.5+uStory.y))); vUv = vec2(position.x*2., position.y);
   gl_Position = cp;
 }`;
@@ -81,7 +81,7 @@ void main(){
   float seed = position.z, r = fract(seed*13.7);
   float spd = 0.5 + floor(r*12.)/8.;
   float c = seed*${L}. - uFlow*spd; float D = c - ${L}.*floor(c/${L}.) + 100.;
-  float len = (0.08 + 0.3*fract(seed*7.3))*D*(1.+uExit*4.)*(1.+0.7*uStory.y);
+  float len = (0.08 + 0.3*fract(seed*7.3))*D*(1.+uExit*4.)*(1.+0.35*uStory.y);
   float DD = D + aEnd*len; float z = ${REF_Z}. - DD;
   float spread = smoothstep(0.2, 1., uEnter + r*0.4 - 0.2);
   vec3 p = vec3(position.x*DD*spread + X0, 160. + position.y*DD*spread, z);      // straight axis; re-centred on the hero below
@@ -89,8 +89,8 @@ void main(){
   vec3 col = h<0.55 ? vec3(0.75,0.9,1.) : h<0.85 ? vec3(1.,0.3,0.9) : vec3(1.,0.7,0.25);
   col = mix(col, uAcc2, 0.2);
   float fade = smoothstep(120.,500.,D)*smoothstep(3300.,2500.,D)*spread;
-  col = mix(col, uStoryCol, 0.15 + 0.2*abs(uStory.x));
-  vC = vec4(col, fade*mix(1.8, 0.0, aEnd)*(0.8 + 0.5*uStory.y));
+  col = mix(col, uStoryCol, 0.08 + 0.1*abs(uStory.x));
+  vC = vec4(col, fade*mix(1.8, 0.0, aEnd)*(0.8 + 0.2*uStory.y));
   vec4 cp = projectionMatrix*modelViewMatrix*vec4(p,1.);
   vec2 q = cp.xy/cp.w*.5+.5;
   q = hLens(q + (uHero.xy - uStarC), 1.);                          // the warp radiates from the widget, not the screen centre
@@ -127,7 +127,7 @@ void main(){
   // neon edges + shoulder glow
   float eL = abs(lat+100.), eR = abs(lat-100.);
   vec3 cL = mix(vec3(1.,0.1,0.6), uAccent, 0.35), cR = mix(vec3(0.1,0.85,1.), uAccent2, 0.35);
-  float tin = smoothstep(900.,3000.,dc)*0.6;                       // the road takes the story colour as it nears the plinth
+  float tin = smoothstep(900.,3000.,dc)*0.35;                       // the road takes the story colour as it nears the plinth
   cL = mix(cL, uStoryCol, tin); cR = mix(cR, uStoryCol, tin);
   col += cL*(1.6*exp(-eL*eL*0.7)+0.22*exp(-eL*0.05)*step(lat,-100.)+0.1*exp(-eL*0.05));
   col += cR*(1.6*exp(-eR*eR*0.7)+0.22*exp(-eR*0.05)*step(100.,lat)+0.1*exp(-eR*0.05));
@@ -188,7 +188,7 @@ void main(){
   vec3 cT = mix(cL, cR, vUv.x);
   col += cT*(exp(-dT*0.5)*0.6+smoothstep(1.4,0.3,dT))*step(0.03,vUv.x)*step(vUv.x,0.97);
   col += cT*0.5*(exp(-dT2*0.6)*0.5+smoothstep(1.2,0.3,dT2))*inX*step(fract(vUv.x*22.),0.55);
-  col *= 2.0*vG.x*(1.+2.*vG.z)*(1.+vG.w*(0.1+0.4*uStory.y+0.8*uStory.w));
+  col *= 2.0*vG.x*(1.+2.*vG.z)*(1.+vG.w*(0.1+0.2*uStory.y+0.8*uStory.w));
   col *= mix(mix(0.25, 1., eye()), 1., vG.w);                      // plain gates fade to calm inside the eye; portals ring it
   gl_FragColor = vec4(finish(col), 1.);
 }`;
@@ -285,7 +285,7 @@ export function create(ctx) {
   const S = { bx: -1450, by: 0, P0: new THREE.Vector3(), P1: new THREE.Vector3(), P2: new THREE.Vector3(), punch: 0, enterT: -1, enterD: 1, exitT: -1, exitD: 1, shockT: -1, dirty: 0, k: 1, flow: 0, vp: new THREE.Vector3(), q: ctx.quality };
   const gradeCol = new THREE.Color(0.92, 0.86, 1.0);
   const api = {
-    grade: { bloom: 0.9, bloomThreshold: 0.55, bloomRadius: 0.7, tint: gradeCol, tintAmt: 0.05, sat: 1.1, contrast: 1.05, ca: 0.0012, grain: 0.04, vignette: 0.35, scan: 0.12 },
+    grade: { bloom: 0.7, bloomThreshold: 0.62, bloomRadius: 0.55, tint: gradeCol, tintAmt: 0.05, sat: 1.1, contrast: 1.05, ca: 0.0012, grain: 0.04, vignette: 0.35, scan: 0.12 },
     cameraBias: { orbitScale: 1.0, bob: 0.9 },
     setIntensity(a) { S.k = a; },
     enter(d) { S.enterT = 0; S.enterD = Math.max(0.1, d); U.uEnter.value = 0; S.exitT = -1; U.uExit.value = 0; U.uSq.value = 1; },

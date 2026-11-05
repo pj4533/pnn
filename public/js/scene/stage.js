@@ -21,7 +21,8 @@ export function createHeroStage({ scene, camera, fx, post, sh }) {
   const U = sh;   // uHero, uHeroW, uStory, uStoryCol, uStoryColA (shared refs)
   const uTime = { value: 0 }, uE = { value: 0.3 }, uDir = { value: 0 }, uPulse = { value: 0 };
   const uVis = { value: 0 }, uIgn = { value: 1 }, uKick = { value: 0 }, uArrive = { value: 0 };
-  const uCol = U.uStoryCol, uColA = U.uStoryColA;
+  const uSceneCol = U.uStoryCol, uColA = U.uStoryColA;   // uSceneCol: what the 12 scenes read (theme colour, only nudged toward up/down)
+  const uCol = { value: new THREE.Color('#00f0ff') };   // the rig's own accent (plinth, halo, cone, motes): the full up/down tint
   let quality = 2;
 
   const hero = {
@@ -54,7 +55,8 @@ export function createHeroStage({ scene, camera, fx, post, sh }) {
   function project(v3, out = new THREE.Vector2()) { _pv.copy(v3).project(camera); return out.set((_pv.x + 1) / 2, (_pv.y + 1) / 2); }
 
   // ---------- story
-  const tgtCol = new THREE.Color('#00f0ff'), tgtA = new THREE.Color('#ff2bd6');
+  const SCENE_TINT = 0.1;
+  const tgtCol = new THREE.Color('#00f0ff'), tgtScene = new THREE.Color('#00f0ff'), tgtA = new THREE.Color('#ff2bd6');
   let tgtE = 0.3, tgtDir = 0;
   /** s = { dir, move, energy, swing, alert, colorA, colorB, theme } (colours are THREE.Color). */
   function setStory(s = {}) {
@@ -63,10 +65,13 @@ export function createHeroStage({ scene, camera, fx, post, sh }) {
     st.energy = clamp(s.energy ?? (Math.min(1, Math.abs(st.move) / 0.15) + (st.swing ? 0.25 : 0)), 0, 1);
     if (s.colorA) st.colorA.copy(s.colorA);
     if (s.colorB) st.colorB.copy(s.colorB);
-    if (st.alert) { st.color.copy(COL.alert); tgtA.copy(COL.alert); }
+    if (st.alert) { st.color.copy(COL.alert); tgtScene.copy(COL.alert); tgtA.copy(COL.alert); }
     else {
+      // two tints: the rig + DOM accent (st.color) carry the up/down colour; the scenes (tgtScene) only get a light nudge,
+      // so each scene keeps its own palette and the story colour reads as an accent (rim, pulses), not a takeover
       st.color.copy(st.colorB);
-      if (st.dir) st.color.lerp(st.dir > 0 ? COL.up : COL.down, 0.35);
+      tgtScene.copy(st.colorB);
+      if (st.dir) { const ud = st.dir > 0 ? COL.up : COL.down; st.color.lerp(ud, 0.35); tgtScene.lerp(ud, SCENE_TINT); }
       tgtA.copy(st.colorA);
     }
     tgtCol.copy(st.color); tgtE = st.energy; tgtDir = st.dir;
@@ -134,12 +139,14 @@ export function createHeroStage({ scene, camera, fx, post, sh }) {
     fragmentShader: EYE_GLSL + /* glsl */`
       uniform float uTime, uE, uDir, uPulse, uVis; uniform vec3 uCol, uColA; varying vec3 vN, vW; varying float vY;
       void main(){
-        vec3 v = normalize(cameraPosition - vW);
-        float fres = pow(max(1. - abs(dot(normalize(vN), v)), 1e-4), 2.5);
+        // no fresnel rim (that drew the cylinder's silhouette as two hard trapezoid edges): scanlines + a soft haze that
+        // falls off as a gaussian of the screen-space distance from the widget's axis, so no edge ever reads as a line
         float dirv = uDir == 0. ? .35 : uDir;
         float scan = smoothstep(.82, 1., fract(vY * 16. - uTime * (.5 + 1.6 * uE) * dirv));
         float h = pow(max(1. - vY, 1e-4), 1.6);
-        float a = (fres * .16 + scan * (.04 + .07 * uE)) * h * (1. + uPulse);
+        float dx = (gl_FragCoord.x / uRes.x - uHero.x) / max(uHero.z, 1e-3);
+        float side = exp(-dx * dx * 1.6);
+        float a = (.035 + scan * (.03 + .05 * uE)) * h * side * (1. + uPulse);
         float m = mix(.03, 1., eyeMask(.75, 1.15));
         gl_FragColor = vec4(mix(uColA, uCol, .6 + .4 * vY) * a * m * uVis, 1.);
       }`,
@@ -234,7 +241,7 @@ export function createHeroStage({ scene, camera, fx, post, sh }) {
 
     // story signals (damped so a cut between stories glides)
     const sk = dampK(3, dt);
-    uCol.value.lerp(tgtCol, sk); uColA.value.lerp(tgtA, sk);
+    uCol.value.lerp(tgtCol, sk); uSceneCol.value.lerp(tgtScene, sk); uColA.value.lerp(tgtA, sk);
     uE.value += (tgtE - uE.value) * sk;
     uDir.value = tgtDir;
     hero.pulse = Math.max(0, hero.pulse - dt * 2.2);

@@ -65,7 +65,23 @@ export function createScene(canvas, opts = {}) {
     return { move, dir: move > 0.005 ? 1 : move < -0.005 ? -1 : 0, swing: !!story?.swing, alert: false, colorA: pal.a, colorB: pal.b, theme: pal.theme };
   }
 
-  let RECT = opts.stageRect || STAGE_RECT;
+  // The NEXT BIG DECISION chip (#chip, lower-right, position:fixed) must never sit over the widget: the overlay's
+  // stageRect skipped it (offsetParent is null for fixed elements) and a chip filled after a story never re-synced.
+  // So the scene clamps its own rect bottom to the chip top, and re-checks once a second (cheap rect read).
+  let baseRect = opts.stageRect || STAGE_RECT, chipKey = '';
+  function chipTop() {
+    const el = typeof document !== 'undefined' ? document.getElementById('chip') : null;
+    if (!el || !el.childElementCount) return null;
+    const c = el.getBoundingClientRect();
+    if (c.width <= 0 || c.height <= 0 || getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden') return null;
+    return { top: c.top / (window.innerHeight || 1), left: c.left / (window.innerWidth || 1) };
+  }
+  function withChip(r) {
+    const c = chipTop();
+    if (!c || c.left > r.x1 || c.top <= r.y0 + 0.25 || c.top >= r.y1) return r;
+    return { ...r, y1: c.top - 0.012 };
+  }
+  let RECT = withChip(baseRect);
   let SUBJECT_X = (RECT.x0 + RECT.x1) / 2, SUBJECT_Y = (RECT.y0 + RECT.y1) / 2;
 
   // ---------- camera rig ----------
@@ -305,6 +321,12 @@ export function createScene(canvas, opts = {}) {
       world.tick(dt, t, camera);
       post.render(dt);
     } catch (e) { if (errCount++ < 5) reportErr('frame', e); }
+    // chip appears / changes size after a story starts: refit (cheap; once a second)
+    if ((api._chipT = (api._chipT || 0) + dt) > 1) {
+      api._chipT = 0;
+      const r = withChip(baseRect), k = JSON.stringify(r);
+      if (k !== chipKey && JSON.stringify(RECT) !== k) { chipKey = k; RECT = r; SUBJECT_X = (RECT.x0 + RECT.x1) / 2; SUBJECT_Y = (RECT.y0 + RECT.y1) / 2; world.setStageRect(RECT); reframe(); }
+    }
     fpsAcc += dt; fpsN++;
     if (t > fpsCheckAt && !NO_FPS_GUARD) {
       const fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; fpsCheckAt = t + 5;
@@ -403,7 +425,7 @@ export function createScene(canvas, opts = {}) {
       if (last?.seg === 'movers' && current && !alertActive) { curKey = null; api.showStory(last.story, 'movers'); }
     },
     resize(w, h) { resize(w, h); },
-    setStageRect(rect) { RECT = rect || STAGE_RECT; SUBJECT_X = (RECT.x0 + RECT.x1) / 2; SUBJECT_Y = (RECT.y0 + RECT.y1) / 2; world.setStageRect(RECT); reframe(); },
+    setStageRect(rect) { baseRect = rect || STAGE_RECT; RECT = withChip(baseRect); chipKey = JSON.stringify(RECT); SUBJECT_X = (RECT.x0 + RECT.x1) / 2; SUBJECT_Y = (RECT.y0 + RECT.y1) / 2; world.setStageRect(RECT); reframe(); },
     dispose() {
       running = false; cancelAnimationFrame(raf);
       window.removeEventListener('resize', onWinResize);

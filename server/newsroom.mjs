@@ -21,9 +21,28 @@ import { tokenSet, jaccard } from './editorial/text.mjs';
 import { isMarginBracket } from './editorial/rank.mjs';
 import { buildFlash, marketDataLine } from './editorial/flash.mjs';
 import { classify } from './editorial/filter.mjs';
+import { badNewsSource, looksCut, nonLatin, learnWords } from './sources/news.mjs';
 
 const errMsg = (e) => String(e?.message || e).slice(0, 300);
 const SG = new Set(['sports', 'games', 'esports']);
+// Independence (2026-11-05): an exchange's own "news" (Kalshi News, Polymarket, Robinhood...), social posts, scraper farms
+// and cut or garbled headlines never air as the news item, in the archive, the crawl, a flash or the Story of the Day.
+const badItem = (it) => !it || !it.title || !!badNewsSource(it) || looksCut(it.title) || nonLatin(it.title) || nonLatin(it.outlet);
+/** A cluster with its bad items removed (null when nothing airable is left); a bad representative title is replaced by the best good one. */
+function cleanCluster(c) {
+  if (!c?.title) return null;
+  const items = c.items || [];
+  const repOutlet = items.find((i) => i.title === c.title)?.outlet || c.outlets?.[0];
+  const titleBad = badItem({ title: c.title, outlet: repOutlet });
+  if (!items.length) return titleBad ? null : c;
+  const good = items.filter((i) => !badItem(i));
+  if (!good.length) return null;
+  if (good.length === items.length && !titleBad) return c;
+  const outs = (c.outlets || []).filter((o) => !badNewsSource({ title: 'x', outlet: o }));
+  const rep = good[0];
+  return { ...c, title: titleBad ? rep.title : c.title, items: good, outlets: outs.length ? outs : [rep.outlet].filter(Boolean),
+    independentOutlets: Math.min(c.independentOutlets ?? outs.length, Math.max(outs.length, 1)) };
+}
 const ARCHIVE_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'news-archive.json');
 const ARCHIVE_HOURS = 48, ARCHIVE_MAX = 8000;
 const THEME = { elections: 'politics', politics: 'politics', geopolitics: 'world', world: 'world', economy: 'economy', courts: 'courts',
@@ -55,8 +74,9 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
   function archiveAdd(items) {
     const cut = Date.now() - ARCHIVE_HOURS * 3_600_000;
     let added = 0;
+    learnWords((items || []).map((x) => x?.title));   // vocabulary for the cut-word check (news.mjs looksCut)
     for (const it of items || []) {
-      if (!it?.title || !(Date.parse(it.publishedAt) >= cut)) continue;
+      if (!it?.title || !(Date.parse(it.publishedAt) >= cut) || badItem(it)) continue;
       const k = aKey(it);
       if (archiveMap.has(k)) continue;
       archiveMap.set(k, { title: it.title, outlet: String(it.outlet || '').replace(/ via .*$/, ''), url: it.url || null, publishedAt: it.publishedAt,
@@ -123,8 +143,10 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     return p;
   }
 
-  async function onBreaking(cluster, { retry = false } = {}) {
+  async function onBreaking(cluster0, { retry = false } = {}) {
     const now0 = Date.now();
+    const cluster = cleanCluster(cluster0);
+    if (!cluster) { log('info', 'wire cluster dropped: no airable source', { title: cluster0?.title, outlets: cluster0?.outlets }); return; }
     if (!retry) {
       // Repeat fires of the same story (a new cluster id for near-identical headlines) are dropped.
       const tok = tokenSet(cluster.title || '');
@@ -309,7 +331,7 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
       const live = wire ? wire.clusters({ limit: 15, minOutlets: 2 }) : [];
       const fired = recentFired.filter((r) => r.at >= now - F.sotdKeepHours * 3_600_000).map((r) => r.cluster);
       const seen = new Set();
-      const cands = [...(simClusters || []), ...live, ...fired].filter((c) => c?.id && !seen.has(c.id) && seen.add(c.id));
+      const cands = [...(simClusters || []), ...live, ...fired].filter((c) => c?.id && !seen.has(c.id) && seen.add(c.id)).map(cleanCluster).filter(Boolean);
       let best = null;
       for (const c of cands) {
         // Story of the Day is the day's news story, never a sports / gaming cluster (a small slice, never the lead)
@@ -435,7 +457,7 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     const seen = new Set();
     const out = [];
     for (const it of items) {
-      if (Date.parse(it.publishedAt) < cutoff) continue;
+      if (Date.parse(it.publishedAt) < cutoff || badItem(it)) continue;
       const k = String(it.title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
       if (!k || seen.has(k)) continue;
       seen.add(k);

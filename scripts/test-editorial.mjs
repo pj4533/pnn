@@ -414,6 +414,67 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
   console.log(`  news gate: board ${out.stories.map((s) => s.id).join(', ')} | pending ${out.pending.map((s) => s.id).join(', ')} | sports board ${sg(o2.stories)}, desk ${desk?.stories?.length ?? 0}`);
 }
 
+// Polish queue 2026-11-05: ladder rung wording, raw-question leftovers, photo-count novelty, swing = card.
+{
+  const { moverName, outcomeLabel, marketLine } = await import('../server/editorial/copy.mjs');
+  const { classify } = await import('../server/editorial/filter.mjs');
+  const { swingOf } = await import('../server/editorial/rank.mjs');
+  const mk = (o) => ({ id: 'ks:x', source: 'kalshi', change1w: null, volume24h: 1e5, closesAt: null, tags: [], ...o });
+  // (3) a Kalshi "reach $115.01" rung: no cent artifact, no "in <question>", gerund label for the "<label> slips to 22%" glue
+  const wti = mk({ id: 'ks:KXWTIMAX-26DEC31-T115', title: 'Will the maximum WTI front month settle price reach $115.01 by Dec 31, 2026?', outcome: '$115.01 or above',
+    eventTitle: 'How high will oil (WTI) get by Dec 31, 2026?', tags: ['kalshi:ladder'], strike: 115, strikeDir: 'above', yesPrice: 0.22, change1d: -0.04 });
+  const wh = storyHeadline({ lead: wti, kind: 'mover', markets: [wti] });
+  eq(wh, 'WTI oil reaches $115 by Dec 31: 22% chance, down 4 points today', 'wti headline');
+  eq(shortHeadline(wh), 'WTI oil hits $115 by Dec 31', 'wti short headline');
+  eq(moverName(wti).label, 'WTI oil reaching $115 by Dec 31', 'wti mover label');
+  eq(moverName(wti).context, '', 'wti mover context');
+  // "How high will unemployment get" with an "Above 8%" rung
+  const un = mk({ id: 'ks:KXU3MAX-27-8', title: 'How high will unemployment get before 2027?', outcome: 'Above 8%', eventTitle: 'How high will unemployment get in 2026?', tags: ['kalshi:ladder'], strike: 8, yesPrice: 0.04, change1d: -0.03 });
+  eq(outcomeLabel(un), 'Unemployment above 8% before 2027', 'how-high rung label');
+  // No raw question or ellipsis ever lands in a mover label/context, a headline or a ticker line
+  const RAW = /\b(?:in|:)\s+(?:How|Where|Who|Which|What|When|Will)\b|\?|\.\.\.|…|\bby\? /;
+  const samples = [
+    mk({ id: 'pm:1', title: 'Gemini Carbon released on November 10?', outcome: 'November 10', eventTitle: 'Gemini Carbon released on...?', yesPrice: 0.23, change1d: -0.33, source: 'polymarket' }),
+    mk({ id: 'pm:2', title: 'Houthis capture Taiz city by November 30?', outcome: 'November 30', eventTitle: 'Houthis capture Taiz by...? (castle)', yesPrice: 0.08, change1d: -0.08, source: 'polymarket' }),
+    mk({ id: 'pm:3', title: 'Will Pete Hegseth leave Trump\'s Cabinet next?', outcome: 'Pete Hegseth', eventTitle: 'Who will leave Trump\'s Cabinet next?', yesPrice: 0.68, change1d: 0.26, source: 'polymarket' }),
+    mk({ id: 'pm:4', title: 'Will the Democrats win 5 House seats in Arizona?', outcome: '5', eventTitle: 'How many House seats will the Democrats win in Arizona?', yesPrice: 0.83, change1d: 0.1, source: 'polymarket' }),
+    mk({ id: 'ks:KXPRIMEENGCONSUMPTION-30-OIL', title: 'What will be the largest source of global primary energy consumption in 2030?', outcome: 'Oil', eventTitle: 'What will be the largest source of global primary energy consumption in 2030?', yesPrice: 0.63, change1d: 0.02 }),
+    mk({ id: 'pm:6', title: 'Will the Democrats win the Mississippi governor race?', outcome: 'Democratic', eventTitle: 'Mississippi Governor winner? (2027)', yesPrice: 0.38, change1d: -0.05, source: 'polymarket' }),
+  ];
+  for (const m of samples) {
+    const nm = moverName(m);
+    const glued = `${nm.label} slips to ${Math.round(m.yesPrice * 100)}%${nm.context ? ' in ' + nm.context : ''}`;
+    const lines = [glued, storyHeadline({ lead: m, kind: 'mover', markets: [m] }), shortHeadline(storyHeadline({ lead: m, kind: 'mover', markets: [m] })), marketLine(m)];
+    for (const t of lines) if (RAW.test(t)) { console.log('  FAIL raw question leftover: ' + t); process.exitCode = 1; }
+  }
+  eq(moverName(samples[0]).label, 'Gemini Carbon is released on November 10', 'date outcome says the whole clause');
+  eq(moverName(samples[2]).context, '', 'question event is folded into the label');
+  eq(outcomeLabel(samples[4]) !== '' && /Oil is the largest source/.test(storyHeadline({ lead: samples[4], kind: 'mover', markets: [samples[4]] })), true, 'what-will-be + outcome -> statement');
+  // (4) photo-count series is novelty; an outcome-less wh-question cannot be said as a probability
+  const photo = mk({ id: 'ks:KXTRUMPPHOTO-26NOV08-2-4', title: 'Will the number of distinct days with a Getty Images editorial photo of Trump be exactly 4 between Nov 2, 2026 and Nov 8, 2026?', outcome: '4',
+    eventTitle: 'How many days will Trump be photographed this week? (11/2-11/8)', tags: ['politics', 'recurring', 'freq:weekly'], yesPrice: 0.4, change1d: 0.18, volume24h: 1470 });
+  const cf = classify(photo, config, { now: NOW });
+  eq(`${cf.keep}:${cf.category}`, 'false:novelty', 'Getty photo-count series is novelty');
+  const cf2 = classify(photo, {}, { now: NOW });
+  eq(`${cf2.keep}:${cf2.category}`, 'false:novelty', 'Getty photo-count series is novelty (builtin, no config)');
+  const wq = classify(mk({ id: 'ks:KXIPOOPENAI-27JAN01', title: 'When will OpenAI IPO?', outcome: null, eventTitle: 'When will OpenAI IPO?', tags: ['economics', 'financials'], yesPrice: 0.03 }), config, { now: NOW });
+  eq(`${wq.keep}:${wq.reason}`, 'false:unstatable', 'outcome-less wh-question never airs');
+  // (6) swing.from/delta/points agree with lead.change1d under the widget arithmetic, including exact-half moves
+  let bad = 0;
+  for (let to = 3; to <= 97; to++) for (let c = 10; c <= 90; c += 1) for (const sgn of [1, -1]) for (const half of [0, 0.5]) {
+    const t = to / 100, ch = sgn * (c + half) / 100, prev = t - ch;
+    if (prev < 0 || prev > 1) continue;
+    const lead = { yesPrice: t, change1d: t - prev };
+    const sw = swingOf(lead, 1e6);
+    if (!sw) { if (Math.abs(lead.change1d) >= 0.1) bad++; continue; }   // (a 0.0999999 move is under the 10-point gate)
+    const card = Math.sign(lead.change1d) * Math.round(Math.abs(lead.change1d) * 100);
+    const widget = Math.sign(sw.to - sw.from) * Math.round(Math.abs(sw.to - sw.from) * 100);
+    const cardSw = Math.sign(sw.delta) * Math.round(Math.abs(sw.delta) * 100);
+    if (card !== widget || card !== cardSw || card !== sw.points) bad++;
+  }
+  eq(bad, 0, 'swing from/to/delta/points agree with the card');
+}
+
 // ---------- local fallback normalizer (mirrors the contract Market shape) ----------
 function localNormalize(evs) {
   const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));

@@ -155,6 +155,8 @@ export default {
       // View-count and search-rank novelty ("# of views of next MrBeast video", "Taylor Swift daily view count")
       // Daily index coin-flips ("S&P 500 Daily Up/Down"), the stock-market twin of crypto "up or down".
       { category: 'novelty', re: re('\\bdaily up\\s*/\\s*down\\b') },
+      // Photo-count series (Kalshi KXTRUMPPHOTO: "Number of distinct days with a Getty Images editorial photo of Trump ...")
+      { category: 'novelty', re: re('\\bGetty Images\\b|\\bdistinct days\\b|\\bphotographed this (week|month)\\b|\\beditorial photo\\b') },
       { category: 'novelty', re: re('#\\s*of views|\\bview count\\b|\\bviews? (of|on) .{0,40}video\\b') },   // Kalshi multi-leg combos (e.g. "LA Mayor - CA Governor Combo")
     ],
   },

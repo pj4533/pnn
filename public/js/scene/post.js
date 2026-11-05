@@ -1,4 +1,4 @@
-// Post-processing: BackdropPass (scene director) -> main scene (holograms on top) -> bloom -> grade/CA/glitch/vignette/grain + flash + alert tint.
+// Post-processing: BackdropPass (scene director) -> main scene (holograms on top) -> bloom -> grade/CA/glitch/vignette/grain + flash + alert tint -> hologram labels (LabelPass: no bloom, no grade).
 import * as THREE from '../../vendor/three/three.module.js';
 import { EffectComposer } from '../../vendor/three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from '../../vendor/three/addons/postprocessing/RenderPass.js';
@@ -18,7 +18,23 @@ class BackdropPass extends Pass {
     renderer.autoClear = ac;
   }
 }
-import { TIME } from './holo.js';
+import { TIME, LABEL_LAYER } from './holo.js';
+
+// LabelPass: hologram text (makeLabel sprites live on LABEL_LAYER only) drawn AFTER bloom, straight onto the composed
+// image. Text never feeds the bloom (no white smears over bright scenes) and carries its own designed glow in the
+// label texture, so it looks the same over a bright green scene and over black. Arcs, beams and particles keep bloom.
+class LabelPass extends Pass {
+  constructor(scene, camera) { super(); this.scene = scene; this.camera = camera; this.needsSwap = false; }
+  render(renderer, writeBuffer, readBuffer) {
+    const cam = this.camera, mask = cam.layers.mask, ac = renderer.autoClear;
+    cam.layers.set(LABEL_LAYER);
+    renderer.autoClear = false;
+    renderer.setRenderTarget(readBuffer);
+    renderer.clearDepth();
+    renderer.render(this.scene, cam);
+    cam.layers.mask = mask; renderer.autoClear = ac;
+  }
+}
 
 const FinalShader = {
   uniforms: {
@@ -99,6 +115,9 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   const fin = new ShaderPass(FinalShader);
   fin.uniforms.uTime = TIME;   // ShaderPass clones uniforms; share the live clock so grain/glitch animate
   composer.addPass(fin);
+  // hologram text after bloom AND after the grade/vignette: the vignette and mood grade dimmed edge labels to grey,
+  // so text keeps one look on every scene (its glow is designed into the label texture)
+  composer.addPass(new LabelPass(scene, camera));
   composer.addPass(new OutputPass());
   const base = { strength: 0.55 };
   const U = fin.uniforms;

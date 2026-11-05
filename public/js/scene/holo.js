@@ -119,6 +119,8 @@ export function lineMaterial(color, { glow = 1.6, alpha = 0.8 } = {}) {
 export const reveal = { uniforms: REVEAL_UNIFORMS, glsl: revealGlsl, vert: lineVert };
 
 // ---------- canvas labels ----------
+// Every label sprite lives on LABEL_LAYER only: the main pass (layer 0) skips it, post.js's LabelPass draws it after bloom.
+export const LABEL_LAYER = 1;
 const LABELS = new Set();
 let fontsReady = false;
 if (typeof document !== 'undefined' && document.fonts?.load) {
@@ -135,8 +137,9 @@ export function makeLabel(text, opts = {}) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
-  mat.color.setScalar(Math.min(o.bright, 0.7)); // stay under the bloom threshold (0.78): brighter labels smeared into glow
+  mat.color.setScalar(1);   // drawn after bloom (LabelPass): full brightness, the glow is designed into the texture
   const sprite = new THREE.Sprite(mat);
+  sprite.layers.set(LABEL_LAYER);
   sprite.renderOrder = 50;
   sprite.scale.set(o.height * (o.w / o.h), o.height, 1);
   if (o.align === 'left') sprite.center.set(0, 0.5);
@@ -180,20 +183,24 @@ export function makeLabel(text, opts = {}) {
     const subFont = hasSub ? fitFont(o.subFont, cur.sub, o.w - pad * 2) : null;
     plate([{ str: cur.text, font: mainFont, x, y: mainY }, ...(hasSub ? [{ str: cur.sub, font: subFont, x, y: subY }] : [])]);
     ctx.textAlign = o.align; ctx.textBaseline = 'middle';
-    ctx.font = mainFont;
-    // legibility first: a dark outline under the letters, then a small tight glow (was a wide double glow)
-    ctx.lineJoin = 'round'; ctx.strokeStyle = o.crisp ? 'rgba(6,0,22,0.98)' : 'rgba(6,0,22,0.88)'; ctx.lineWidth = o.h * (o.crisp ? 0.09 : 0.05);
-    ctx.shadowBlur = 0; ctx.strokeText(cur.text, x, mainY);
-    ctx.shadowColor = cur.glow; ctx.shadowBlur = o.crisp ? 0 : o.h * 0.035;
-    ctx.fillStyle = cur.color;
-    ctx.fillText(cur.text, x, mainY);
-    if (hasSub) {
-      ctx.font = subFont;
-      ctx.shadowBlur = 0; ctx.lineWidth = o.h * 0.035; ctx.strokeText(cur.sub, x, subY);
-      ctx.shadowColor = o.subColor || cur.glow; ctx.shadowBlur = o.h * 0.02;
-      ctx.fillStyle = o.subColor;
-      ctx.fillText(cur.sub, x, subY);
-    }
+    // designed glow (labels skip bloom, so the halo lives here and is identical over any background):
+    // 1) a soft coloured halo, 2) a dark outline that separates the letters from the halo and any bright scene,
+    // 3) the bright fill with a tight inner bloom of its own colour. crisp: smaller halo, heavier outline.
+    const line = (str, font, y, fill, glowCol, k) => {
+      ctx.font = font;
+      const px = Number((font.match(/(\d+)px/) || [0, 60])[1]);
+      ctx.lineJoin = 'round';
+      ctx.save();
+      ctx.fillStyle = glowCol; ctx.strokeStyle = glowCol; ctx.shadowColor = glowCol;
+      ctx.globalAlpha = o.crisp ? 0.3 : 0.42; ctx.lineWidth = px * 0.2; ctx.shadowBlur = px * (o.crisp ? 0.35 : 0.55); ctx.strokeText(str, x, y);
+      ctx.globalAlpha = o.crisp ? 0.7 : 0.9; ctx.shadowBlur = px * 0.2; ctx.fillText(str, x, y);
+      ctx.restore();
+      ctx.shadowBlur = 0; ctx.strokeStyle = 'rgba(4,0,16,0.94)'; ctx.lineWidth = px * (o.crisp ? 0.2 : 0.14) * k; ctx.strokeText(str, x, y);
+      ctx.fillStyle = fill; ctx.shadowColor = glowCol; ctx.shadowBlur = px * 0.07; ctx.fillText(str, x, y);
+      ctx.shadowBlur = 0; ctx.fillText(str, x, y);   // second pass keeps the core solid
+    };
+    line(cur.text, mainFont, mainY, cur.color, cur.glow, 1);
+    if (hasSub) line(cur.sub, subFont, subY, o.subColor, o.subColor || cur.glow, 0.85);
     tex.needsUpdate = true;
   }
   redraw();
@@ -263,7 +270,8 @@ export class Holo {
       if (u.uReveal) u.uReveal.value = this.reveal;
       if (u.uR0) { u.uR0.value = this.r0; u.uR1.value = this.r1; u.uAxis.value = this.axis; }
     }
-    for (const l of this.labels) l.opacity = this.fade * clamp01((this.reveal - l.yFrac) * 6 + 0.2) * (l.bright ?? 1);
+    // reveal * 1.15: labels near the top (yFrac ~0.98: titles, NOW readouts) reach full opacity once the scan-in ends (were stuck at ~35%, grey)
+    for (const l of this.labels) l.opacity = this.fade * clamp01((this.reveal * 1.15 - l.yFrac) * 6 + 0.2) * (l.bright ?? 1);
   }
   tick(dt, t) { this.baseTick(dt); }
   pose() { const tgt = this.station.clone().add(new THREE.Vector3(0, this.height / 2, 0)); return { target: tgt, position: tgt.clone().add(new THREE.Vector3(0, 3, 40)), orbit: 0.12, box: new THREE.Box3(this.station.clone().add(new THREE.Vector3(-10, 0, -3)), this.station.clone().add(new THREE.Vector3(10, this.height, 3))) }; }

@@ -16,6 +16,16 @@ export function pointsText(d, when = 'today') {
   if (n === 0) return `unchanged ${when}`;
   return `${n > 0 ? 'up' : 'down'} ${Math.abs(n)} ${Math.abs(n) === 1 ? 'point' : 'points'} ${when}`;
 }
+/** The outcome label shown as a subtitle under the headline; '' for a bare count-bucket number ("4", "5+", "0-2", "<3"),
+ *  which says nothing without the question. */
+export const BARE_NUM = /^\s*[<>≤≥~]?\s*[$]?\d[\d.,]*\s*(?:[-–]\s*\d[\d.,]*)?\s*(?:\+|%|or more|or fewer|or less|or fewer|plus)?\s*$/i;
+export function outcomeSubtitle(story, m = story?.lead) {
+  if (!((story?.markets || []).length > 1)) return '';
+  const l = String(marketLabel(m) || '').trim();
+  return !l || BARE_NUM.test(l) ? '' : l;
+}
+/** ONE source of truth for the card's move: whole points of the lead's change1d (the same number the widget, chyron and ticker show). */
+export const leadPts = (s, key = 'change1d') => ptsOf(s?.lead?.[key]);
 const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${Math.abs(n)}` : '0');   // real minus sign, glows like the plus
 
 const TITLES = { focus: 'STORY FOCUS', movers: 'BIGGEST MOVERS', week: 'THIS WEEK' };
@@ -47,7 +57,7 @@ function bars(story) {
 
 /** The big move: today's move, else the week move, else the runner-up (multi-market), else nothing. */
 function bigMove(s) {
-  const m = s.lead, d = ptsOf(m.change1d), w = ptsOf(m.change1w);
+  const m = s.lead, d = leadPts(s), w = leadPts(s, 'change1w');
   if (d) return { html: `<div class="bc-dl ${d > 0 ? 'up' : 'down'}"><span class="bc-d">${signed(d)}</span><span class="bc-dc fit">${Math.abs(d) === 1 ? 'POINT' : 'POINTS'} TODAY</span></div>`, usedWeek: false };
   if (w) return { html: `<div class="bc-dl ${w > 0 ? 'up' : 'down'}"><span class="bc-d">${signed(w)}</span><span class="bc-dc fit">${Math.abs(w) === 1 ? 'POINT' : 'POINTS'} THIS WEEK</span></div>`, usedWeek: true };
   const ru = (s.markets || []).filter((x) => x.id !== m.id).sort((a, b) => b.yesPrice - a.yesPrice)[0];
@@ -68,11 +78,12 @@ function swingCard(seg, now) {
   const s = seg.story, m = s.lead, sw = s.swing;
   const from = Number.isFinite(sw.from) ? sw.from : m.yesPrice - (m.change1d || 0);
   const to = Number.isFinite(sw.to) ? sw.to : m.yesPrice;
-  const d = ptsOf(Number.isFinite(sw.delta) ? sw.delta : to - from) || 0;
+  // same number as the widget: a 24h swing IS the lead's change1d (so card, dial, chyron and ticker round the same value); a last-hour swing is to - from
+  const d = ((sw.window !== '1h' && Number.isFinite(m.change1d) ? ptsOf(m.change1d) : ptsOf(Number.isFinite(sw.delta) ? sw.delta : to - from)) || 0);
   const a = pctNum(from), b = pctNum(to);
   const counts = /^\d+$/.test(a) && /^\d+$/.test(b);          // '<1' / '>99' can't count: show them as text
   const title = sw.title || SWING_TITLES[sw.shape] || 'BIGGEST SWINGS';
-  const lbl = (s.markets || []).length > 1 ? marketLabel(m) : '';
+  const lbl = outcomeSubtitle(s, m);
   return `<section class="card bigc bc-swing sw-${esc(sw.shape || 'swing')} ${d >= 0 ? 'sw-up' : 'sw-down'}" data-story="${esc(s.id)}">
     <div class="bc-h"><span class="bc-seg fit">${esc(title)}</span>${s.settling ? '<span class="bc-tag">SETTLING</span>' : ''}</div>
     <div class="bc-kick fit">${esc(categoryName(s.category).toUpperCase())} · ${esc(s.eventTitle || '')}</div>
@@ -99,10 +110,9 @@ export function segmentCard(seg, now = Date.now()) {
   const m = s.lead;
   const title = seg.id === 'desk' ? (seg.desk?.title || `${String(seg.desk?.id || '').toUpperCase()} DESK`) : TITLES[seg.id] || '';
   const n = Math.max(1, seg.count || 1), i = Math.min(n - 1, Math.max(0, seg.index || 0));
-  const multi = (s.markets || []).length > 1;
-  const lbl = multi ? marketLabel(m) : '';
+  const lbl = outcomeSubtitle(s, m);
   const mv = bigMove(s);
-  const wk = ptsOf(m.change1w);
+  const wk = leadPts(s, 'change1w');
   const week = !mv.usedWeek && wk ? pointsText(m.change1w, 'this week') : '';
   const closes = seg.id === 'week' && m.closesAt ? until(m.closesAt, now) : '';
   const deskCls = seg.id === 'desk' && seg.desk ? ` desk-${esc(seg.desk.id)}` : '';

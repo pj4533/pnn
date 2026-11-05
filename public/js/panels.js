@@ -1,4 +1,5 @@
 // HTML builders for the segment panels. Pure functions of (data, now) → HTML string.
+import { outcomeSubtitle } from './cards.js';
 import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta } from './util.js';
 
 const KIND = { mover: 'ON THE MOVE', favorite: 'THE FAVORITE', closing: 'RESOLVING SOON', news: 'IN THE NEWS' };
@@ -10,9 +11,12 @@ export function metaLine(story, now, cls = '') {
   return `<div class="meta ${cls}"><span class="fit meta-t"><b>${esc(ex)}</b> · updated ${esc(ago(m.updatedAt, now))} · <b>${esc(storyVolume(story))}</b> traded in 24 hrs</span>${story.thin ? '<span class="thin">THIN MARKET</span>' : ''}</div>`;
 }
 
+/** Strip-card outlet: the first outlet only ("The Guardian and CBS News" -> "The Guardian"): the strip card is too narrow for a list. */
+const miniOutlet = (nw) => newsOutlet(nw).split(/\s+(?:and|&)\s+|\s*[,/|]\s*/i)[0].trim() || newsOutlet(nw);
+
 function bigNumber(story, cls = '') {
   const m = story.lead;
-  const lbl = story.markets?.length > 1 ? marketLabel(m) : 'Chance';
+  const lbl = outcomeSubtitle(story, m) || 'Chance';
   return `<div class="big ${cls}">
     <div class="big-n"><span class="big-v">${esc(pctNum(m.yesPrice))}</span><span class="big-p">%</span></div>
     <div class="big-side">
@@ -88,7 +92,7 @@ export function miniCard(story, now, rank) {
   return `<article class="mini" data-story="${esc(story.id)}" style="--i:${rank}">
     <div class="mini-top"><span class="mini-rk">${story.boardRank || rank + 1}</span><span class="mini-cat fit">${esc(categoryName(story.category).toUpperCase())}</span><span class="mini-v">${esc(pct(m.yesPrice))}</span></div>
     <div class="mini-h fit" data-fit-h>${esc(story.short || story.headline)}</div>
-    ${nw ? `<div class="mini-nw" data-opt-parent><b>${esc(newsOutlet(nw).toUpperCase())}</b><span data-opt> · ${esc(nw.title)}</span><i>${nw.publishedAt ? ` · ${esc(ago(nw.publishedAt, now))}` : ''}</i></div>` : ''}
+    ${nw ? `<div class="mini-nw" data-opt-parent><b>${esc(miniOutlet(nw).toUpperCase())}</b><span data-opt> · ${esc(nw.title)}</span><i>${nw.publishedAt ? ` · ${esc(ago(nw.publishedAt, now))}` : ''}</i></div>` : ''}
     <div class="mini-meta"><span class="mini-mv ${moveCls(m.change1d)}">${esc(moveShort(m.change1d))}</span><span class="fit"><b>${esc(exchangeName(m.source))}</b> · ${esc(ago(m.updatedAt, now))} · ${esc(money(m.volume24h))}/24h</span>${story.thin ? '<span class="thin sm">THIN</span>' : ''}</div>
   </article>`;
 }

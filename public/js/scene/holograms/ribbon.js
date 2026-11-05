@@ -105,8 +105,8 @@ export function createRibbon(ctx, story, opts = {}) {
     for (let p = Math.ceil(lo / pStep) * pStep; p <= hi + 1e-9; p += pStep) {
       const y = yOf(p);
       hl.push(-L / 2 - 1, y, 0.2, L / 2 + 1, y, 0.2);
-      const al = holo.label(pctText(p), { w: 256, h: 128, height: 1.15, font: '700 80px Rajdhani', color: '#dfe8ff', glow: pal.hexB, align: 'right' });
-      al.sprite.position.set(-L / 2 - 1.4, y, 0.3); al.yFrac = 0.02; al.bright = 0.8;
+      const al = holo.label(pctText(p), { w: 256, h: 128, height: 1.6, font: '800 92px Rajdhani', color: '#f4f7ff', glow: pal.hexB, align: 'right', plate: false });
+      al.sprite.position.set(-L / 2 - 1.4, y, 0.3); al.yFrac = 0.02;
     }
     root.add(lineSeg(new Float32Array(hl), holo.line(COL.white, { alpha: 0.16 })));
     // floor frame
@@ -137,17 +137,17 @@ export function createRibbon(ctx, story, opts = {}) {
     const oc = String(lead.outcome || '').trim();
     const useOc = oc && !/^(yes|no)$/i.test(oc) && oc.toUpperCase() !== evt.toUpperCase();
     const main = (useOc ? oc : evt || 'THE CHANCE').toUpperCase(), sub = useOc ? evt.toUpperCase() : 'CHANCE OF YES';
-    const tl = holo.label(main, { w: 1600, h: 200, height: 2.6, font: '900 84px Orbitron', color: '#ffffff', glow: pal.hexA, sub, subColor: '#dfe8ff', subFont: '700 70px Rajdhani', align: 'left', mainY: 0.3, subY: 0.76 });
-    tl.sprite.position.set(-L / 2 - 1, Y0 + H + 3.6, 0.5); tl.yFrac = 0.98;
+    const tl = holo.label(main, { w: 1600, h: 200, height: 3.3, font: '900 88px Orbitron', color: '#ffffff', glow: pal.hexA, sub, subColor: '#eef3ff', subFont: '700 72px Rajdhani', align: 'left', mainY: 0.3, subY: 0.76 });
+    tl.sprite.position.set(-L / 2 - 1.6, Y0 + H + 4.0, 0.5); tl.yFrac = 0.98;
     // a zoomed axis must say so, or a 6-point wobble reads like a landslide
     if (hi - lo < 0.4) {
       const zl = holo.label(`ZOOMED IN: ${Math.round(lo * 100)}-${Math.round(hi * 100)}% SHOWN`, { w: 768, h: 96, height: 0.95, font: '700 66px Rajdhani', color: '#ffe28a', glow: '#ffd23f', align: 'left' });
-      zl.sprite.position.set(-L / 2 - 0.6, Y0 + H + 1.55, 0.4); zl.yFrac = 0.9; zl.bright = 0.75;
+      zl.sprite.position.set(-L / 2 - 0.6, Y0 + H + 1.55, 0.4); zl.yFrac = 0.9;
     }
     const vol = Number(lead.volume24h), vtxt = !Number.isFinite(vol) || vol <= 0 ? '' : vol >= 1e6 ? `$${(vol / 1e6).toFixed(1).replace(/\.0$/, '')}M` : vol >= 1e3 ? `$${Math.round(vol / 1e3)}K` : `$${Math.round(vol)}`;
     const thin = !!story.thin;
-    const ft = holo.label(`${lead.source === 'kalshi' ? 'KALSHI' : 'POLYMARKET'}${vtxt ? ` · ${vtxt} TRADED TODAY` : ''}${thin ? ' · THIN MARKET' : ''}`, { w: 1400, h: 112, height: 1.25, font: '700 70px Rajdhani', color: thin ? '#ffab2e' : '#dfe8ff', glow: thin ? '#ffab2e' : pal.hexB });
-    ft.sprite.position.set(0, -1.1, 2.4); ft.yFrac = 0.02; ft.bright = 0.75;
+    const ft = holo.label(`${lead.source === 'kalshi' ? 'KALSHI' : 'POLYMARKET'}${vtxt ? ` · ${vtxt} TRADED TODAY` : ''}${thin ? ' · THIN MARKET' : ''}`, { w: 1400, h: 112, height: 1.45, font: '700 74px Rajdhani', color: thin ? '#ffab2e' : '#eef3ff', glow: thin ? '#ffab2e' : pal.hexB });
+    ft.sprite.position.set(0, -1.1, 2.4); ft.yFrac = 0.02;
   }
   // high / low markers
   if (!replay && pMax - pMin > 0.03) {
@@ -178,8 +178,8 @@ export function createRibbon(ctx, story, opts = {}) {
     if (span >= 5400) {
       const p1h = pAt(t1 - 3600), y1h = yOf(p1h);
       ghostLine(y1h, COL.gold, 0.6);
-      const gl = holo.label(`1H AGO ${pctText(p1h)}`, { w: 512, h: 128, height: 1.0, font: '700 80px Orbitron', color: '#ffe27a', glow: '#ffd23f' });
-      gl.sprite.position.set(L / 2 - 11, y1h + (y1h <= last.y ? -0.9 : 0.9), 0.4); gl.yFrac = 0.5;
+      const gl = holo.label(`1H AGO ${pctText(p1h)}`, { w: 640, h: 128, height: 1.5, font: '900 84px Orbitron', color: '#fff0a8', glow: '#ffd23f' });
+      gl.sprite.position.set(L / 2 - 11, y1h + (y1h <= last.y ? -1.2 : 1.2), 0.4); gl.yFrac = 0.5;
     }
     // news markers: a pulsing diamond on the curve where each wire headline landed
     const nm = (Array.isArray(story.newsMarks) ? story.newsMarks : []).filter((m) => m && Number.isFinite(m.t) && m.t >= t0 && m.t <= t1 + 900).sort((a, b) => a.t - b.t).slice(-5);
@@ -249,7 +249,7 @@ export function createRibbon(ctx, story, opts = {}) {
   };
   holo.pose = function () {
     const tgt = this.station.clone().add(new THREE.Vector3(0, Y0 + H * 0.45, -2));
-    return { target: tgt, position: tgt.clone().add(new THREE.Vector3(-3, 2.5, 44)), orbit: 0.07, box: boxAt(this.station, -L / 2 - 2, -2, -echoes * 1.9 - 1.5, L / 2 + 2, Y0 + H + 5, 2.5) };
+    return { target: tgt, position: tgt.clone().add(new THREE.Vector3(-3, 2.5, 44)), orbit: 0.07, box: boxAt(this.station, -L / 2 - 4.6, -2, -echoes * 1.9 - 1.5, L / 2 + 2, Y0 + H + 5.8, 2.5) };
   };
   return holo;
 }

@@ -337,19 +337,33 @@ function setExchanges(keep, drop) {
 // else from an hour ago when it moved 5+ points in the last hour on $10K+ (swing.window says which).
 const SWING_DAY = 0.10, SWING_HOUR = 0.05;
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
+// The card says "down 22 points" from lead.change1d (round-half-away on the magnitude); the widgets recompute
+// round(|to - from| * 100) from swing.from/to, where float noise at an exact half ("21.499999") shows 21. One source of
+// truth: the 24h swing IS lead.change1d, and `from` is nudged (1e-4 steps, never visible in a rounded %) until the
+// widget's own arithmetic lands on the card's number. `points` is that number, signed, for clients that want it as-is.
+const pointsOf = (d) => Math.sign(d) * Math.round(abs(d) * 100);
 export function swingOf(lead, evVol, { thinVolume = 25_000, elections = false } = {}) {
   if (!lead || !Number.isFinite(lead.yesPrice)) return null;
   const to = lead.yesPrice;
-  let from = null, window = '24h';
-  if (Number.isFinite(lead.change1d) && abs(lead.change1d) >= SWING_DAY && evVol >= thinVolume) from = to - lead.change1d;
-  else if (Number.isFinite(lead.change1h) && abs(lead.change1h) >= SWING_HOUR && evVol >= HOT_VOLUME) { from = to - lead.change1h; window = '1h'; }
-  if (from == null) return null;
-  from = clamp01(from);
-  const delta = to - from;
+  let change = null, window = '24h';
+  if (Number.isFinite(lead.change1d) && abs(lead.change1d) >= SWING_DAY && evVol >= thinVolume) change = lead.change1d;
+  else if (Number.isFinite(lead.change1h) && abs(lead.change1h) >= SWING_HOUR && evVol >= HOT_VOLUME) { change = lead.change1h; window = '1h'; }
+  if (change == null) return null;
+  const want = Math.round(abs(change) * 100);
+  const seen = (f) => Math.round(abs(to - f) * 100);   // what dial.js / outcomes.js compute from swing.from and swing.to
+  let from = clamp01(to - change);
+  from = Math.round(from * 1000) / 1000;
+  const clamped = to - change < 0 || to - change > 1;
+  if (!clamped) {
+    const away = change > 0 ? -1 : 1;   // from moves away from `to` to widen |to - from|
+    for (let i = 0; i < 6 && seen(from) !== want; i++) from = Math.round((from + (seen(from) < want ? away : -away) * 0.0001) * 10000) / 10000;
+  }
+  // whole points when not clamped, so ptsOf(delta) is the card's number whatever the float noise
+  const delta = clamped ? Math.round((to - from) * 1000) / 1000 : Math.sign(change) * want / 100;
   if (abs(delta) < 0.005) return null;
   const shape = from < 0.25 && delta > 0 ? 'longshot' : from > 0.6 && delta < 0 ? 'slipping' : 'swing';
   return {
-    from: Math.round(from * 1000) / 1000, to, delta: Math.round(delta * 1000) / 1000,
+    from, to, delta, points: pointsOf(clamped ? delta : change),
     flipped: (from - 0.5) * (to - 0.5) < 0, shape, title: shapeTitle(shape), window,
     ...(elections ? { note: 'Market prices, not official results' } : {}),
   };

@@ -67,6 +67,8 @@ export function dejargon(s) {
 }
 
 const stripQ = (s) => String(s || '').replace(/\?+\s*$/, '').trim();
+// "Houthis capture Taiz by...? (castle)" -> "Houthis capture Taiz by": the stub an outcome ("November 30") completes
+const eventStub = (e) => stripQ(stripParens(stripQ(dejargon(e)))).replace(/\s*(?:\.\.\.|…|_+)\s*\??$/, '').replace(/\?+$/, '').trim();
 const stripParens = (s) => String(s || '').replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
 
 // "Scott Colom (D)" -> "Democrat Scott Colom"; "Sen. Dan Sullivan (R)" -> "Republican Dan Sullivan"
@@ -320,7 +322,7 @@ function tighten(clause) {
     .replace(/\binterest rates\b/gi, 'rates')
     .replace(/\bafter the (\w+) \d{4} meeting\b/gi, 'in $1')
     .replace(/\bthe (\d{4}) /g, 'the $1 ')
-    .replace(/\s+in (20\d\d)\b(?=$)/, '')
+    .replace(new RegExp(`\\s+in (?:${YEAR}|${+YEAR + 1})\\b(?=$)`), '')   // this year and next are implied; "in 2030" is not
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -373,7 +375,7 @@ function fmtNum(n, dollars) {
     const d = String(n).split('.')[1] || '';
     const sig = d.replace(/0+$/, '').length;
     // $4.0200 -> $4.02, $4.0850 -> $4.085, $4068.00 -> $4,068, $3947.99 -> $3,947.99
-    const keep = x >= 1000 && sig === 0 ? 0 : Math.min(Math.max(2, sig), 3);
+    const keep = x >= 10 && sig === 0 ? 0 : Math.min(Math.max(2, sig), 3);   // $115.00 -> $115, but a gas rung stays $4.00
     return x.toLocaleString('en-US', { minimumFractionDigits: keep, maximumFractionDigits: keep });
   }
   if (Math.abs(x) >= 1e6 && Number.isInteger(x)) return `${+(x / 1e6).toFixed(2)} million`;
@@ -444,6 +446,9 @@ export function ladderParts(m) {
   const hm = t.match(/^How many (\w+(?: \w+)?) will (.+?) (?:have|get|make|see|win|hold|receive|sign|issue)\b ?(.*)$/i);
   const ho = String(m.outcome || '').match(new RegExp(`^(${REL_WORDS}) (${VAL})$`, 'i'));
   if (hm && ho) t = `${hm[2]} ${hm[1]}${hm[3] ? ' ' + hm[3] : ''}`;
+  // "How high will unemployment get before 2027?" with rung "Above 8%" -> "Unemployment above 8% before 2027"
+  const hh = t.match(/^How (?:high|low) will (?:the )?(.+?) (?:get|go|rise|climb|fall|drop|reach)\b ?(.*)$/i);
+  if (hh && ho) t = `${capFirst(hh[1])} ${ho[1].toLowerCase()} ${ho[2]}${hh[2] ? ' ' + hh[2] : ''}`;
   // a bare rung title ("Above 8.5%") takes its noun from the event ("Generic Ballot: Democrats Up/Down (10/30-11/6)?")
   const bareRung = t.match(new RegExp(`^(${REL_WORDS}) (${VAL})$`, 'i'));
   if (bareRung && m.eventTitle) t = `${stripParens(stripQ(String(m.eventTitle)))} ${bareRung[1].toLowerCase()} ${bareRung[2]}`;
@@ -457,7 +462,8 @@ export function ladderParts(m) {
     // "Will the maximum WTI front month settle price reach $115.01 by Dec 31, 2026?"
     noun = y[1];
     rel = { reach: 'reaches', hit: 'hits', top: 'tops', exceed: 'exceeds', 'go above': 'goes above', 'go below': 'goes below', 'rise above': 'rises above', 'fall below': 'falls below' }[y[2]];
-    value = y[3]; tail = y[4] || '';
+    // Kalshi writes "reach $115.01" for "above $115": the cent is a strike artifact, not a price anyone says
+    value = y[3].replace(/^(\$?\d[\d,]{1,}|\$?[1-9]\d)\.01(?=\s|$)/, '$1'); tail = y[4] || '';
   } else if (!/^Will\b/i.test(t) && (y = t.match(new RegExp(`^(?:the )?([A-Z].+?) (above|below|at least|at most|more than|less than) (${VAL})(?:\\s+(.*))?$`)))) {
     // statement rung: "Anthropic Vercel share of AI Gateway requests across the top labs above 7.7%"
     [, noun, rel, value] = y; tail = y[4] || '';
@@ -487,7 +493,10 @@ export function ladderParts(m) {
   const val = rel === 'between' ? value.split(' and ').map(fv).join(' and ').replace(/ a barrel and /, ' and ') : fv(value);
   const when = whenOf(m, tail);
   const phrase = capFirst(`${noun} ${rel} ${val}${when ? ' ' + when : ''}`.replace(/\s+/g, ' ').trim());
-  return { noun: capFirst(noun), rel, value: val, when, phrase };
+  // "WTI oil reaching $115 by Dec 31": the form a verb can follow ("... slips to 22%"). Only the reach/hit rels change.
+  const ING = { reaches: 'reaching', hits: 'hitting', tops: 'topping', exceeds: 'exceeding', 'goes above': 'going above', 'goes below': 'going below', 'rises above': 'rising above', 'falls below': 'falling below' };
+  const phraseIng = ING[rel] ? capFirst(`${noun} ${ING[rel]} ${val}${when ? ' ' + when : ''}`.replace(/\s+/g, ' ').trim()) : phrase;
+  return { noun: capFirst(noun), rel, value: val, when, phrase, phraseIng };
 }
 // The rung on its own, for neighbor lines in a ladder dek: "above $4.00", "at least 48", "more than 0.2%".
 export function rungLabel(m) {
@@ -600,16 +609,50 @@ export function outcomeLabel(m) {
   return o ? dejargon(o) : dejargon(stripQ(m.title || m.eventTitle || ''));
 }
 // Ticker/movers-board name and context: {label, context}. context is '' when the label already says it all.
+// The client glues them as "<label> slips to 22% in <context>", so a label must read as a subject and a context must be
+// a place ("AZ-02 House winner"), never a raw question ("How high will oil get?"), an ellipsis title or a bare date/number.
+const RAW_Q = /^(?:[^:?]{0,30}:\s*)?(how|where|who|whom|which|what|when|why|will|is|are|does|do|did|can|should|would)\b|\.\.\.|…|_{2,}|\((?:higher|lower|middle|top) /i;
+const isRawQuestion = (s) => RAW_Q.test(String(s || '').trim());
 export function moverName(m) {
   if (!m) return { label: '', context: '' };
   const o = String(m.outcome || '').trim();
   const lp = (!o || isLadderRung(m)) && ladderParts(m);
-  if (lp) return { label: lp.phrase, context: '' };
+  if (lp) return { label: lp.phraseIng, context: '' };
   if (isLadderRung(m)) return { label: outcomeLabel(m), context: '' };
-  if (o && !JUNK_OUTCOME.test(o)) return { label: dejargon(o), context: dejargon(stripQ(m.eventTitle || '')) };
+  if (o && !JUNK_OUTCOME.test(o)) {
+    // an event that is a question or a "by..." stub cannot follow "in": say the whole thing as one clause instead
+    if (!isRawQuestion(m.eventTitle) && !isRawQuestion(m.title && /^(?:how|which|who|what|when|where)\b/i.test(m.title) ? m.title : '')) {
+      return { label: dejargon(o), context: eventStub(m.eventTitle || '') };
+    }
+    const cl = questionToClause(m.title);
+    for (const w of [cl && tighten(cl), tighten(marketLabel(m).replace(/:\s*$/, ''))]) {
+      if (w && !isRawQuestion(w) && !/^\d/.test(w) && w.length > o.length + 6) return { label: /^[a-z][A-Z]/.test(w) ? w : capFirst(w), context: '' };
+    }
+    return { label: dejargon(o), context: '' };
+  }
   if (o) return { label: outcomeLabel(m), context: '' };
   const clause = questionToClause(m.title);
   return { label: clause ? capFirst(tighten(clause)) : dejargon(stripQ(m.eventTitle || m.title || '')), context: '' };
+}
+
+// "What/Which <noun>/Who will be X?" or "Which <noun> will <verb> ...?" with a named outcome -> a statement the outcome
+// completes. null when there is no usable outcome or the question does not map cleanly.
+function whAnswer(m) {
+  const o = cleanOutcome(m?.outcome);
+  if (!o || JUNK_OUTCOME.test(o) || /^\d|^(above|below|at least|more than|less than)\b/i.test(o)) return null;
+  // the market's own question first, else the event's ("120th Congress: Who will be Senate Minority Leader" + "John Thune")
+  for (const src of [m.title, m.eventTitle]) {
+    const raw = tighten(stripQ(dejargon(src || '')));
+    const pre = raw.match(/^([^:?]{0,40}):\s*(?=(?:what|which|who)\b)/i);
+    const t = pre ? raw.slice(pre[0].length) : raw;
+    const where = pre && /^\d+(?:st|nd|rd|th) Congress$/i.test(pre[1].trim()) ? ` in the ${pre[1].trim()}` : '';
+    let x;
+    if ((x = t.match(/^(?:What|Which [a-z]+(?: [a-z]+)?|Who) (?:will|would) be (.+)$/i))) return `${o} is ${x[1]}${where}`;
+    if ((x = t.match(/^(?:Which [a-z]+(?: [a-z]+)?|Who) will (?!be\b)([a-z]+) (.+)$/i)) && !/^(be|been|being)$/i.test(x[1])) {
+      return `${o} ${conjugate(x[1].toLowerCase(), isPluralSubject(o.split(/\s+/)) === true)} ${x[2]}${where}`;
+    }
+  }
+  return null;
 }
 
 function pickShortest(cands, max = HEADLINE_MAX) {
@@ -636,7 +679,9 @@ export function marketLabel(m) {
   if (lp) return lp.phrase + ':';
   const clause = questionToClause(m.title);
   if (clause) return capFirst(tighten(clause)) + ':';
-  return capFirst(dejargon(stripQ(m.outcome && !/^\d/.test(m.outcome) ? `${stripQ(m.eventTitle).replace(/\.\.\.$/, '')} ${m.outcome}` : m.title))) + ':';
+  const wa = whAnswer(m);
+  if (wa) return capFirst(wa) + ':';
+  return capFirst(dejargon(stripQ(m.outcome && !/^\d/.test(m.outcome) ? `${eventStub(m.eventTitle)} ${m.outcome}` : m.title))) + ':';
 }
 const capFirst = (s) => String(s || '').replace(/^(.)/, (c) => c.toUpperCase());
 
@@ -756,12 +801,17 @@ function oddsLine(m, mode, { max = HEADLINE_MAX } = {}) {
   }
   // No parse: quote the market question, or "outcome" inside the event.
   const q = stripParens(m.outcome && !nameLike(m)
-    ? `${stripQ(dejargon(m.eventTitle)).replace(/(?:\.\.\.|…|_+)\??$/, '').trim()} ${dejargon(m.outcome)}`
+    ? `${eventStub(m.eventTitle)} ${dejargon(m.outcome)}`
     : stripQ(dejargon(m.title))).replace(/\.\.\.|…/g, '').replace(/\s+/g, ' ');
   const pw = String(m.outcome || '').match(/^(Democratic|Republican) [Pp]arty$/) && stripQ(String(m.eventTitle || '')).match(/^(.+?) winner$/i);
   if (pw) {
     const c = `${/^D/.test(m.outcome) ? 'Democrats' : 'Republicans'} win the ${pw[1]}`;
     return pickShortest(moved || weekMove ? [`Chance ${c}: ${p}, ${chg}`, `Chance ${c}: ${p}`] : [`Chance ${c}: ${p}`], max);
+  }
+  // "What will be the largest source of energy in 2030?" with outcome "Oil" -> "Oil is the largest source of energy in 2030"
+  const wa = whAnswer(m);
+  if (wa) {
+    return pickShortest(moved || weekMove ? [`Chance ${wa}: ${p}, ${chg}`, `${p} chance ${wa}, ${chg}`, `Chance ${wa}: ${p}`] : [`Chance ${wa}: ${p}`, `${p} chance ${wa}`], max);
   }
   const np = nounPhrase(q);
   if (np) {
@@ -808,7 +858,7 @@ const TIGHTEN = [
   [/\bpresidential election\b/g, 'election'], [/\bannounces a presidential run\b/g, 'runs for president'],
   [/\bRepublicans\b/g, 'GOP'], [/\bDemocrats\b/g, 'Dems'], [/\bin the 1\d\dth Congress\b/g, 'next Congress'],
   [/\b(agreement|agreements)\b/g, 'deal'], [/\bmanagement deal\b/g, 'deal'], [/\bsenior diplomatic meeting\b/g, 'senior talks'],
-  [/\bRotten Tomatoes score\b/g, 'RT score'], [/ a barrel\b/g, ''], [/\ba quarter point\b/g, 'a quarter point'],
+  [/\bRotten Tomatoes score\b/g, 'RT score'], [/\breaches (?=\$\d)/g, 'hits '], [/ a barrel\b/g, ''], [/\ba quarter point\b/g, 'a quarter point'],
   [/\bat the end of (\d{4}|December|this month)\b/g, 'by end of $1'], [/\bin the Oscars \d{4}: (.+?) race\b/g, 'for $1 Oscar'],
   [/\bis released\b/g, 'out'], [/\bhas the best AI model\b/g, 'tops AI rankings'],
   [/\s*\([^)]*\)/g, ''], [/^(?:the|a|an) /i, ''], [/^Chance (?:of )?/i, ''],

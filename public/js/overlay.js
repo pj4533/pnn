@@ -89,6 +89,22 @@ export function createOverlay(root) {
     if (beat) applyBeat(host, beat); else host.classList.add('in');
   }
 
+  // The stage link, one per card kind: a port on the card's stage-facing edge at the height of the card's key row (lit row, big %, dial,
+  // board...), with a pulse running out of it. The long connector beam (stagelink.js) only fits where the free gap is wide (TOP STORIES);
+  // the dock is the equivalent link everywhere else, so every card visibly feeds the widget.
+  const LINK_ROWS = ['.row.on', '.big', '.bc-num', '.sw', '.bc-dl', '.sotd-board', '.cd-i.first', '.headline', '.bc-head'];
+  function addLink(host) {
+    const card = host.querySelector('.card');
+    if (!card || card.querySelector(':scope > .lk')) return;
+    let y = card.offsetHeight * 0.4;
+    for (const sel of LINK_ROWS) {
+      const r = card.querySelector(sel);
+      if (r && r.offsetHeight > 4) { let t = 0, n = r; while (n && n !== card) { t += n.offsetTop; n = n.offsetParent; } y = t + r.offsetHeight / 2; break; }
+    }
+    card.style.setProperty('--lk-y', `${Math.round(y)}px`);
+    card.insertAdjacentHTML('beforeend', '<i class="lk" aria-hidden="true"><b></b></i>');
+  }
+
   function setTitle(id, sub, title) {
     const t = title || SEG_TITLES[id] || '';
     if (segT.textContent !== t) { segT.textContent = t; segT.classList.remove('glitch'); void segT.offsetWidth; segT.classList.add('glitch'); }
@@ -154,6 +170,7 @@ export function createOverlay(root) {
       feeds(state);
       if (fresh) { const b = takeBeat(); swap(left, html, key, b); swap(strip, stripHtml, key, b); countUps(left, true); lastFreshAt = performance.now(); }
       else { left.innerHTML = html; strip.innerHTML = stripHtml; settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
+      if (seg.id !== 'standby') addLink(left);
       lastFrameLabel = label;
       frame.querySelector('.frame-lbl').textContent = (frameOverride ?? label) ? `LIVE 3D // ${String(frameOverride ?? label).toUpperCase()}` : '';
       frame.classList.toggle('short', seg.id === 'top');
