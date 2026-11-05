@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import config from '../server/config.mjs';
 import { parseChart, parseTreasuryXml, sessionAt, quoteSession } from '../server/sources/finance.mjs';
-import { matchHeadline, pickPaired, severityOf, stepHysteresis, moveCopy, cleanOutcome, fedPhrase, whenOf, marketLine, createFinance } from '../server/finance.mjs';
+import { matchHeadline, headlineDirection, pickPaired, severityOf, stepHysteresis, moveCopy, cleanOutcome, fedPhrase, whenOf, marketLine, createFinance } from '../server/finance.mjs';
 import { rankFinanceMoves } from '../server/editorial/rank.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -110,6 +110,50 @@ eq(matchHeadline(W('CL=F'), { direction: 'down' }, items, { now: NOW, hours: 6 }
 eq(matchHeadline(W('^GSPC'), down, items.slice(4, 5), { now: NOW, hours: 6 }), null, 'European stocks are not the S&P 500');
 eq(matchHeadline(W('NVDA'), down, items.slice(1, 2), { now: NOW, hours: 6 }), null, 'a product headline without a market word still needs score');
 eq(matchHeadline(W('NVDA'), down, items.slice(5), { now: NOW, hours: 6 }), null, 'stale headline outside the window');
+
+// direction: a headline never contradicts the move; prefer the one naming the specific symbol/company
+const mkIt = (title, min = 5, category = 'markets') => ({ title, outlet: 'X', publishedAt: new Date(NOW - min * 60_000).toISOString(), category });
+const mh = (sym, dir, titles) => matchHeadline(W(sym), { direction: dir }, titles.map((t) => (typeof t === 'string' ? mkIt(t) : t)), { now: NOW, hours: 6 })?.title ?? null;
+eq(mh('^DJI', 'down', ['Dow rises 200 points as Nvidia rallies']), null, 'Dow down move does not pair with "Dow rises"');
+eq(mh('^DJI', 'down', ['Dow rises 200 points as Nvidia rallies', 'Dow falls 1.6% as tech sells off']), 'Dow falls 1.6% as tech sells off', 'Dow down picks the falling headline');
+eq(mh('^DJI', 'up', ['Dow falls 1.6% as tech sells off']), null, 'Dow up move does not pair with "Dow falls"');
+eq(mh('^DJI', 'down', ['Stocks: Dow Jones down 1.6%, Nasdaq slides']), 'Stocks: Dow Jones down 1.6%, Nasdaq slides', 'explicit "down 1.6%" is down');
+eq(mh('^DJI', 'down', ['Wall Street rallies, Dow up 1.2% on trade hopes']), null, 'explicit "up 1.2%" is up, rejected on a down move');
+eq(mh('^DJI', 'down', ['Dow falls as Nvidia rises']), 'Dow falls as Nvidia rises', 'clause naming the subject decides ("Dow falls as Nvidia rises")');
+eq(mh('NVDA', 'up', ['Dow falls as Nvidia rises']), 'Dow falls as Nvidia rises', 'Nvidia up reads its own clause in the same headline');
+eq(mh('NVDA', 'down', ['Dow falls as Nvidia rises']), null, 'Nvidia down rejects "Nvidia rises"');
+eq(mh('^DJI', 'up', ['Dow rises after falling from record high']), 'Dow rises after falling from record high', 'subject clause beats trailing "falling"');
+eq(mh('^DJI', 'down', ['Dow slips from a record high']), 'Dow slips from a record high', '"from a record high" is not an up verb');
+eq(mh('^GSPC', 'down', ['Dow rises 200 points']), null, 'another index headline (Dow) is not the S&P 500 move');
+eq(mh('^NDX', 'down', ['Dow Jones falls 300 points, Nasdaq slides 3%']), 'Dow Jones falls 300 points, Nasdaq slides 3%', 'a headline naming both indexes still pairs');
+eq(mh('^GSPC', 'down', ['Stocks rise as Treasury yields fall']), null, 'S&P down: "Stocks rise" rejected even with "fall" later');
+eq(mh('^TNX', 'down', ['Treasury yields fall as inflation cools', 'Treasury yields rise on strong jobs data']), 'Treasury yields fall as inflation cools', 'yield down picks yields-fall headline');
+eq(mh('^TNX', 'down', ['Stocks rise as Treasury yields fall']), 'Stocks rise as Treasury yields fall', 'yield move reads the yields clause');
+eq(mh('NVDA', 'down', ['Nvidia shares tumble 6%', 'Chipmakers retreat: markets wrap']), 'Nvidia shares tumble 6%', 'prefers the headline naming Nvidia over a sector one');
+eq(headlineDirection('Oil jumps 3% as OPEC cuts', [W('CL=F') && new RegExp('oil', 'i')]), 'up', 'headlineDirection oil up');
+
+// --- news question types (match.mjs): App Store rank questions and shutdown questions need on-question headlines ---
+{
+  const { matchStoryNews, buildHeadlineIndex } = await import('../server/editorial/match.mjs');
+  const H = 3_600_000;
+  const at = (h) => new Date(NOW - h * H).toISOString();
+  const mkm = (o) => ({ source: 'polymarket', tags: [], change1w: null, closesAt: new Date(NOW + 2 * 24 * H).toISOString(), volumeTotal: 1e6, liquidity: 1e5, outcome: null, updatedAt: new Date(NOW).toISOString(), ...o, eventId: o.eventId || o.id, eventTitle: o.eventTitle || o.title });
+  const story = (title, category, extra = {}) => { const lead = mkm({ id: 'pm:t1', title, category, yesPrice: 0.6, change1d: 0.1, volume24h: 5e5, ...extra }); return { id: lead.id, category, eventTitle: lead.eventTitle, lead, markets: [lead] }; };
+  const filler = ['Fed hike December', 'Oil above $90', 'Senate control 2026', 'Bitcoin above 100k', 'Nobel Peace Prize winner', 'Super Bowl champion', 'Ceasefire Ukraine Russia', 'Apple largest company', 'Recession 2026', 'Mamdani approval', 'Tariffs Supreme Court', 'Gold above $5000', 'Government shutdown November', 'Next Fed chair', 'Movie box office weekend', 'Spotify top song', 'Tesla robotaxi launch', 'Netflix subscribers', 'Starship launch', 'World Series winner'];
+  const noise = filler.map((t, i) => ({ outlet: 'X', category: 'misc', url: 'https://n/' + i, title: t + ' story update today', publishedAt: at(2) }));
+  const run = (st, arch) => matchStoryNews(st, buildHeadlineIndex([...arch.map((a) => ({ outlet: 'Reuters', category: 'tech', url: 'https://x/' + Math.random(), ...a, publishedAt: at(a.h ?? 1) })), ...noise]), [st.lead, ...filler.map((t, i) => mkm({ id: 'pm:f' + i, title: 'Will ' + t + '?', category: 'misc' }))], { now: NOW, entity: st.category === 'sports' }).map((h) => h.item.title);
+  const tt = story('TikTok Pro - Events are #1 Free App in the US Apple App Store on Nov 6', 'tech');
+  const shop = run(tt, [{ title: 'TikTok quietly launches a standalone TikTok Shop app' }, { title: 'TikTok Pro launches Events in the US as the free app expands to more users' }, { title: 'TikTok Shop app launches in the US with free shipping events' }]);
+  eq(shop.length, 0, 'App Store #1 question does not take the TikTok Shop launch story', JSON.stringify(shop));
+  const rank = run(tt, [{ title: 'TikTok Pro tops the Apple App Store free app chart after new events launch' }, { title: 'TikTok quietly launches a standalone TikTok Shop app' }]);
+  eq(rank.length, 1, 'App Store #1 question still takes a headline about the app-store ranking', JSON.stringify(rank));
+  const liv = story('Will LIV Golf announce shutdown in 2026?', 'sports', { yesPrice: 0.98, change1w: 0.46 });
+  const livIt = run(liv, [{ title: "LIV Golf timeline: From the league's beginning to where things now stand", category: 'sports' }, { title: 'Is this the end of the road for LIV Golf?', category: 'sports' }]);
+  eq(livIt.includes("LIV Golf timeline: From the league's beginning to where things now stand"), false, 'LIV Golf shutdown question never takes the timeline retrospective', JSON.stringify(livIt));
+  eq(livIt.includes('Is this the end of the road for LIV Golf?'), true, 'LIV Golf shutdown question takes "end of the road"', JSON.stringify(livIt));
+  const livIt2 = run(liv, [{ title: 'LIV Golf funding in doubt as Saudi PIF reviews its spending', category: 'sports' }]);
+  eq(livIt2.length, 1, 'LIV Golf shutdown question takes a funding-in-doubt headline', JSON.stringify(livIt2));
+}
 
 // --- rank ---
 const mv = (symbol, kind, severity, thin = false) => ({ symbol, kind, severity, at: '2026-11-05T15:00:00Z', markets: [{ thin }] });

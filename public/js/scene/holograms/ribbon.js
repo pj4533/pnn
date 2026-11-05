@@ -195,7 +195,10 @@ export function createRibbon(ctx, story, opts = {}) {
       marks.push({ x, dm, rg, lb, passed: true, pulse: -1 });
     });
   }
+  let drawnSx = -1;
   const setDraw = (sx) => {
+    if (sx === drawnSx) return;   // hold: nothing to redo (draw ranges are already full)
+    drawnSx = sx;
     const u = rp.arcAt(sx);
     tube.geometry.setDrawRange(0, Math.floor(u * TUBE_SEGS) * TUBE_IDX);
     if (fillMesh) fillMesh.geometry.setDrawRange(0, Math.floor(sx * (N - 1)) * 6);
@@ -206,6 +209,8 @@ export function createRibbon(ctx, story, opts = {}) {
   const inOut = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
 
   let emitAcc = 0;
+  const camF = { dx: 0, dy: 0, zoom: 0.62 }, _w = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+  let headSx = -1;
   holo.tick = function (dt, t) {
     this.baseTick(dt);
     if (replay) {
@@ -213,7 +218,8 @@ export function createRibbon(ctx, story, opts = {}) {
       const sx = ts < T_REW0 ? 1 : ts < T_REW1 ? 1 - inOut((ts - T_REW0) / (T_REW1 - T_REW0)) : ts < T_PLAY0 ? 0 : ts < T_PLAY1 ? (ts - T_PLAY0) / (T_PLAY1 - T_PLAY0) : 1;
       rp.sx = sx;
       setDraw(sx);
-      const hd = headAt(sx); rp.head.copy(hd);
+      if (sx !== headSx) { headSx = sx; rp.head.copy(headAt(sx)); }   // the tracer head only moves while the replay runs
+      const hd = rp.head;
       const on = clamp01((ts - 0.9) * 2);
       const running = ts >= T_REW0 && ts < T_PLAY1;
       beacon.position.copy(hd); beacon.scale.setScalar(on * (running ? 1.35 : 1 + 0.15 * Math.sin(t * 5)));
@@ -231,11 +237,11 @@ export function createRibbon(ctx, story, opts = {}) {
         if (m.pulse >= 0) { m.pulse += dt; const k = m.pulse / 1.0; m.rg.scale.setScalar(0.3 + k * 3.5); m.rg.material.uniforms.uFade.value = Math.max(0, 1 - k) * this.fade; if (k >= 1) { m.pulse = -1; m.rg.scale.setScalar(0.001); } }
       }
       // camera follows the tracer, then pulls back to the whole 24h path
-      this.camFocus = ts >= 1.9 && ts < T_PLAY1 + 0.3 ? { dx: hd.x, dy: (hd.y - (Y0 + H * 0.45)) * 0.7, zoom: 0.62 } : null;
+      if (ts >= 1.9 && ts < T_PLAY1 + 0.3) { camF.dx = hd.x; camF.dy = (hd.y - (Y0 + H * 0.45)) * 0.7; this.camFocus = camF; } else this.camFocus = null;
       root.rotation.y = Math.sin(t * 0.15) * 0.05;
       emitAcc += dt;
-      if (this.visible && running && emitAcc > 0.07) { emitAcc = 0; fx.stream(root.localToWorld(hd.clone()), pal.a, 4, new THREE.Vector3(0, 1, 0), { speed: 2.2, lifeS: 1.2, sz: 0.7 }); }
-      else if (this.visible && !running && ts > T_PLAY1 && emitAcc > 0.5) { emitAcc = 0; fx.stream(root.localToWorld(last.clone()), pal.a, 5, new THREE.Vector3(0, 1, 0), { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
+      if (this.visible && running && emitAcc > 0.07) { emitAcc = 0; fx.stream(root.localToWorld(_w.copy(hd)), pal.a, 4, UP, { speed: 2.2, lifeS: 1.2, sz: 0.7 }); }
+      else if (this.visible && !running && ts > T_PLAY1 && emitAcc > 0.5) { emitAcc = 0; fx.stream(root.localToWorld(_w.copy(last)), pal.a, 5, UP, { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
       return;
     }
     const on = clamp01((this.tShow - 2.0) * 1.5);
@@ -245,7 +251,7 @@ export function createRibbon(ctx, story, opts = {}) {
     for (const r of rings) { const k = (t * 0.7 + r.userData.phase) % 1; r.scale.setScalar(0.5 + k * 3.5); r.material.uniforms.uFade.value = (1 - k) * this.fade * on; r.rotation.y = t * 0.5; }
     root.rotation.y = Math.sin(t * 0.15) * 0.05;
     emitAcc += dt;
-    if (this.visible && on > 0.9 && emitAcc > 0.5) { emitAcc = 0; fx.stream(root.localToWorld(last.clone()), pal.a, 5, new THREE.Vector3(0, 1, 0), { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
+    if (this.visible && on > 0.9 && emitAcc > 0.5) { emitAcc = 0; fx.stream(root.localToWorld(_w.copy(last)), pal.a, 5, UP, { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
   };
   holo.pose = function () {
     const tgt = this.station.clone().add(new THREE.Vector3(0, Y0 + H * 0.45, -2));

@@ -81,7 +81,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
   const gA = { tint: new THREE.Color(), ...GRADE_DEF }, gB = { tint: new THREE.Color(), ...GRADE_DEF };
   const bloomP = { strength: 0.55, threshold: 0.78, radius: 0.4 };
   const cameraBias = { orbitScale: 1, bob: 1, push: 1, whip: 0 };
-  const _v = new THREE.Vector3(), _d = new THREE.Vector3();
+  const _v = new THREE.Vector3(), _d = new THREE.Vector3(), _res = new THREE.Vector2();
 
   function log(type, id, ms) { events.push({ t: +clock.toFixed(1), type, id, ms: ms == null ? undefined : Math.round(ms) }); if (events.length > 20) events.shift(); }
 
@@ -140,6 +140,44 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     if (!api.cameraBias) api.cameraBias = { orbitScale: 1, bob: 1 };
     return api;
   }
+  // ---- warm-up (item 11, iPad scene.warm 452 ms avg / 1077 ms max): nothing that can block runs in one frame.
+  // compileOff: three keys a program on the render target bound at compile time (canvas = sRGB + tone map, any RT =
+  // linear), and the composer's last pass leaves the canvas bound, so compileAsync used to build the wrong variants
+  // and the warm draw re-linked every program synchronously. Bind the target the material will really draw into.
+  const warmGeo = new THREE.BufferGeometry();
+  async function compileOff(scene, cam, rt) {
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(rt);
+    let p;
+    try { p = renderer.compileAsync ? renderer.compileAsync(scene, cam) : renderer.compile(scene, cam); } finally { renderer.setRenderTarget(prev); }
+    await p;
+  }
+  // runs right after a frame was submitted (rAF -> setTimeout 0): a sync GL query issued mid-render waits for the GPU
+  // process to drain that frame (WebKit: 30-170 ms inside the warm draw); issued here it returns in ~1 ms
+  const afterFrame = () => nextFrame().then(() => new Promise((r) => setTimeout(r, 0)));
+  function materialsOf(inst) {
+    const set = new Set();
+    const add = (m) => { if (m) set.add(m); };
+    const walk = (o) => { const m = o.material; if (Array.isArray(m)) m.forEach(add); else add(m); };
+    inst.stage.traverse(walk); inst.layer?.scene.traverse(walk);
+    for (const w of inst.prewarm || []) w.mats.forEach(add);
+    return set;
+  }
+  // one job per frame: each texture upload (canvas/data textures + mipmaps) and each program's first use (three's
+  // checkShaderErrors + uniform/attribute queries: all synchronous round-trips to the GPU process)
+  function warmJobs(inst) {
+    const jobs = [], texs = new Set(), progs = new Set();
+    const tex = (v) => { if (v && v.isTexture && !v.isRenderTargetTexture && v !== sh.noise && v.image && v.image.complete !== false) texs.add(v); };
+    for (const m of materialsOf(inst)) {
+      for (const k in m) tex(m[k]);
+      if (m.uniforms) for (const k in m.uniforms) tex(m.uniforms[k]?.value);
+      const pr = renderer.properties.get(m).currentProgram;
+      if (pr) progs.add(pr);
+    }
+    for (const t of texs) jobs.push(() => renderer.initTexture(t));
+    for (const pr of progs) jobs.push(() => { pr.getUniforms(); pr.getAttributes(); });
+    return jobs;
+  }
   async function build(id, boot = false) {
     const inst = makeInst(id); inst.state = 'creating';
     let mod;
@@ -157,11 +195,22 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
       setK(inst, 0.001);
       inst.state = 'warming';
       if (!boot) await nextFrame();
-      const compile = async (s, c) => { if (renderer.compileAsync) await renderer.compileAsync(s, c); else renderer.compile(s, c); };
       inst.stage.visible = true;
-      await compile(inst.stage, camera);
-      if (inst.layer) await compile(inst.layer.scene, ortho);
+      const offRT = post?.getTransRT?.().b || inst.layer?.rt || null;
+      await compileOff(inst.stage, camera, offRT);
       inst.stage.visible = false;
+      if (inst.layer) await compileOff(inst.layer.scene, ortho, inst.layer.rt);
+      for (const w of inst.prewarm || []) {
+        const s = new THREE.Scene();
+        for (const m of w.mats) { const o = new THREE.Mesh(warmGeo, m); o.frustumCulled = false; s.add(o); }
+        await compileOff(s, ortho, w.rt);
+        s.clear();
+      }
+      for (const job of warmJobs(inst)) {
+        if (!boot) await afterFrame();
+        if (disposed || inst.state === 'disposed') break;
+        job();
+      }
       if (disposed) { destroy(inst); return null; }
       if (boot) warmDraw(inst); else { await new Promise((r) => { warmReq = { inst, r }; }); }
       const bad = brokenPrograms(inst);
@@ -206,10 +255,10 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
   // not the screen's — with full-screen res the dim zone landed in the lower-left quarter and the hologram area stayed bright.
   function renderLayer(inst) {
     if (!inst.layer) return;
-    const rt = inst.layer.rt, prev = sh.res.value.clone();
-    sh.res.value.set(rt.width, rt.height);
+    const rt = inst.layer.rt;
+    _res.copy(sh.res.value); sh.res.value.set(rt.width, rt.height);
     renderer.setRenderTarget(rt); rInst(inst, inst.layer.scene, ortho, 1);
-    sh.res.value.copy(prev);
+    sh.res.value.copy(_res);
   }
   function warmDraw(inst) {
     if (!post) return;
@@ -427,6 +476,12 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
     // compile all transitions + the cloud
     const tr = post?.getTransRT?.(), rb = post?.readBuffer;
     if (tr && rb) {
+      // link every transition program + the cloud in parallel (KHR_parallel_shader_compile) against the read buffer
+      // they draw into, so the draws below only take each program's first use instead of 10 synchronous links
+      const s = new THREE.Scene();
+      for (const type of TRANSITION_TYPES) { const o = new THREE.Mesh(warmGeo, T.mats[type]); o.frustumCulled = false; s.add(o); }
+      try { await compileOff(s, ortho, rb); await compileOff(T.cloudScene, camera, rb); } catch (e) { console.warn('[scene] transition precompile', e); }
+      s.clear();
       const ac = renderer.autoClear; renderer.autoClear = false;
       T.U.tA.value = tr.a.texture; T.U.tB.value = tr.b.texture; T.U.uP.value = 0.5;
       renderer.setRenderTarget(rb);
@@ -520,7 +575,7 @@ export function createSceneDirector({ renderer, camera, mainScene = null, ctxSha
       disposed = true;
       for (const i of [cur, next, trans?.A, trans?.B, ...dying]) destroy(i);
       cur = next = trans = null;
-      T.dispose();
+      T.dispose(); warmGeo.dispose();
       for (const L of layerPool) L.rt.dispose();
       post?.setBackdrop?.(null); post = null;
     },

@@ -9,6 +9,7 @@ import { Holo, COL, clamp01, ease, pctText } from '../holo.js';
 import { arcMesh, floorRing, lineSeg } from './parts.js';
 
 const D2R = Math.PI / 180;
+const COUNT_DT = 0.03;   // min seconds between redraws of a counting readout
 const T_SCALE = 0.8, T_WAS = 0.85, T_SW0 = 1.2, T_SW1 = 3.2;   // scale draws in, notch pops, needle sweeps (seconds since show)
 
 function money(v) {
@@ -153,9 +154,20 @@ export function createDial(ctx, story, opts = {}) {
     if (isAlert && Math.abs(v - value) < 0.04) { l.hidden = true; }
     return l;
   });
+  // The needle rests at `value` for the whole hold; a band word under it (TOSS-UP at ~52%, UNLIKELY at ~12%) would be struck through.
+  // Slide such a word sideways (along the needle's normal) until it clears the needle, once at build, so nothing moves while it airs.
+  const nA = angOf(value), nC = Math.cos(nA), nS = Math.sin(nA);
+  const BAND_HW = 1.6, BAND_HH = 0.45, NEEDLE_HALF = 0.13, NEEDLE_GAP = 0.25;   // ink half-extents of the 74px band words in world units
   const bandLbls = [['UNLIKELY', 0.125], ['TOSS-UP', 0.5], ['LIKELY', 0.875]].map(([txt, v]) => {
     const l = holo.label(txt, { w: 384, h: 128, height: 1.35, font: '700 74px Rajdhani', color: '#c4d0ff', glow: pal.hexB });
-    const [x, y] = at(v, R - 3.0); l.sprite.position.set(x, y, 0.2); l.yFrac = 0.1; l.bright = 0; l.target = 0.9;
+    let [lx, ly] = pt(v, R - 3.0);
+    const along = lx * nC + ly * nS, perp = -lx * nS + ly * nC;
+    const clear = BAND_HW * Math.abs(nS) + BAND_HH * Math.abs(nC) + NEEDLE_HALF + NEEDLE_GAP;
+    if (along > 0 && along < R - 1.2 + BAND_HW && Math.abs(perp) < clear) {
+      const side = perp >= 0 ? 1 : -1, shift = side * clear - perp;
+      lx += -nS * shift; ly += nC * shift;
+    }
+    l.sprite.position.set(lx, CY + ly, 0.2); l.yFrac = 0.1; l.bright = 0; l.target = 0.9;
     if (sw && txt === 'TOSS-UP') l.hidden = true;   // swings label the 50% line on the rim instead
     return l;
   });
@@ -224,7 +236,7 @@ export function createDial(ctx, story, opts = {}) {
   foot.sprite.position.set(0, FOOT_Y, 1.2); foot.yFrac = 0.02;
 
   // ---- animation ----
-  let shownTxt = '', popped = false, popT = -1;
+  let shownTxt = '', popped = false, popT = -1, lastSetT = -1;
   const counting = !!(isAlert || sw);
   holo.tick = function (dt, t) {
     this.baseTick(dt);
@@ -255,7 +267,8 @@ export function createDial(ctx, story, opts = {}) {
     nd.rotation.z = angOf(shown) - Math.PI / 2;
     fillMain.material.uniforms.uHi.value = shown;
     if (hasDelta) { fillDelta.material.uniforms.uLo.value = Math.min(prev, shown); fillDelta.material.uniforms.uHi.value = Math.max(prev, shown); }
-    if (counting) { const txt = pctText(shown); if (txt !== shownTxt) { shownTxt = txt; big.set(txt); } }
+    // counting readout: every change redraws a 1024x340 canvas and re-uploads it (the biggest per-frame cost of this widget), so cap it at ~30 Hz; the landing value always draws
+    if (counting) { const txt = pctText(shown); if (txt !== shownTxt && (k >= 1 || t - lastSetT >= COUNT_DT)) { shownTxt = txt; lastSetT = t; big.set(txt); } }
     big.bright = clamp01(ts * 2.5); ptsLbl.bright = ptsLbl.hidden ? 0 : clamp01((ts - T_SW0) * 2);
     if (swHead) {
       const a = angOf(shown); swHead.rotation.z = a - Math.PI / 2; swHead.visible = ts >= T_SW0 && Math.abs(shown - prev) > 0.02;
@@ -395,7 +408,7 @@ function createAlertDial(ctx, story, opts) {
 
   // ----- animation -----
   const T_SNAP = 1.0, SNAP = 0.9;
-  let landed = false, tLand = 0, shownTxt = '';
+  let landed = false, tLand = 0, shownTxt = '', lastSetT = -1;
   const lo = Math.min(prev, value), hi = Math.max(prev, value);
   const tip = (v) => [Math.cos(angOf(v)) * (R - 1.0), Math.sin(angOf(v)) * (R - 1.0)];
   holo.tick = function (dt, t) {
@@ -413,7 +426,7 @@ function createAlertDial(ctx, story, opts) {
     fillDelta.material.uniforms.uGlow.value = landed ? 1.9 + 0.35 * Math.sin(t * 6) : 1.9;
     // count-up in the TO readout
     const txt = pct(Math.min(hi, Math.max(lo, shown)));
-    if (txt !== shownTxt) { shownTxt = txt; toL.set(txt); }
+    if (txt !== shownTxt && (k >= 1 || t - lastSetT >= COUNT_DT)) { shownTxt = txt; lastSetT = t; toL.set(txt); }
     toL.sprite.scale.set(toL.base.x, toL.base.y, 1);
     // FROM readout, scale and arrow build in with the reveal; WAS appears as the needle leaves; delta label lands with the needle
     was.bright = c01((ts - T_SNAP) / 0.35);

@@ -43,7 +43,7 @@ export function createSceneCtx({ renderer, camera, sh, quality, opts, seed, inst
   const stage = new THREE.Scene();
   stage.matrixWorldAutoUpdate = true;
   const localTime = { value: 0 }, fade = { value: 0 };
-  inst.tracked = []; inst.anchors = []; inst.pulseFns = []; inst.layer = null; inst.localTime = localTime; inst.fade = fade; inst.stage = stage;
+  inst.tracked = []; inst.anchors = []; inst.pulseFns = []; inst.layer = null; inst.prewarm = []; inst.localTime = localTime; inst.fade = fade; inst.stage = stage;
   const track = (...objs) => { for (const o of objs) if (o) inst.tracked.push(o); return objs[0]; };
   const tri = () => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(FS_TRI.slice(), 3)); return track(g); };
   const common = () => ({
@@ -90,6 +90,8 @@ export function createSceneCtx({ renderer, camera, sh, quality, opts, seed, inst
       });
       return ctx.backdrop(mat);
     },
+    /** Off-stage materials (GPGPU sims) the director should compile, off the frame, against the target they draw into. */
+    prewarm(materials, renderTarget) { inst.prewarm.push({ mats: [].concat(materials), rt: renderTarget }); },
     anchor(object3d, { parallax = 0.15, y = null, z = null } = {}) { inst.anchors.push({ o: object3d, k: 1 - parallax, y, z }); return object3d; },
     gpgpu(size, simFragment, { init = null, name = 'tSim' } = {}) {
       const n = Math.min(256, size | 0);
@@ -103,6 +105,7 @@ export function createSceneCtx({ renderer, camera, sh, quality, opts, seed, inst
       const err = gpu.init();
       if (err) throw new Error('gpgpu: ' + err);
       track({ dispose: () => gpu.dispose() });
+      ctx.prewarm(variable.material, variable.renderTargets[0]);
       return { gpu, variable, uniforms: variable.material.uniforms, compute: () => gpu.compute(), texture: () => gpu.getCurrentRenderTarget(variable).texture };
     },
   };
@@ -123,7 +126,7 @@ export function disposeInstance(inst, shared) {
   });
   if (inst.layer) inst.layer.scene.clear();
   inst.stage?.clear();
-  inst.tracked = []; inst.anchors = []; inst.pulseFns = [];
+  inst.tracked = []; inst.anchors = []; inst.pulseFns = []; inst.prewarm = [];
 }
 
 /** Give every ShaderMaterial whose shader reads the hero uniforms the shared refs it is missing (env modules and

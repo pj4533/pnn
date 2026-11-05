@@ -71,6 +71,7 @@ export function create(ctx) {
   const simQuad = new THREE.Mesh(tri, velMat); simQuad.frustumCulled = false;
   const simScene = new THREE.Scene(); simScene.add(simQuad);
   const simCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  ctx.prewarm?.([velMat, posMat], vel[0]);   // compiled off-frame by the director (was a sync link in the first update)
 
   function simStep(dt) {
     const prev = renderer.getRenderTarget();

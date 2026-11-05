@@ -19,9 +19,12 @@
 .cy-line.in { animation: cy-in .6s cubic-bezier(.2,.9,.2,1) both; }
 @keyframes cy-in { from { transform: translateY(40%); opacity: 0; filter: blur(4px); } to { transform: none; opacity: 1; filter: none; } }
 .cy-sub { flex: 0 0 auto; font: max(var(--min), min(.8vw, 1.7vh)) var(--font-mono); color: var(--cyan); white-space: nowrap; overflow: hidden; }
-.cy-sweep { position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent) no-repeat; background-size: 14vw 100%;
-  background-position: -14vw 0; animation: cy-sweep 6s linear infinite; }
-@keyframes cy-sweep { to { background-position: 110vw 0; } }
+/* the 14vw band sweeps the lower third; moved with transform (compositor) instead of background-position (a repaint of the blurred glass every frame). .cy-t1 clips it (overflow: hidden). */
+/* .cy-sweep is a paint-contained full-size box so the moving band never grows .cy-t1's scrollWidth (fitReport false positive). */
+.cy-sweep { position: absolute; inset: 0; contain: paint; pointer-events: none; }
+.cy-sweep::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 14vw; background: linear-gradient(90deg, transparent, rgba(0,240,255,.18), transparent);
+  transform: translateX(-14vw); animation: cy-sweep 6s linear infinite; }
+@keyframes cy-sweep { to { transform: translateX(110vw); } }
 .cy-prog { position: absolute; left: 0; bottom: 0; height: .35vh; width: 100%; background: linear-gradient(90deg, var(--cyan), var(--magenta)); transform-origin: left; transform: scaleX(0); }
 
 .cy-t2 { position: relative; flex: 0 0 5.6vh; display: flex; align-items: center; overflow: hidden; background: rgba(8,3,28,.9);

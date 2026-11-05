@@ -117,7 +117,11 @@ export function createHandler(store, config) {
     const p = url.pathname;
 
     if (p === '/api/events') return store.subscribe(res, req);
-    if (p === '/api/state') return json(res, 200, store.getState());
+    if (p === '/api/state') {
+      // ?client=1: the slim v2 payload the browser reads (same as the SSE 'state'); default is the full state (scripts, tools)
+      if (url.searchParams.has('client')) { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(store.getClientJson()); }
+      return json(res, 200, store.getState());
+    }
     if (p === '/api/health') return json(res, 200, health(store, config), true);
     if (p === '/api/client-log') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end(); }

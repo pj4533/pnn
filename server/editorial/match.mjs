@@ -568,6 +568,14 @@ const QTYPES = [
     h: /\b(search(ed|es)?|google trends|year in search|googled)\b/i },
   { key: 'chart', q: /\b(billboard|hot 100|billboard 200|spotify (chart|top)|#1 (song|album))\b/i,
     h: /\b(billboard|hot 100|charts?|charting|no\. ?1|number one|#1|debut\w*|streams?|streaming|spotify|top 10|tops?)\b/i },
+  // App Store ranking questions ("TikTok Pro - Events are #1 Free App in the US Apple App Store"): the headline must be about
+  // app-store rankings / charts / downloads; "TikTok quietly launches a standalone TikTok Shop app" is not.
+  { key: 'app-rank', q: /\b(app store|play store|google play)\b|#\s?1\s+(free\s+|paid\s+)?apps?\b|\bno\.?\s?1\s+(free\s+|paid\s+)?apps?\b|\btop\s+(free\s+|paid\s+)?apps?\b|\bmost[- ]downloaded\b/i,
+    h: /\b(app store|play store|google play|app (ranking|rankings|chart|charts|downloads?)|(top|#\s?1|no\.?\s?1|number[- ]one|best[- ]selling|most[- ]downloaded|top-ranked|chart-topping)\s+(free\s+|paid\s+)?(apps?|downloads?|charts?)|downloads?|downloaded|downloading|install\w*|(tops?|topped|hits?|reaches?|climbs?|surges?|leads?|dethrones?|overtakes?|passes)\s+(the\s+)?(\w+\s+){0,2}(charts?|rankings?)|apps?\s+(charts?|rankings?)|ranks?\s+(first|no\.?\s?1|#\s?1))\b/i },
+  // "Will X shut down / fold / cease operations": the headline must be about the end (or the funding / talks that decide it),
+  // not a history piece ("LIV Golf timeline: From the league's beginning to where things now stand")
+  { key: 'shutdown', q: /\b(shut ?downs?|shut(s|ting)? down|fold(s|ing)?|cease(s)? operations?|wind(s|ing)? down|dissol\w+|go(es)? out of business|liquidat\w+)\b/i,
+    h: /\b(shut ?downs?|shut(s|ting)? down|shuttered|end of|the end|ends?|ending|ended|fold(s|ed|ing)?|collaps\w*|demise|future|dissol\w+|wind(s|ing)? down|clos(e|es|ed|ing|ure)|cease\w*|pull(s|ed)? (the )?plug|funding|bankrupt\w*|insolven\w*|liquidat\w+|merg(e|er|es|ed|ing)|merger|takeover|cancel\w*|survive|survival|doomed|crisis|uncertain\w*|in doubt|exit|quit|disband\w*|scrap\w*|axed?|PIF|public investment fund)\b/i },
   // a sports award race on a team / conference outcome ("ACC" for the Heisman) needs the award named: "ACC POY Awards" is not it
   { key: 'award', q: /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i, h: null },
 ];
@@ -601,8 +609,11 @@ function leadAsset(title) {
 // "who will attend" / "which movie" / "best actor nominee" events, where it is about someone else
 const RACE_EVENT = /\b(election|elections|race|primary|runoff|nominee|nomination|next (prime minister|president|chancellor|speaker|leader|pm)|prime minister|leader|majority|control of|seats?|governor|senate|house|mayor|winner)\b/i;
 const RACE_CATS = new Set(['elections', 'politics', 'world', 'geopolitics']);
+const RETRO_HEAD = /\btimeline\b.*\b(from|beginning|origins?|history|where (things|it) (now )?stand\w*)\b|\b(a )?(brief |short |full |complete )?history of\b|\blook(ing)? back\b/i;
 /** Why a headline that names the story's subject is still not about the question (null = fine). */
 function questionMiss(T, title, ageH, leadHit) {
+  // a history / recap piece is not news about a market's open question (unless the question itself is about history)
+  if (RETRO_HEAD.test(title) && !RETRO_HEAD.test(T.storyText)) return 'retrospective';
   for (const q of T.qtypes) {
     if (q.key === 'award') { const m = AWARD_RE.exec(T.storyText); if (m && !new RegExp(m[1].replace(/'/g, "'?"), 'i').test(title) && !(leadHit && T.leadOut?.toks.length >= 2)) return 'award'; continue; }
     if (!q.h.test(title)) return q.key;

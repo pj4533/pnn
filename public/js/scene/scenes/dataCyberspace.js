@@ -68,12 +68,21 @@ export function create(ctx) {
 
   // ---------- links (3 nearest neighbours, deduped, shuffled)
   const seen = new Set(), links = [];
+  // 3 nearest per node by insertion into a 3-slot list (same result and tie order as the stable full sort it replaces,
+  // without 800 sorts of 799 arrays: dataCyberspace create was ~90 ms in one frame)
+  const kd = [0, 0, 0], kj = [0, 0, 0];
   for (let i = 0; i < NT; i++) {
-    const a = nodes[i], cand = [];
-    for (let j = 0; j < NT; j++) if (j !== i) cand.push([Math.hypot(a.tx - nodes[j].tx, a.ty - nodes[j].ty, a.tz - nodes[j].tz), j]);
-    cand.sort((u, v) => u[0] - v[0]);
+    const a = nodes[i];
+    kd[0] = kd[1] = kd[2] = Infinity; kj[0] = kj[1] = kj[2] = -1;
+    for (let j = 0; j < NT; j++) {
+      if (j === i) continue;
+      const n = nodes[j], dx = a.tx - n.tx, dy = a.ty - n.ty, dz = a.tz - n.tz, d = Math.hypot(dx, dy, dz);
+      if (!(d < kd[2])) continue;
+      if (d < kd[1]) { kd[2] = kd[1]; kj[2] = kj[1]; if (d < kd[0]) { kd[1] = kd[0]; kj[1] = kj[0]; kd[0] = d; kj[0] = j; } else { kd[1] = d; kj[1] = j; } }
+      else { kd[2] = d; kj[2] = j; }
+    }
     for (let k = 0; k < 3; k++) {
-      const [d, j] = cand[k], key = Math.min(i, j) * NT + Math.max(i, j);
+      const d = kd[k], j = kj[k], key = Math.min(i, j) * NT + Math.max(i, j);
       if (d < 520 && !seen.has(key)) { seen.add(key); links.push([i, j]); }
     }
   }

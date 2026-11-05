@@ -88,8 +88,44 @@ async function loadFixture({ onState, onAlert, onFlash, onStatus, onPop }) {
   window.__pnnFakePop = pop;
 }
 
+/** Rebuild the full shape from the server's slim v2 state (server/clientstate.mjs): stories/closing/desks arrive as indexes into
+ *  `pool`, a lead that is one of the story's markets as `leadIdx`. Shared objects, same field names the UI always read. */
+export function hydrate(s) {
+  if (!s || s.v !== 2 || !Array.isArray(s.pool)) return s;
+  const pool = s.pool;
+  for (const st of pool) {
+    if (!st || typeof st !== 'object') continue;
+    const ms = st.markets;
+    if (st.md && Array.isArray(ms)) { // fields every market repeats from its story: bit i of md = MDUP[i] (see server/clientstate.mjs)
+      const md = st.md;
+      for (const m of ms) {
+        if (md & 1) m.eventTitle = st.eventTitle;
+        if (md & 2) m.eventId = st.id;
+        if (md & 4) m.category = st.category;
+        if (md & 8) m.label = m.outcome;
+        if (md & 16) m.updatedAt = st.mu;
+      }
+      delete st.md; delete st.mu;
+    }
+    if (st.leadIdx != null && !st.lead) { st.lead = ms?.[st.leadIdx]; delete st.leadIdx; }
+    if (Array.isArray(st.hp)) { // flat [t0, p0, dt1, p1, ...] -> [{t, p}]
+      const hp = st.hp, h = new Array(hp.length >> 1);
+      let t = 0;
+      for (let i = 0, j = 0; i < hp.length; i += 2, j++) { t = i ? t + hp[i] : hp[i]; h[j] = { t, p: hp[i + 1] }; }
+      st.history = h; delete st.hp;
+    }
+  }
+  const pick = (a) => (Array.isArray(a) ? a.map((i) => pool[i]).filter(Boolean) : []);
+  s.stories = pick(s.stories);
+  s.closing = pick(s.closing);
+  s.desks = (s.desks || []).map((d) => ({ ...d, stories: pick(d.stories) }));
+  delete s.pool;
+  return s;
+}
+
 export function connect(handlers) {
-  const { onState, onAlert, onFlash, onStatus, onPop } = handlers;
+  const { onAlert, onFlash, onStatus, onPop } = handlers;
+  const onState = (s) => handlers.onState(hydrate(s));
   if (FIXTURE) { loadFixture(handlers).catch((e) => { report('fixture', e); onStatus(false); }); return; }
 
   let es = null, backoff = 1000, timer = 0, lastMsg = 0;
@@ -97,7 +133,7 @@ export function connect(handlers) {
 
   async function fallback() {
     try {
-      const r = await fetch('/api/state', { cache: 'no-store' });
+      const r = await fetch('/api/state?client=1', { cache: 'no-store' });
       if (r.ok) { onState(await r.json()); lastMsg = Date.now(); }
     } catch { /* still down; the indicator stays on */ }
   }

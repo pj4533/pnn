@@ -31,11 +31,18 @@ export function createStageLink(root, overlay) {
 
   const tgt = { x: 0, y: 0, rx: 1, ry: 1 }, cur = { x: 0, y: 0, rx: 1, ry: 1 };
   let have = false, alert = false, raf = 0, linkHidden = null, lastHero = null;
-  const set = (el, k, v) => el.setAttribute(k, v);
+  // Writes are cached: an attribute / style / custom property is only touched when its value changed (a write of the same value still
+  // invalidates style, and the beam is redrawn every frame while the camera glides).
+  const wc = new WeakMap();
+  const cached = (el, k, v, write) => { let m = wc.get(el); if (!m) wc.set(el, (m = new Map())); if (m.get(k) === v) return; m.set(k, v); write(el, k, v); };
+  const set = (el, k, v) => cached(el, k, String(v), (e, kk, vv) => e.setAttribute(kk, vv));
+  const css = (el, k, v) => cached(el, k, v, (e, kk, vv) => e.style.setProperty(kk, vv));
+  const chyron = document.getElementById('chyron');
 
   // ---- card measurement: right edge x, and the y of the big-% / headline row (or the lit board row)
   const ROWS = ['.row.on', '.big', '.bc-num', '.sw', '.bc-dl', '.headline', '.bc-head', '.sotd-board'];
   let card = null;   // { right, top, bottom, y }
+  let fbox = null, lbox = { w: 0, h: 0 };   // the stage frame's rect and the frame label's size, measured with the card (not per drawn frame: reading them there forced a layout every frame)
   // untransformed layout position of el inside #overlay (the cards animate in with transforms; the beam wants the settled spot)
   function layoutBox(el) {
     let x = 0, y = 0, n = el;
@@ -43,6 +50,8 @@ export function createStageLink(root, overlay) {
     return { x, y, w: el.offsetWidth, h: el.offsetHeight };
   }
   function measureCard() {
+    if (frame) { const f = frame.getBoundingClientRect(); fbox = { left: f.left, top: f.top, width: f.width, height: f.height }; }
+    if (lbl) lbox = { w: lbl.offsetWidth, h: lbl.offsetHeight };
     const c = left?.querySelector('.card');
     if (!c || document.body.dataset.segment === 'standby') { card = null; return; }
     const r = layoutBox(c);
@@ -52,26 +61,36 @@ export function createStageLink(root, overlay) {
     card = { right: r.x + r.w, top: r.y, bottom: r.y + r.h, y };
   }
 
+  let sig = '', idleT = 0;
   function drawLink() {
     const W = window.innerWidth, H = window.innerHeight;
-    link.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    // nothing moved since the last drawn frame (camera at rest, card unchanged): no DOM writes at all
+    const s2 = `${W}|${H}|${cur.x.toFixed(1)}|${cur.y.toFixed(1)}|${cur.rx.toFixed(1)}|${cur.ry.toFixed(1)}|${alert ? 1 : 0}|${card ? `${card.right}|${card.top}|${card.bottom}|${card.y}` : '-'}|${fbox ? `${fbox.left}|${fbox.top}|${fbox.width}|${fbox.height}` : ''}|${lbox.w}|${lbox.h}|${lbl?.textContent || ''}`;
+    if (s2 === sig) return;
+    sig = s2;
+    set(link, 'viewBox', `0 0 ${W} ${H}`);
     const RX = cur.rx * E, RY = cur.ry * E;
     set(ret, 'cx', cur.x); set(ret, 'cy', cur.y); set(ret, 'rx', RX); set(ret, 'ry', RY);
     // frame label: left-aligned to the hero's left edge, just above the ellipse top, clamped inside the frame
-    if (frame && lbl && lbl.textContent) {
-      const f = frame.getBoundingClientRect(), lw = lbl.offsetWidth, lh = lbl.offsetHeight;
+    if (fbox && lbl && lbl.textContent) {
+      const f = fbox, lw = lbox.w, lh = lbox.h;
       const lx = Math.min(Math.max(cur.x - cur.rx - f.left, 6), Math.max(6, f.width - lw - 6));
       const ly = Math.min(Math.max(cur.y - RY - lh - 4 - f.top, 2), Math.max(2, f.height - lh - 2));
-      lbl.style.left = `${lx.toFixed(1)}px`; lbl.style.top = `${ly.toFixed(1)}px`;
+      css(lbl, 'left', `${lx.toFixed(1)}px`); css(lbl, 'top', `${ly.toFixed(1)}px`);
     }
     // connector
     const gap = card ? (cur.x - cur.rx * E) - card.right : -1;
     const hide = !card || alert || gap < W * 0.03;
-    if (hide !== linkHidden) { linkHidden = hide; link.classList.toggle('hl-hide', hide); spill.classList.toggle('on', !hide); }
+    if (hide !== linkHidden) {
+      linkHidden = hide; link.classList.toggle('hl-hide', hide); spill.classList.toggle('on', !hide);
+      // a hidden beam stops its running pulse once the fade-out is done (a paused animation does not tick style every frame)
+      clearTimeout(idleT);
+      if (hide) idleT = setTimeout(() => link.classList.add('hl-idle'), 500); else link.classList.remove('hl-idle');
+    }
     if (card) {
       // spill: the light the projector throws onto the glass edge (width limited by the free gap)
-      spill.style.left = `${card.right}px`; spill.style.top = `${card.top}px`; spill.style.height = `${card.bottom - card.top}px`;
-      spill.style.width = `${Math.max(0, Math.min(W * 0.03, gap * 0.5)).toFixed(1)}px`;
+      css(spill, 'left', `${card.right}px`); css(spill, 'top', `${card.top}px`); css(spill, 'height', `${card.bottom - card.top}px`);
+      css(spill, 'width', `${Math.max(0, Math.min(W * 0.03, gap * 0.5)).toFixed(1)}px`);
     }
     if (hide) return;
     const x0 = card.right, y0 = card.y;
@@ -125,16 +144,17 @@ export function createStageLink(root, overlay) {
     tgt.x = h.x; tgt.y = h.y; tgt.rx = Math.max(8, h.rx); tgt.ry = Math.max(8, h.ry);
     if (!cur.rx || cur.rx === 1) Object.assign(cur, tgt);
     alert = !!h.alert;
-    const st = doc.style;
-    st.setProperty('--story', h.color || '#00f0ff'); st.setProperty('--story-a', h.colorA || h.color || '#7a2cff'); st.setProperty('--story-b', h.colorB || h.color || '#ff2bd6');
-    st.setProperty('--move', h.dir > 0 ? UP : h.dir < 0 ? DOWN : (h.color || '#00f0ff'));
-    st.setProperty('--energy', Math.max(0, Math.min(1, h.energy ?? 0.3)).toFixed(2));
-    st.setProperty('--hero-x', `${h.x.toFixed(0)}px`); st.setProperty('--hero-y', `${h.y.toFixed(0)}px`);
-    st.setProperty('--hero-rx', `${h.rx.toFixed(0)}px`); st.setProperty('--hero-ry', `${h.ry.toFixed(0)}px`);
-    st.setProperty('--sheen-d', `-${((performance.now() / 1000) % 6).toFixed(2)}s`);   // new card nodes join the sheen at the shared phase
+    // custom properties: only the ones that changed are written, and the per-event ones are scoped to the elements that read them (a write on
+    // :root re-resolves style for the whole document). --story/--story-a/--story-b/--move stay on :root (the alert override sits on body).
+    css(doc, '--story', h.color || '#00f0ff'); css(doc, '--story-a', h.colorA || h.color || '#7a2cff'); css(doc, '--story-b', h.colorB || h.color || '#ff2bd6');
+    css(doc, '--move', h.dir > 0 ? UP : h.dir < 0 ? DOWN : (h.color || '#00f0ff'));
+    const en = Math.max(0, Math.min(1, h.energy ?? 0.3)), enq = (Math.round(en * 10) / 10).toFixed(1);   // --energy-q (tenths) times the running pulses, so their duration is not rewritten every event
+    for (const el of [root, chyron]) { if (!el) continue; css(el, '--energy', en.toFixed(2)); css(el, '--energy-q', enq); }
+    if (chyron) css(chyron, '--hero-x', `${h.x.toFixed(0)}px`);   // the only reader of the hero position is #chyron::before
     doc.classList.toggle('hero-alert', alert);
     link.classList.add('on');
-    measureCard(); kick();
+    if (!card) measureCard();
+    kick();
   }
   let pulseT = 0;
   function onPulse(e) {
@@ -151,6 +171,7 @@ export function createStageLink(root, overlay) {
   const remeasure = () => { if (mq) return; mq = requestAnimationFrame(() => { mq = 0; measureCard(); if (have) { drawLink(); } }); };
   if (left) new MutationObserver(remeasure).observe(left, { childList: true });
   window.addEventListener('resize', remeasure);
+  document.addEventListener('pnn:cardfit', remeasure);   // overlay.js: the fit pass has resized the card
   if (lbl) new MutationObserver(remeasure).observe(lbl, { childList: true, characterData: true, subtree: true });
   // the beam also needs re-measuring after the entrance animation has settled
   setInterval(() => { if (have) { measureCard(); drawLink(); } }, 1000);

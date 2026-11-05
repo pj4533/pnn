@@ -60,9 +60,9 @@ export function stepHysteresis(st, sev, nowMs, H = {}) {
 }
 
 // ---- headline match (pure) ---------------------------------------------------------------------------------------
-const MARKET_WORDS = /\b(falls?|fell|drops?|dropped|slides?|slid|slips?|tumbles?|tumbled|sinks?|sank|plunges?|plunged|plummets?|slumps?|retreats?|sell-?offs?|rout|losses|lower|jumps?|jumped|surges?|surged|soars?|soared|rall(y|ies|ied)|rises?|rose|climbs?|climbed|gains?|gained|rebounds?|higher|records?|futures|shares|stocks?|prices?|yields?|markets?|trading|investors|wrap|pressure|unwind|selloff|earnings|revenue|guidance|forecast|outlook|valuation|market cap|analysts?|downgrades?|upgrades?|bonds?|treasurys)\b/i;
-const UP_RE = /\b(jumps?|jumped|surges?|surged|soars?|soared|rall(y|ies|ied)|rises?|rose|climbs?|climbed|gains?|gained|rebounds?|higher|record high|tops)\b/i;
-const DOWN_RE = /\b(falls?|fell|drops?|dropped|slides?|slid|slips?|tumbles?|tumbled|sinks?|sank|plunges?|plunged|plummets?|slumps?|retreats?|sell-?offs?|selloff|rout|losses|lower|under pressure|unwind|falling)\b/i;
+const MARKET_WORDS = /\b(falls?|fell|drops?|dropped|slides?|slid|slips?|tumbles?|tumbled|sinks?|sank|plunges?|plunged|plummets?|slumps?|retreats?|sell-?offs?|rout|losses|lower|jumps?|jumped|surges?|surged|soars?|soared|rall(y|ies|ied)|rises?|rose|climbs?|climbed|gains?|gained|rebounds?|higher|records?|futures|shares|stocks?|prices?|yields?|markets?|trading|investors|wrap|pressure|unwind|selloff|earnings|revenue|guidance|forecast|outlook|valuation|market cap|analysts?|downgrades?|upgrades?|bonds?|treasurys|declines?|declined|dips?|dipped|sheds?|skids?|tanks?|tanked|spikes?|spiked|advances?|edges)\b/i;
+const UP_RE = /\b(jumps?|jumped|surges?|surged|soars?|soared|rall(y|ies|ied)|rises?|rose|rising|climbs?|climbed|gains?|gained|rebounds?|rebounded|higher|record high|tops|spikes?|spiked|advances?|advanced|pops?|popped|edges? up|inches up|recovers?|recovered)\b/i;
+const DOWN_RE = /\b(falls?|fell|falling|drops?|dropped|slides?|slid|slips?|slipped|tumbles?|tumbled|sinks?|sank|plunges?|plunged|plummets?|slumps?|slumped|retreats?|sell-?offs?|selloff|rout|losses|lower|under pressure|unwind|declines?|declined|dips?|dipped|sheds?|skids?|skidded|tanks?|tanked|sags?|craters?|cratered|edges? down|loses?|lost)\b/i;
 const FOREIGN_RE = /\b(european|europe's|asian|asia's|chinese|china's|japan(ese)?|nikkei|hang seng|ftse|london|south african|indian|australian|canadian|german|dax|korean?|brazil(ian)?|stoxx|tsx|global)\b/i;
 const SKIP_CATS = new Set(['sports', 'games', 'culture', 'weather']);
 const aliasRe = (list) => (list?.length ? new RegExp(`(?<![\\w&])(?:${list.join('|')})(?!\\w)`, 'i') : null);
@@ -71,6 +71,39 @@ function aliasesOf(w) {
   if (!reCache.has(w)) reCache.set(w, { strong: aliasRe(w.strong), broad: aliasRe(w.broad) });
   return reCache.get(w);
 }
+// ---- headline direction (pure) -------------------------------------------------------------------------------------
+// A headline airs only when it does not contradict the move: a Dow "down 1.6%" move never pairs with "Dow rises...".
+// The verb is read from the clause that names the move's subject ("Dow falls as Nvidia rises" -> down for the Dow), and an
+// explicit "up/down X%" or "+/-X%" wins over verbs. Mixed or unreadable clauses are neutral (no reject, no bonus).
+const CLAUSE_SPLIT = /\s+(?:as|while|but|even as|after|amid|with|despite|before|though|and)\s+|[;:|]|\s[-\u2013\u2014]\s/i;
+const PCT_UP = /\b(?:up|higher|gains?|gained|adds?|rises?|rose|climbs?|climbed|jumps?|jumped|surges?|surged)\s+(?:by\s+)?(?:about\s+|nearly\s+|more than\s+|over\s+)?\d+(?:\.\d+)?\s?%|(?:^|[\s(])\+\d+(?:\.\d+)?\s?%/i;
+const PCT_DOWN = /\b(?:down|lower|loses?|lost|sheds?|shed|falls?|fell|drops?|dropped|slides?|slid|sinks?|sank|slips?|slipped|slumps?|slumped|tumbles?|tumbled|declines?|declined)\s+(?:by\s+)?(?:about\s+|nearly\s+|more than\s+|over\s+)?\d+(?:\.\d+)?\s?%|(?:^|[\s(])[-\u2212\u2013]\d+(?:\.\d+)?\s?%/i;
+const FROM_HIGH = /\b(?:from|off|below|near|after (?:hitting|touching|reaching)|following)\s+(?:its\s+|a\s+|an\s+|the\s+)?(?:all-time|record|\d+-?(?:week|month|year))\s+(?:highs?|peaks?|records?)\b/gi;
+function dirOf(text) {
+  const t = String(text).replace(FROM_HIGH, ' ');
+  const pu = PCT_UP.test(t), pd = PCT_DOWN.test(t);
+  if (pu !== pd) return pu ? 'up' : 'down';
+  const up = UP_RE.test(t), down = DOWN_RE.test(t);
+  if (up === down) return null;
+  return up ? 'up' : 'down';
+}
+/** 'up' | 'down' | null: the direction the headline gives the thing the move is about. */
+export function headlineDirection(title, aliasRes = []) {
+  const parts = String(title).split(CLAUSE_SPLIT);
+  for (const re of aliasRes) {
+    if (!re) continue;
+    for (const part of parts) {
+      if (!re.test(part)) continue;
+      const d = dirOf(part);
+      if (d) return d;
+    }
+  }
+  // no readable clause names the subject: fall back to the whole title only when it reads one way
+  return dirOf(title);
+}
+const INDEX_NAMES = { '^GSPC': /s&p|spx/i, '^NDX': /nasdaq/i, '^DJI': /\bdow\b/i };
+const idxOthers = (sym) => Object.entries(INDEX_NAMES).filter(([k]) => k !== sym).map(([, re]) => re);
+
 /** Best wire headline for a move, or null. items: newsroom archive [{title, outlet, url, publishedAt, category}]. */
 export function matchHeadline(w, sv, items, { now = Date.now(), hours = 6, prev = null } = {}) {
   const A = aliasesOf(w);
@@ -90,12 +123,21 @@ export function matchHeadline(w, sv, items, { now = Date.now(), hours = 6, prev 
     if (!strong && FOREIGN_RE.test(title) && w.kind !== 'commodity') continue;
     let score = strong ? 3 : 1.5;
     if (marketish) score += 1;
-    // direction: for yields only when the headline is about yields ("Treasurys gain" means yields fell)
-    const dirTestable = w.kind !== 'yield' || /\byields?\b/i.test(title);
-    if (dirTestable) {
-      const up = UP_RE.test(title), down = DOWN_RE.test(title);
-      const want = w.symbol === '^VIX' ? null : sv.direction;
-      if (want && up !== down) score += (want === 'up') === up ? 1 : -2;
+    // another index's headline ("Dow rises") is not this index's move unless it names this one as well
+    if (w.kind === 'index' && INDEX_NAMES[w.symbol] && !INDEX_NAMES[w.symbol].test(title) && idxOthers(w.symbol).some((re) => re.test(title))) continue;
+    // direction: a headline that gives the subject the opposite direction never airs on this move. For yields only when
+    // the clause is about yields ("Treasurys gain" means yields fell); the VIX is not direction-tested (stocks stories).
+    const want = w.symbol === '^VIX' ? null : sv.direction;
+    if (want) {
+      const hd = headlineDirection(title, strong ? [A.strong] : [A.broad]);
+      const yieldsOk = w.kind !== 'yield' || /\byields?\b/i.test(title);
+      if (hd && yieldsOk) { if (hd !== want) continue; score += 1; }
+    }
+    // prefer the headline that names the specific thing (company / index / symbol), and as its subject
+    if (strong) {
+      const m = A.strong.exec(title);
+      if (m && m.index <= 12) score += 0.5;
+      if (w.name && title.toLowerCase().includes(String(w.name).toLowerCase())) score += 0.5;
     }
     score += 2 * (1 - (now - t) / windowMs);
     if (it.category === 'markets' || it.category === 'economy') score += 0.5;
@@ -493,4 +535,4 @@ export function createFinance(store, config, { getArchive = () => [], getMarkets
   };
 }
 
-export default { createFinance, matchHeadline, pickPaired, severityOf, stepHysteresis, moveCopy, cleanOutcome, fedPhrase, whenOf, marketLine };
+export default { createFinance, matchHeadline, headlineDirection, pickPaired, severityOf, stepHysteresis, moveCopy, cleanOutcome, fedPhrase, whenOf, marketLine };

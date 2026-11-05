@@ -3,6 +3,7 @@
 // NEWS MEETS MARKETS flash only), plus 'move' / 'listed' / 'money' (one per NEW corner pop, addMoment). None of these are ever replayed as events on connect.
 import config from './config.mjs';
 import { log } from './log.mjs';
+import { clientStateJson } from './clientstate.mjs';
 
 const DEBOUNCE_MS = 1000;
 const HEARTBEAT_MS = 20_000;
@@ -44,15 +45,6 @@ export function createStore() {
   const maxAlerts = config.limits?.alerts ?? 10;
   const maxFlashes = config.limits?.flashes ?? 10;
 
-  function send(res, event, data) {
-    try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    } catch (e) {
-      clients.delete(res);
-      log('debug', 'sse write failed', { error: String(e?.message || e) });
-    }
-  }
-
   function broadcast(event, data) {
     if (!clients.size) return;
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -61,11 +53,20 @@ export function createStore() {
     }
   }
 
+  // The browsers get the slim state (clientstate.mjs), built once per change and shared by every client and every connect.
+  let clientJson = null;
+  const getClientJson = () => clientJson ?? (clientJson = clientStateJson(state));
+
   function scheduleState() {
+    clientJson = null;
     if (timer) return;
     timer = setTimeout(() => {
       timer = null;
-      broadcast('state', getState());
+      if (!clients.size) return;
+      const msg = `event: state\ndata: ${getClientJson()}\n\n`;
+      for (const res of clients) {
+        try { res.write(msg); } catch { clients.delete(res); }
+      }
     }, DEBOUNCE_MS);
     timer.unref?.();
   }
@@ -208,7 +209,7 @@ export function createStore() {
     });
     res.flushHeaders?.();
     res.write('retry: 3000\n\n');
-    send(res, 'state', getState());
+    try { res.write(`event: state\ndata: ${getClientJson()}\n\n`); } catch (e) { log('debug', 'sse write failed', { error: String(e?.message || e) }); }
     clients.add(res);
     const done = () => clients.delete(res);
     (req || res).on?.('close', done);
@@ -225,6 +226,7 @@ export function createStore() {
 
   return {
     getState,
+    getClientJson,
     setState,
     recordPrices,
     history,

@@ -1,7 +1,7 @@
 // PNN 3D stage. createScene(canvas) -> { showStory(story, segmentName: 'top'|'focus'|'movers'|'week'|'sotd'), showAlert(alert), clearAlert(), setTicker(markets), resize(w, h), dispose() }
 // The scene owns the WebGL canvas only. Text lives in the 2D overlays; holograms carry just outcome names and percentages.
 import * as THREE from '../../vendor/three/three.module.js';
-import { TIME, COL, palette, ease, damp } from './holo.js';
+import { TIME, COL, palette, ease, damp, attachLabelRenderer, pumpLabels, labelsFrameStart, labelsCommit, holdLabels } from './holo.js';
 import { createWorld } from './world.js';
 import { createPost } from './post.js';
 import { createFx } from './fx.js';
@@ -39,6 +39,7 @@ export function createScene(canvas, opts = {}) {
   // window size first: WebKit can report the default 300x150 clientWidth before first layout (full-screen canvas)
   let W = window.innerWidth || canvas.clientWidth, Hh = window.innerHeight || canvas.clientHeight;
   renderer.setSize(W, Hh, false);
+  attachLabelRenderer(renderer);   // labels pre-upload in spare frame time (pumpLabels in the loop)
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, W / Hh, 0.1, 6000);
@@ -74,7 +75,7 @@ export function createScene(canvas, opts = {}) {
   function storySignals(story, seg, pal) {
     const m = seg === 'movers' ? tickerMarkets[0] : (story?.lead || story?.markets?.[0]);
     const move = +(m?.change1d ?? 0) || 0;
-    return { move, dir: move > 0.005 ? 1 : move < -0.005 ? -1 : 0, swing: !!story?.swing, alert: false, colorA: pal.a, colorB: pal.b, theme: pal.theme };
+    return { move, dir: move > 0.005 ? 1 : move < -0.005 ? -1 : 0, swing: !!story?.swing, alert: false, colorA: pal.a, colorB: pal.stage || pal.b, theme: pal.theme };
   }
 
   // The NEXT BIG DECISION chip (#chip, lower-right, position:fixed) must never sit over the widget: the overlay's
@@ -128,9 +129,14 @@ export function createScene(canvas, opts = {}) {
     if (!pose || !pose.box || !root) return pose;
     root.updateMatrixWorld(true);
     const box = pose.box.clone();
-    root.traverse((o) => {
-      if (!o.isSprite || o.visible === false) return;
+    // only labels that belong to this widget's frame: visible (whole ancestor chain) and near the
+    // declared box. The globe's root carries hidden/far sprites; counting them shrank the globe into the upper corner.
+    const c0 = pose.box.getCenter(new THREE.Vector3()), half = pose.box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    const reach = Math.max(half.x, half.y, 1) * 1.8;
+    root.traverseVisible((o) => {
+      if (!o.isSprite) return;
       o.getWorldPosition(_lp);
+      if (Math.abs(_lp.x - c0.x) > half.x + reach || Math.abs(_lp.y - c0.y) > half.y + reach) return;
       const sx = Math.abs(o.scale.x) / 2, sy = Math.abs(o.scale.y) / 2;
       const cx = (0.5 - (o.center?.x ?? 0.5)) * 2 * sx, cy = (0.5 - (o.center?.y ?? 0.5)) * 2 * sy;
       _lb.min.set(_lp.x + cx - sx, _lp.y + cy - sy, _lp.z - 0.5); _lb.max.set(_lp.x + cx + sx, _lp.y + cy + sy, _lp.z + 0.5);
@@ -266,7 +272,7 @@ export function createScene(canvas, opts = {}) {
     const vol = ms.reduce((a, m) => a + (m.volume24h || 0), 0);
     const info = { source: story.lead?.source ? exchangeName(story.lead.source) : null, vol: vol > 0 ? money(vol) : null, updated: story.lead?.updatedAt ? ago(story.lead.updatedAt) : null, thin: !!story.thin };
     return {
-      root: globe.root, dead: false, visible: false, station: GLOBE_STATION.clone(),
+      root: globe.root, dead: false, visible: false, station: GLOBE_STATION.clone(), fitLabels: false,
       show() { this.visible = true; globe.show({ region, prob, prev, outcomes, subject, info, palette: ctx.pal, seed: ctx.seed }); },
       hide() { this.visible = false; globe.hide(); },
       tick() { if (!this.visible && !globe.root.visible) this.dead = true; },
@@ -308,20 +314,23 @@ export function createScene(canvas, opts = {}) {
     current = built.holo; curStation = built.station;
     if (!current) return;
     current.show(); current._heroRevealed = false;
-    world.setTheme(built.pal.a, built.pal.b);
+    const stageB = built.pal.stage || built.pal.b;   // the stage's secondary (economy: orange, not the widgets' green)
+    world.setTheme(built.pal.a, stageB);
     if (built.signals) hero.setStory(built.signals);
     hero.emit('arrive', 1);
-    world.event('story', { x: built.station.x, z: built.station.z, color: built.pal.b });
-    if (fly) flyTo(withLabels(current.pose(), current.root));
+    world.event('story', { x: built.station.x, z: built.station.z, color: stageB });
+    // the globe rises into place after this call (its root starts ~32 units low), so measuring its labels now would
+    // stretch the box downward and frame it small and high; its hand-tuned pose box already covers its labels.
+    if (fly) flyTo(current.fitLabels === false ? current.pose() : withLabels(current.pose(), current.root));
     rig.orbitDir = (built.pal.seed & 4) ? 1 : -1;
     // background beat: when the scene's hold is up, the scene transition fires on this card change
-    const beat = built.vis !== 'alert' ? world.beat({ station: built.station, pal: built.pal, storyId: built.storyId }) : null;
+    const beat = built.vis !== 'alert' ? world.beat({ station: built.station, pal: stageB === built.pal.b ? built.pal : { ...built.pal, b: stageB }, storyId: built.storyId }) : null;
     if (beat) {
       window.__pnnBeat = beat; hero.emit('beat', 0.8);
       try { document.dispatchEvent(new CustomEvent('pnn:beat', { detail: beat })); } catch (e) { reportErr('beat', e); }
       post.glitch(0.12);   // the transition is the show
     } else post.glitch(0.22);
-    fx.ring(new THREE.Vector3(built.station.x, 0.15, built.station.z), built.pal.b, { radius: 26, dur: 1.6, bright: 1.6 });
+    fx.ring(new THREE.Vector3(built.station.x, 0.15, built.station.z), stageB, { radius: 26, dur: 1.6, bright: 1.6 });
     hero.dispatchDom(W, Hh);
   }
 
@@ -341,6 +350,7 @@ export function createScene(canvas, opts = {}) {
     t += dt; TIME.value = t;
     // perf sections (perf.SECTIONS order): cam, hero, widget, outgoing, globe, fx, world, post, other
     const f0 = performance.now(); lapT = f0;
+    labelsFrameStart();
     try {
       tickCamera(dt, t, now); lap(0);
       const live = current && !current.dead ? current : null;
@@ -356,7 +366,10 @@ export function createScene(canvas, opts = {}) {
       globe.tick(dt, t); lap(4);
       fx.tick(dt); lap(5);
       world.tick(dt, t, camera); lap(6);
-      post.render(dt); lap(7);
+      labelsCommit(3);   // upload labels drawn on earlier frames (raster done: cheap), before this render
+      post.render(dt);
+      pumpLabels(2);     // issue canvas draws for upcoming widget labels; they upload next frame
+      lap(7);
       perf.passes(post.perf.names, post.perf.ms);
     } catch (e) { if (errCount++ < 5) reportErr('frame', e); }
     // chip appears / changes size after a story starts: refit (cheap; once a second)
@@ -392,9 +405,14 @@ export function createScene(canvas, opts = {}) {
     const pal = palette(story);
     const ctx = { scene, fx, world, station, pal, seed: pal.seed, rnd: pal.rnd, globe };
     const built = [];
+    holdLabels(true);
     try {
       built.push(createOutcomes(ctx, story), createDial(ctx, story), createRibbon(ctx, story), createCountdown(ctx, story, { cluster: true }), createMovers(ctx, ms));
       for (const h of built) { h.show(); h.tick(0.016, 0); h.tick(0.016, 0.016); }
+      // programs only: one label keeps the sprite/LabelPass pipeline in the warm frame; drawing + uploading all ~77 label
+      // canvases here was most of the boot hitch (600+ ms in Safari). Hidden labels are never drawn (lazy, see holo.js).
+      holdLabels(false);
+      built.forEach((h, i) => (h.labels || []).forEach((l, j) => { if (i || j) l.opacity = 0; else { l.opacity = 1; l._sync(); } }));
       globe.show({ region: { name: 'x', lat: 10, lon: 10 }, prob: 0.5, palette: pal, seed: 1 }); globe.root.position.copy(station); globe.tick(0.016, 0);
       // draw one frame of everything through the full post chain: on Metal/ANGLE the expensive pipeline build
       // happens at first draw, not at link time, so compile() alone isn't enough
@@ -403,6 +421,7 @@ export function createScene(canvas, opts = {}) {
       post.render(0.016);
       globe.hide(); globe.root.position.copy(GLOBE_STATION); globe.root.position.y = -globe.R - 8; globe.root.visible = false;
     } catch (e) { reportErr('warmup', e); }
+    holdLabels(false);
     for (const h of built) { try { h.dispose(); } catch {} }
     api.timing.warmupMs = Math.round(performance.now() - t0);
     perf.ev('scene.warmup', api.timing.warmupMs, 'holograms');
@@ -444,7 +463,7 @@ export function createScene(canvas, opts = {}) {
         world.event('alert', { x: station.x, z: station.z });
         fx.ring(new THREE.Vector3(station.x, 0.15, station.z), COL.alert, { radius: 60, dur: 2.2, bright: 2.5 });
         fx.burst(new THREE.Vector3(station.x, 8, station.z), COL.amber, 500, { speed: 12, up: 8, lifeS: 2.4, sz: 1.2 });
-        const pal = { ...palette({ id: alert.id || alert.marketId || 'alert' }, 'world'), a: COL.alert.clone(), b: COL.amber.clone(), hexA: '#ff3a2e', hexB: '#ffab2e' };
+        const pal = { ...palette({ id: alert.id || alert.marketId || 'alert' }, 'world'), a: COL.alert.clone(), b: COL.amber.clone(), stage: null, hexA: '#ff3a2e', hexB: '#ffab2e' };
         pal.pick = (i) => [pal.a, pal.b, COL.white][i % 3]; pal.hex = (i) => ['#ff3a2e', '#ffab2e', '#ffffff'][i % 3];
         let holoRef = null;
         const ctx = { scene, fx: wrapFx(() => holoRef && current === holoRef), world, station, pal, seed: pal.seed, rnd: pal.rnd, globe, hero };

@@ -64,7 +64,9 @@ export function createOutcomes(ctx, story, opts = {}) {
   const plotW = n * PITCH + 3;
   const cross = (it) => (horiz ? ROW0 + (n - 1 - it.rank) * PITCH : (it.rank - (n - 1) / 2) * PITCH);   // centre across the bars
   const lenOf = (v) => (v > 0.0005 ? Math.max(0.15, (v / AX) * LEN) : 0);
-  const tipXY = (it, v) => (horiz ? [X0 + lenOf(v), cross(it)] : [cross(it), lenOf(v)]);
+  const tipXY = (it, v) => (horiz ? [X0 + lenOf(v), cross(it)] : [cross(it), lenOf(v)]);   // build time only; tick uses the scalar forms below (no per-frame arrays)
+  const tipX = (it, v) => (horiz ? X0 + lenOf(v) : cross(it));
+  const tipY = (it, v) => (horiz ? cross(it) : lenOf(v));
   const L = (text, o, x, y, z = 0.6) => { const l = holo.label(text, o); l.sprite.position.set(x, y, z); l.yFrac = clamp01(y / HT); return l; };
   const gridMat = holo.line(COL.white, { alpha: 0.16 });
 
@@ -135,7 +137,7 @@ export function createOutcomes(ctx, story, opts = {}) {
       chip.base = chip.sprite.scale.clone(); chip.sprite.scale.setScalar(0.001); chip.bright = 0;
       chip.sprite.position.set(x, y, 0.7); chip.yFrac = clamp01((horiz ? y : 4) / HT);
     }
-    return { it, mesh, cap, ghost, pct, chip, x, y, txt: '' };
+    return { it, mesh, cap, ghost, pct, chip, x, y, txt: '', cr: cross(it) };
   });
   const lead = bars[0];
 
@@ -158,7 +160,8 @@ export function createOutcomes(ctx, story, opts = {}) {
     // bracket between the ghost tick and the cap (geometry rebuilt in tick as the bar moves)
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(18), 3));
     bracket = new THREE.LineSegments(g, holo.line(dcol, { alpha: 0.95, glow: 1.8 })); bracket.frustumCulled = false; root.add(bracket);
-    swHead = new THREE.Mesh(new THREE.CircleGeometry(0.5, 3), holo.mat(dcol, { flat: 1, glow: 2, alpha: 1, side: THREE.DoubleSide, depthWrite: false })); swHead.rotation.z = horiz ? (up ? 0 : Math.PI) : (up ? Math.PI / 2 : -Math.PI / 2); swHead.visible = false; root.add(swHead);
+    // the bracket's arrowhead mesh is for the leaderboard only: the column board's bracket label already starts with the same ▲/▼ glyph (they read as a double ▲ side by side)
+    if (horiz) { swHead = new THREE.Mesh(new THREE.CircleGeometry(0.5, 3), holo.mat(dcol, { flat: 1, glow: 2, alpha: 1, side: THREE.DoubleSide, depthWrite: false })); swHead.rotation.z = up ? 0 : Math.PI; swHead.visible = false; root.add(swHead); }
     if (!horiz) {
       brLbl = holo.label(`${up ? '▲' : '▼'} ${Math.abs(Math.round(feat.d * 100))} PTS`, { w: 384, h: 96, height: 1.7, font: '700 76px Rajdhani', color: dc, glow: dc, align: 'left' });
       brLbl.sprite.position.z = 0.7; brLbl.bright = 0;
@@ -205,47 +208,56 @@ export function createOutcomes(ctx, story, opts = {}) {
   holo.bx = horiz ? [-20, 20] : [axisX - 3, axisX + plotW + 2];
 
   // ---- animation ----
+  // Per-frame work is scalar math only (no arrays / vectors / closures), the bracket buffer is rewritten only when its ends move, and the
+  // counting % labels (each redraw = canvas draw + texture upload) are spread over frames: bar i may redraw on every MOD-th frame only (offset by
+  // its rank), so several moving bars never upload in the same frame. The landing value always draws.
   const TA0 = 0.35, TB = anyMove ? 2.2 : 99, TCHIP = TB + 1.2;
-  let hdrState = 0, emitAcc = 0;
-  const vecA = new THREE.Vector3();
+  const MOD = n <= 3 ? 2 : 3;
+  const UP = new THREE.Vector3(0, 1, 0), vecA = new THREE.Vector3();
+  const leadTX = tipX(lead.it, lead.it.p), leadTY = tipY(lead.it, lead.it.p);
+  const fGX = fb ? tipX(fb.it, fb.it.prev) : 0, fGY = fb ? tipY(fb.it, fb.it.prev) : 0;
+  const toss = sw && AX >= 0.5 ? (0.5 / AX) * LEN : -1;
+  let hdrState = 0, emitAcc = 0, frameN = 0, brTx = NaN, brTy = NaN;
   holo.tick = function (dt, t) {
     this.baseTick(dt);
     const ts = this.tShow;
+    frameN++;
     const b2 = ease.inOut(clamp01((ts - TB) / 1.5));
     if (anyMove) {
       const st = ts < 0.5 ? 0 : ts < TB ? 1 : 2;
       if (st !== hdrState) { hdrState = st; hdr.set(st === 2 ? 'NOW · WHITE TICK = YESTERDAY' : 'YESTERDAY'); hdr.bright = st ? 1 : 0; }
     }
-    for (const b of bars) {
-      const it = b.it;
+    for (let bi = 0; bi < bars.length; bi++) {
+      const b = bars[bi], it = b.it;
       const a = ease.out(clamp01((ts - TA0 - it.rank * 0.12) / 0.9));
       const vNow = it.prev + (it.p - it.prev) * b2;
-      const v = vNow * a;
-      const len = lenOf(v), [tx, ty] = tipXY(it, v);
+      const len = lenOf(vNow * a);
+      const tx = horiz ? X0 + len : b.cr, ty = horiz ? b.cr : len;
       if (horiz) b.mesh.scale.set(Math.max(0.01, len), T, T * 0.9); else b.mesh.scale.set(T, Math.max(0.01, len), T * 0.9);
-      b.cap.position.set(tx, ty, 0); b.cap.rotation.set(0, 0, 0);
+      b.cap.position.set(tx, ty, 0);
       if (b.ghost) b.ghost.visible = a > 0.9;
       const txt = pctText(vNow);
-      if (txt !== b.txt) { b.txt = txt; b.pct.set(txt); }
+      if (txt !== b.txt && (b2 >= 1 || (frameN + it.rank) % MOD === 0 || b.txt === '')) { b.txt = txt; b.pct.set(txt); }
       b.pct.bright = a > 0.05 ? 1 : 0;
-      const off = horiz ? [tx + 0.6, ty] : [tx, ty + 1.8];
-      b.pct.sprite.position.x = off[0]; b.pct.sprite.position.y = off[1];
-      b.pct.yFrac = clamp01(off[1] / HT * 0.8);
+      const oy = horiz ? ty : ty + 1.8;
+      b.pct.sprite.position.x = horiz ? tx + 0.6 : tx; b.pct.sprite.position.y = oy;
+      b.pct.yFrac = clamp01(oy / HT * 0.8);
       if (b.chip) {
-        const k = ease.back(clamp01((ts - TCHIP - it.rank * 0.08) / 0.45));
-        b.chip.sprite.scale.set(b.chip.base.x * Math.max(0.001, k), b.chip.base.y * Math.max(0.001, k), 1);
+        const k = ease.back(clamp01((ts - TCHIP - it.rank * 0.08) / 0.45)), ks = Math.max(0.001, k);
+        b.chip.sprite.scale.set(b.chip.base.x * ks, b.chip.base.y * ks, 1);
         b.chip.bright = k > 0.02 ? 1 : 0;
         if (horiz) b.chip.sprite.position.set(tx + 4.3, ty, 0.7); else {
           let cy = ty + 3.7;
-          if (sw && AX >= 0.5 && Math.abs(cy - (0.5 / AX) * LEN) < 1.0) cy = (0.5 / AX) * LEN + 1.0;   // keep the chip off the TOSS-UP line
-          b.chip.sprite.position.y = cy; b.chip.yFrac = clamp01(cy / HT * 0.8);
+          if (toss >= 0 && Math.abs(cy - toss) < 1.0) cy = toss + 1.0;   // keep the chip off the TOSS-UP line
+          b.chip.sprite.position.x = tx; b.chip.sprite.position.y = cy;
         }
         b.chip.yFrac = clamp01(ty / HT * 0.8);
       }
     }
     // halo on the leader's tip
     {
-      const v = lead.it.prev + (lead.it.p - lead.it.prev) * b2, [tx, ty] = tipXY(lead.it, v * ease.out(clamp01((ts - TA0) / 0.9)));
+      const v = (lead.it.prev + (lead.it.p - lead.it.prev) * b2) * ease.out(clamp01((ts - TA0) / 0.9));
+      const lt = lenOf(v), tx = horiz ? X0 + lt : lead.cr, ty = horiz ? lead.cr : lt;
       const bob = Math.sin(t * 2) * 0.25;
       halo.position.set(horiz ? tx + 0.3 + bob : tx, horiz ? ty : ty + 0.5 + bob, 0);
       halo.rotation[horiz ? 'x' : 'z'] = t * 0.7;
@@ -253,7 +265,8 @@ export function createOutcomes(ctx, story, opts = {}) {
     }
     if (fb) {
       const it = fb.it, a = ease.out(clamp01((ts - TA0 - it.rank * 0.12) / 0.9));
-      const v = (it.prev + (it.p - it.prev) * b2) * a, [tx, ty] = tipXY(it, v), [gx, gy] = tipXY(it, it.prev);
+      const fl = lenOf((it.prev + (it.p - it.prev) * b2) * a), tx = horiz ? X0 + fl : fb.cr, ty = horiz ? fb.cr : fl;
+      const gx = fGX, gy = fGY;
       const k = clamp01((ts - TCHIP) / 0.5);
       // BIGGEST MOVE tag + WAS label appear with the move
       wasLbl.bright = ts > TB - 0.3 ? 1 : 0;
@@ -266,15 +279,26 @@ export function createOutcomes(ctx, story, opts = {}) {
         wasLbl.sprite.position.set(fb.x - T / 2 - 0.8, gy, 0.7);
       }
       tag.yFrac = clamp01(tag.sprite.position.y / HT * 0.8);
-      // delta bracket: line from ghost to tip, with end ticks
-      const pos = bracket.geometry.attributes.position.array;
-      if (horiz) { const y = fb.y - T / 2 - 0.35; pos.set([gx, y, 0.5, tx, y, 0.5, gx, y, 0.5, gx, y + 0.35, 0.5, tx, y, 0.5, tx, y + 0.35, 0.5]); }
-      else { const x = fb.x + T / 2 + 0.9; pos.set([x, gy, 0.5, x, ty, 0.5, x - 0.5, gy, 0.5, x, gy, 0.5, x - 0.5, ty, 0.5, x, ty, 0.5]); }
-      bracket.geometry.attributes.position.needsUpdate = true;
+      // delta bracket: line from ghost to tip, with end ticks (the buffer is only rewritten and re-uploaded when the tip moved)
+      if (tx !== brTx || ty !== brTy) {
+        brTx = tx; brTy = ty;
+        const pos = bracket.geometry.attributes.position.array;
+        if (horiz) {
+          const y = fb.y - T / 2 - 0.35;
+          pos[0] = gx; pos[1] = y; pos[2] = 0.5; pos[3] = tx; pos[4] = y; pos[5] = 0.5; pos[6] = gx; pos[7] = y; pos[8] = 0.5;
+          pos[9] = gx; pos[10] = y + 0.35; pos[11] = 0.5; pos[12] = tx; pos[13] = y; pos[14] = 0.5; pos[15] = tx; pos[16] = y + 0.35; pos[17] = 0.5;
+        } else {
+          const x = fb.x + T / 2 + 0.9;
+          pos[0] = x; pos[1] = gy; pos[2] = 0.5; pos[3] = x; pos[4] = ty; pos[5] = 0.5; pos[6] = x - 0.5; pos[7] = gy; pos[8] = 0.5;
+          pos[9] = x; pos[10] = gy; pos[11] = 0.5; pos[12] = x - 0.5; pos[13] = ty; pos[14] = 0.5; pos[15] = x; pos[16] = ty; pos[17] = 0.5;
+        }
+        bracket.geometry.attributes.position.needsUpdate = true;
+      }
       bracket.visible = ts > TB && Math.abs(ty - gy) + Math.abs(tx - gx) > 0.2;
-      if (swHead) { swHead.visible = bracket.visible; if (horiz) swHead.position.set(tx - (it.d > 0 ? 0.3 : -0.3), fb.y - T / 2 - 0.35, 0.5); else swHead.position.set(fb.x + T / 2 + 0.9, ty - (it.d > 0 ? 0.3 : -0.3), 0.5); }
+      if (swHead) { swHead.visible = bracket.visible; swHead.position.set(tx - (it.d > 0 ? 0.3 : -0.3), fb.y - T / 2 - 0.35, 0.5); }
       if (brLbl) {
-        brLbl.sprite.position.set(fb.x + T / 2 + 1.7, (gy + ty) / 2, 0.7); brLbl.yFrac = clamp01(((gy + ty) / 2) / HT * 0.8);
+        const my = (gy + ty) / 2;
+        brLbl.sprite.position.set(fb.x + T / 2 + 1.7, my, 0.7); brLbl.yFrac = clamp01(my / HT * 0.8);
         brLbl.bright = k > 0.02 ? 1 : 0;
       }
       if (pulse) {
@@ -282,12 +306,12 @@ export function createOutcomes(ctx, story, opts = {}) {
         pulse.position.set(horiz ? tx + 0.3 : tx, horiz ? ty : ty + 0.4, 0); pulse.scale.setScalar(s);
       }
     }
-    if (swBadge) { const bk = ease.back(clamp01((ts - TCHIP - 0.2) / 0.5)); swBadge.bright = bk > 0.02 ? 1 : 0; const pu = 1 + (swBadge.flipped ? 0.05 * Math.sin(t * 4) : 0); swBadge.sprite.scale.set(swBadgeScale.x * Math.max(0.001, bk) * pu, swBadgeScale.y * Math.max(0.001, bk) * pu, 1); }
+    if (swBadge) { const bk = ease.back(clamp01((ts - TCHIP - 0.2) / 0.5)), bs = Math.max(0.001, bk) * (1 + (swBadge.flipped ? 0.05 * Math.sin(t * 4) : 0)); swBadge.bright = bk > 0.02 ? 1 : 0; swBadge.sprite.scale.set(swBadgeScale.x * bs, swBadgeScale.y * bs, 1); }
     root.rotation.y = Math.sin(t * 0.17) * 0.05;
     emitAcc += dt;
     if (this.visible && ts > TCHIP && emitAcc > 0.5) {
-      emitAcc = 0; const [tx, ty] = tipXY(lead.it, lead.it.p);
-      fx.stream(root.localToWorld(vecA.set(tx, ty + 0.4, 0).clone()), lead.it.color, 5, new THREE.Vector3(0, 1, 0), { speed: 2.2, lifeS: 1.5, sz: 0.7 });
+      emitAcc = 0;
+      fx.stream(root.localToWorld(vecA.set(leadTX, leadTY + 0.4, 0).clone()), lead.it.color, 5, UP, { speed: 2.2, lifeS: 1.5, sz: 0.7 });
     }
   };
   holo.pose = function () {

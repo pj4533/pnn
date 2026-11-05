@@ -27,6 +27,9 @@ function niceStep(raw) {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
 }
 const decFor = (step) => (step >= 1 ? 0 : step >= 0.1 ? 1 : step >= 0.01 ? 2 : 3);
+// ink width in canvas px of a label font (same fallback stack makeLabel uses), to size a canvas to its text
+const _mc = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+const inkPx = (font, str) => { if (!_mc) return str.length * 40; _mc.font = `${font}, "Arial Narrow", "Helvetica Neue", Arial, sans-serif`; return _mc.measureText(str).width; };
 const sample = (a, max) => { if (a.length <= max) return a; const k = Math.ceil(a.length / max), out = a.filter((_, i) => i % k === 0); if (out[out.length - 1] !== a[a.length - 1]) out.push(a[a.length - 1]); return out; };
 
 export function createFinance(ctx, story, opts = {}) {
@@ -113,7 +116,11 @@ export function createFinance(ctx, story, opts = {}) {
     for (let x = xT; x < X1 + 0.6; x += 1.3) d.push(x, y, 0.2, Math.min(X1 + 0.6, x + 0.8), y, 0.2);
     root.add(lineSeg(new Float32Array(d), holo.line(COL.gold, { alpha: 0.85, glow: 1.5 })));
     const above = fi.price < prev;
-    label(`${mode === '5d' && fmtDay.format(Date.now()) === lastDay ? 'YESTERDAY\'S CLOSE' : 'PREVIOUS CLOSE'} ${fmtVal(fi, prev)}`, { w: 900, h: 112, height: 1.6, font: '800 72px Rajdhani', color: '#fff0a8', glow: '#ffd23f', align: 'left', plate: true }, xT + 0.8, y + (above ? 1.25 : -1.25), 0.5);
+    // "YESTERDAY'S CLOSE 7,688.6" is about as wide as the whole canvas, so starting it at today's first bar ran it past the chart frame (clipped at 1194):
+    // size the canvas to the text (same 72px type, so the look is unchanged) and slide the label left only as far as needed to end inside the frame
+    const closeTxt = `${mode === '5d' && fmtDay.format(Date.now()) === lastDay ? 'YESTERDAY\'S CLOSE' : 'PREVIOUS CLOSE'} ${fmtVal(fi, prev)}`;
+    const cw = Math.max(420, Math.ceil(inkPx('800 72px Rajdhani', closeTxt) / 0.9) + 4), spriteW = 1.6 * cw / 112;
+    label(closeTxt, { w: cw, h: 112, height: 1.6, font: '800 72px Rajdhani', color: '#fff0a8', glow: '#ffd23f', align: 'left', plate: true }, Math.min(xT + 0.8, X1 + 1.0 - spriteW), y + (above ? 1.25 : -1.25), 0.5);
   }
 
   // ---- the price line: older days in the accent, today's session in up/down colour (tube + area fill each)
@@ -241,17 +248,22 @@ export function createFinance(ctx, story, opts = {}) {
 
   // ---- animation
   const T = { month0: 0.8, month1: 2.2, odds0: 1.2, chart0: 2.0, chart1: 5.2 };
-  const head = new THREE.Vector3(), tmpv = new THREE.Vector3();
-  let emitAcc = 0, pulseAcc = 0, lastTs = 0;
+  const head = new THREE.Vector3(), tmpv = new THREE.Vector3(), emitV = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
+  const camF = { dx: 0, dy: 0, zoom: 0.96 };     // reused each frame (index.js only reads dx / dy / zoom)
+  const fracXT = (xT - X0) / L, nRows = rows.length;
+  let emitAcc = 0, pulseAcc = 0, lastTs = 0, drawn = false, monthDone = false;
   holo.tick = function (dt, t) {
     this.baseTick(dt);
     const ts = this.tShow, F = this.fade;
     // chart tracer
     const sx = ease((ts - T.chart0) / (T.chart1 - T.chart0)), f = sx * (N - 1), i0 = Math.min(N - 2, Math.floor(f)), u = f - i0;
     head.copy(pts[i0]).lerp(pts[Math.min(N - 1, i0 + 1)], u);
-    const frac = (x) => (x - X0) / L;                           // 0..1 along the chart
-    if (old) setSub(old, sx / Math.max(1e-6, frac(xT)));
-    setSub(tod, (sx - frac(xT)) / Math.max(1e-6, 1 - frac(xT)));
+    // the draw ranges only change while the tracer runs; once it lands (and has drawn the full line once) skip the per-frame writes
+    if (!drawn) {
+      if (old) setSub(old, sx / Math.max(1e-6, fracXT));
+      setSub(tod, (sx - fracXT) / Math.max(1e-6, 1 - fracXT));
+      drawn = sx >= 1;
+    }
     const landed = ts >= T.chart1, on = clamp01((ts - T.chart0 + 0.2) * 2);
     // today's band fades in as the tracer enters today
     band.material.uniforms.uFade.value = F * clamp01((head.x - xT) / Math.max(1, X1 - xT) * 3);
@@ -259,44 +271,48 @@ export function createFinance(ctx, story, opts = {}) {
     beacon.material.uniforms.uFade.value = F * on;
     beam.position.set(head.x, (head.y + yC0) / 2, 0); beam.scale.y = Math.max(0.05, head.y - yC0);
     beam.material.uniforms.uFade.value = F * on * (landed ? 0.6 + 0.4 * Math.sin(t * 3) : 1);
-    for (const r of rings) { const k = (t * 0.7 + r.userData.phase) % 1; r.position.copy(head); r.scale.setScalar(0.5 + k * 3.2); r.material.uniforms.uFade.value = (1 - k) * F * on; r.rotation.y = t * 0.5; }
+    for (let ri = 0; ri < rings.length; ri++) { const r = rings[ri], k = (t * 0.7 + r.userData.phase) % 1; r.position.copy(head); r.scale.setScalar(0.5 + k * 3.2); r.material.uniforms.uFade.value = (1 - k) * F * on; r.rotation.y = t * 0.5; }
     lblNow.bright = landed ? clamp01((ts - T.chart1) * 2.5) : 0;
     if (bracket) bracket.scale.y = (last.y - yOf(prev)) * ease((ts - T.chart1) / 0.8) || 0.001;
-    for (const d of dayLabels) { d.tgt = head.x >= d.xa - 0.3 ? 1 : 0; d.v += (d.tgt - d.v) * Math.min(1, dt * 9); d.l.bright = d.v; }
+    for (let di = 0; di < dayLabels.length; di++) { const d = dayLabels[di]; d.tgt = head.x >= d.xa - 0.3 ? 1 : 0; d.v += (d.tgt - d.v) * Math.min(1, dt * 9); d.l.bright = d.v; }
     // month strip draws first, then its 5-day window pulses
     if (hasMonth) {
       const pm = ease((ts - T.month0) / (T.month1 - T.month0));
-      month.line.geometry.setDrawRange(0, Math.floor(pm * month.M));
-      month.fill.mesh.geometry.setDrawRange(0, Math.floor(pm * (month.M - 1)) * 6);
+      if (pm < 1 || !monthDone) {
+        month.line.geometry.setDrawRange(0, Math.floor(pm * month.M));
+        month.fill.mesh.geometry.setDrawRange(0, Math.floor(pm * (month.M - 1)) * 6);
+        monthDone = pm >= 1;
+      }
       month.band.material.uniforms.uFade.value = F * clamp01((ts - T.month1) * 2) * (0.75 + 0.25 * Math.sin(t * 2.4));
     }
     // odds bars grow in, staggered; each flares when a pulse reaches it
-    rows.forEach((r, i) => {
-      const k = ease((ts - T.odds0 - i * 0.22) / 1.1);
+    for (let i = 0; i < nRows; i++) {
+      const r = rows[i], k = ease((ts - T.odds0 - i * 0.22) / 1.1);
       r.base.scale.x = Math.max(0.001, Math.min(r.p, r.before) * r.TW * k);
       r.dseg.scale.x = Math.max(0.001, Math.abs(r.p - r.before) * r.TW * k);
       r.flare = Math.max(0, r.flare - dt * 1.8);
       r.base.material.uniforms.uPulse.value = r.flare * 0.7; r.dseg.material.uniforms.uPulse.value = r.flare * 0.7 + 0.1 * Math.sin(t * 4 + i);
-    });
+    }
     // pulses: after the price lands, one runs down the spine every ~2.6s
     if (landed && rows.length) {
       pulseAcc += dt;
-      if (pulseAcc > 2.6 || lastTs < T.chart1) { pulseAcc = 0; const p = pulses.find((x) => x.s < 0); if (p) p.s = 0; }
+      if (pulseAcc > 2.6 || lastTs < T.chart1) { pulseAcc = 0; for (let pi = 0; pi < pulses.length; pi++) if (pulses[pi].s < 0) { pulses[pi].s = 0; break; } }
     }
     lastTs = ts;
-    for (const p of pulses) {
+    for (let pi = 0; pi < pulses.length; pi++) {
+      const p = pulses[pi];
       if (p.s < 0) { p.m.visible = false; continue; }
       const prevS = p.s; p.s += dt * 15;
       spineAt(p.s, tmpv); p.m.position.copy(tmpv); p.m.visible = true; p.m.material.uniforms.uFade.value = F;
-      rows.forEach((r) => { const sAt = spineA + (last.y - r.y); if (prevS < sAt && p.s >= sAt) r.flare = 1; });
+      for (let ri = 0; ri < nRows; ri++) { const r = rows[ri], sAt = spineA + (last.y - r.y); if (prevS < sAt && p.s >= sAt) r.flare = 1; }
       if (p.s > spineLen) { p.s = -1; p.m.visible = false; }
     }
     // camera follows the tracer, then pulls back to the whole widget (gentle: a tighter follow pushed the odds rows under the NEXT BIG DECISION chip)
-    this.camFocus = ts >= T.chart0 - 0.1 && ts < T.chart1 + 0.2 ? { dx: head.x * 0.25, dy: (head.y - midY) * 0.15, zoom: 0.96 } : null;
+    if (ts >= T.chart0 - 0.1 && ts < T.chart1 + 0.2) { camF.dx = head.x * 0.25; camF.dy = (head.y - midY) * 0.15; this.camFocus = camF; } else this.camFocus = null;
     root.rotation.y = Math.sin(t * 0.15) * 0.04;
     emitAcc += dt;
-    if (this.visible && ts >= T.chart0 && !landed && emitAcc > 0.07) { emitAcc = 0; fx.stream(root.localToWorld(head.clone()), pal.a, 4, new THREE.Vector3(0, 1, 0), { speed: 2.2, lifeS: 1.2, sz: 0.7 }); }
-    else if (this.visible && landed && emitAcc > 0.6) { emitAcc = 0; fx.stream(root.localToWorld(last.clone()), dir > 0 ? pal.a : pal.b, 5, new THREE.Vector3(0, 1, 0), { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
+    if (this.visible && ts >= T.chart0 && !landed && emitAcc > 0.07) { emitAcc = 0; fx.stream(root.localToWorld(emitV.copy(head)), pal.a, 4, UP, { speed: 2.2, lifeS: 1.2, sz: 0.7 }); }
+    else if (this.visible && landed && emitAcc > 0.6) { emitAcc = 0; fx.stream(root.localToWorld(emitV.copy(last)), dir > 0 ? pal.a : pal.b, 5, UP, { speed: 1.5, lifeS: 1.8, sz: 0.7 }); }
   };
   holo.pose = function () {
     const tgt = this.station.clone().add(new THREE.Vector3(0, midY, -1));

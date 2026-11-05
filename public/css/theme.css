@@ -43,7 +43,7 @@ body.has-scene #backdrop { display: none; }
 #chyron { position: fixed; left: 0; right: 0; top: 79vh; height: 21vh; z-index: 20; pointer-events: none; }
 #alerts { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
 #scanlines { position: fixed; inset: 0; z-index: 25; pointer-events: none; opacity: .12;
-  background: repeating-linear-gradient(to bottom, transparent 0, transparent 2px, rgba(0,0,0,.6) 3px); mix-blend-mode: multiply; }
+  background: repeating-linear-gradient(to bottom, transparent 0, transparent 2px, rgba(0,0,0,.6) 3px); }   /* was mix-blend-mode: multiply, which for a black source is exactly a normal alpha blend but made the browser re-composite the whole page behind this full-screen layer every frame */
 
 .up { color: var(--up); }
 .down { color: var(--down); }

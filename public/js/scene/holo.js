@@ -4,9 +4,12 @@ import * as THREE from '../../vendor/three/three.module.js';
 export const TIME = { value: 0 }; // shared time uniform, set by the frame loop
 
 // Theme palettes (a = primary accent, b = secondary). Everything neon so bloom reads.
+// stage (optional): the secondary colour the STAGE gets (world.setTheme, hero colorB, floor ring) when b would read as a
+// takeover there. economy.b is the same green as "up", so economy stories turned the whole stage green (item 14); the
+// widgets keep b, the stage gets a warm orange accent next to the gold.
 export const THEMES = {
   politics: { a: '#ff2bd6', b: '#00f0ff' },
-  economy: { a: '#ffd23f', b: '#3dff8a' },
+  economy: { a: '#ffd23f', b: '#3dff8a', stage: '#ff8a2e' },
   courts: { a: '#9b5cff', b: '#e6d6ff' },
   tech: { a: '#00f0ff', b: '#2d8cff' },
   science: { a: '#00ffc8', b: '#b4ff3d' },
@@ -37,7 +40,7 @@ export function nudgeHue(color, amount) {
   c.setHSL((_hsl.h + amount + 1) % 1, _hsl.s, _hsl.l);
   return c;
 }
-// palette(story) -> { a, b, hexA, hexB, seed, rnd, pick(i) } tinted per theme, nudged per story id
+// palette(story) -> { a, b, stage (stage secondary, = b unless the theme sets one), hexA, hexB, seed, rnd, pick(i) } tinted per theme, nudged per story id
 export function palette(story, themeOverride) {
   const theme = themeOverride || story?.visual?.theme || 'world';
   const base = THEMES[theme] || THEMES.world;
@@ -45,10 +48,11 @@ export function palette(story, themeOverride) {
   const rnd = rng(seed);
   const shift = (rnd() - 0.5) * 0.08;
   const a = nudgeHue(new THREE.Color(base.a), shift), b = nudgeHue(new THREE.Color(base.b), -shift * 0.5);
+  const stage = base.stage ? nudgeHue(new THREE.Color(base.stage), -shift * 0.5) : b;
   const hexA = '#' + a.getHexString(), hexB = '#' + b.getHexString();
   const extras = EXTRA.filter((h) => h !== base.a && h !== base.b);
   const list = [a, b, ...extras.map((h) => new THREE.Color(h))];
-  return { theme, seed, rnd, a, b, hexA, hexB, pick: (i) => list[i % list.length], hex: (i) => '#' + list[i % list.length].getHexString() };
+  return { theme, seed, rnd, a, b, stage, hexA, hexB, pick: (i) => list[i % list.length], hex: (i) => '#' + list[i % list.length].getHexString() };
 }
 
 // ---------- materials with fade + scan-in reveal ----------
@@ -127,7 +131,7 @@ let fontsReady = false;
 // and document.fonts.load() resolves with [] when the Google Fonts stylesheet has not been parsed yet, so: load explicitly, then keep
 // redrawing every label whenever the font set changes (loadingdone), and retry until the Orbitron + Rajdhani faces are really loaded.
 const FACES = ['900 80px Orbitron', '700 80px Orbitron', '800 60px Rajdhani', '700 60px Rajdhani', '600 60px Rajdhani'];
-function redrawAll() { for (const l of LABELS) l.redraw(); }
+function redrawAll() { for (const l of LABELS) l.redraw(); }   // lazy: visible labels redraw at their next render, the rest via the pump
 function faceStatus(fam) { let n = 0, ok = 0; if (document.fonts) document.fonts.forEach((f) => { if (f.family.replace(/["']/g, '') === fam) { n++; if (f.status === 'loaded') ok++; } }); return { n, ok }; }
 if (typeof document !== 'undefined' && document.fonts?.load) {
   let tries = 0;
@@ -145,17 +149,79 @@ if (typeof document !== 'undefined' && document.fonts?.load) {
 }
 // every canvas font names a fallback sans, so an unloaded face never turns serif
 const withFallback = (font) => (font.includes(',') ? font : `${font}, "Arial Narrow", "Helvetica Neue", Arial, sans-serif`);
+// ---- label scheduler (perf, item 11). A widget build used to draw ~20 label canvases and upload them all in its first
+// frame, and every count-up redraw was uploaded right after drawing it. In WebKit an upload right after a canvas draw
+// waits for that raster (3-5 ms per label; the boot warmup's 77 labels took 600+ ms); one frame later the same upload
+// costs 0.6-2 ms (Chromium ~0.05 ms). So a label is drawn on one frame and uploaded on the next:
+//  - makeLabel only queues the label. pumpLabels() (after render) issues the canvas draws of queued hidden labels in reveal
+//    order (lowest yFrac first) within a time budget; labelsCommit() (after the widget ticks, before render) uploads what
+//    was drawn on an earlier frame: labels on screen through three at this render, hidden ones via renderer.initTexture
+//    (budgeted). labelsFrameStart() opens each frame.
+//  - a label on screen whose text changes (count-ups) draws at once and shows the new text from the next frame on (its
+//    texture keeps the old text meanwhile). A label never drawn before stays hidden until its first upload: it appears
+//    one frame later, at the ~1% opacity its reveal starts from.
+//  - opacity 0 hides the sprite (material.visible): a fully transparent sprite drew nothing anyway, and three then neither
+//    draws nor uploads it. set() with unchanged text is a no-op. Canvases + CanvasTextures are pooled per size on dispose.
+//  Without an attached renderer (no frame loop calling the two hooks) labels draw + upload synchronously, as before.
+const QUEUE = new Set();      // dirty and hidden: waiting for a pump draw
+const UPQ = new Map();        // drawn, not uploaded yet -> frame it was drawn on
+let labelRenderer = null, frameNo = 0, held = false;
+const POOL = new Map(); let poolPx = 0;
+const POOL_MAX_PX = 4e6;
+function takeCanvas(w, h) {
+  const list = POOL.get(w + 'x' + h);
+  if (list && list.length) { poolPx -= w * h; return list.pop(); }
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  return { canvas, ctx: canvas.getContext('2d'), tex };
+}
+function giveCanvas(b) {
+  const w = b.canvas.width, h = b.canvas.height;
+  if (poolPx + w * h > POOL_MAX_PX) { b.tex.dispose(); return; }
+  const k = w + 'x' + h; if (!POOL.has(k)) POOL.set(k, []);
+  POOL.get(k).push(b); poolPx += w * h;
+}
+/** The scene hands its renderer over once; from then on labels draw and upload a frame apart (see above). */
+export function attachLabelRenderer(renderer) { labelRenderer = renderer; }
+/** Warmup builds every widget only to compile programs: hold label draws meanwhile (they are disposed unseen). */
+export function holdLabels(on) { held = !!on; }
+/** Start of each frame (before anything can redraw a label). */
+export function labelsFrameStart() { frameNo++; }
+/** Before render: commit uploads of labels drawn on an earlier frame. On-screen ones always (three uploads them at
+ *  this render); hidden ones via initTexture, lowest yFrac first, within budgetMs. */
+export function labelsCommit(budgetMs = 3) {
+  if (!UPQ.size) return;
+  const t0 = performance.now();
+  let hidden = null;
+  for (const [l, k] of UPQ) {
+    if (k >= frameNo) continue;
+    if (l.opacity > 0) { UPQ.delete(l); l._commit(); } else (hidden ||= []).push(l);
+  }
+  if (!hidden) return;
+  hidden.sort((a, b) => a.yFrac - b.yFrac);
+  for (const l of hidden) { if (performance.now() - t0 >= budgetMs) break; UPQ.delete(l); l._upload(); }
+}
+/** After render: issue canvas draws for queued hidden labels, lowest yFrac first, within budgetMs (at least one). */
+export function pumpLabels(budgetMs = 2) {
+  if (!QUEUE.size) return;
+  const t0 = performance.now();
+  do {
+    let best = null;
+    for (const l of QUEUE) if (!best || l.yFrac < best.yFrac) best = l;
+    QUEUE.delete(best); best._draw();
+  } while (QUEUE.size && performance.now() - t0 < budgetMs);
+}
+export const labelQueueSize = () => QUEUE.size + UPQ.size;
 // Label: Sprite with a fixed-size canvas; text scaled to fit. opts: { w, h (canvas px), height (world units), color, glow, font, sub, subColor, subFont, align,
 //   mainY / subY (baseline-middle as a fraction of h; defaults 0.36 / 0.8 with a sub line), plate (default FALSE: tick/axis labels are plain text with glow + a thin dark outline;
 //   pass plate:true only for the hero readout and badges: a soft, feathered translucent backing, plateAlpha 0.34), crisp (heavier dark outline, no glow blur: for small labels over bright arcs) }
 export function makeLabel(text, opts = {}) {
   const o = { w: 1024, h: 256, height: 1, color: '#ffffff', glow: '#ff2bd6', font: '900 150px Orbitron', sub: null, subColor: '#00f0ff', subFont: '700 64px Rajdhani', align: 'center', bright: 0.8, plate: false, plateAlpha: 0.34, crisp: false, ...opts };
   o.font = withFallback(o.font); o.subFont = withFallback(o.subFont);
-  const canvas = document.createElement('canvas');
-  canvas.width = o.w; canvas.height = o.h;
-  const ctx = canvas.getContext('2d');
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const bundle = takeCanvas(o.w, o.h);
+  const { canvas, ctx, tex } = bundle;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
   mat.color.setScalar(1);   // drawn after bloom (LabelPass): full brightness, the glow is designed into the texture
   const sprite = new THREE.Sprite(mat);
@@ -228,21 +294,46 @@ export function makeLabel(text, opts = {}) {
     };
     line(cur.text, mainFont, mainY, cur.color, cur.glow, 1);
     if (hasSub) line(cur.sub, subFont, subY, o.subColor, o.subColor || cur.glow, 0.85);
-    tex.needsUpdate = true;
+    dirty = false;
+    if (labelRenderer) UPQ.set(api, frameNo);
+    else { tex.needsUpdate = true; shown = true; }
   }
-  redraw();
+  let dirty = true, disposed = false, shown = false;
+  const vis = () => { mat.visible = shown && mat.opacity > 0; };
+  // on screen (or about to be): draw now, upload next frame; hidden: queue for the pump
+  const invalidate = () => {
+    if (disposed) return;
+    dirty = true;
+    if (mat.opacity > 0 && !held) { QUEUE.delete(api); redraw(); } else QUEUE.add(api);
+  };
+  sprite.onBeforeRender = () => { if (dirty) { QUEUE.delete(api); redraw(); } };
   const api = {
     sprite, yFrac: 0.5, // yFrac: where this label sits in the hologram's reveal range (0 bottom..1 top)
     set(text2, sub2 = cur.sub, color2 = cur.color, glow2 = cur.glow) {
       if (text2 === cur.text && sub2 === cur.sub && color2 === cur.color && glow2 === cur.glow) return;
-      cur = { text: text2, sub: sub2, color: color2, glow: glow2 }; redraw();
+      cur = { text: text2, sub: sub2, color: color2, glow: glow2 }; invalidate();
     },
-    redraw,
+    redraw: invalidate,
+    _draw() { if (!disposed && dirty) redraw(); },
+    _commit() { if (disposed) return; if (dirty) { redraw(); return; } tex.needsUpdate = true; shown = true; vis(); },
+    _upload() { if (disposed) return; if (dirty) { redraw(); return; } tex.needsUpdate = true; labelRenderer.initTexture(tex); shown = true; vis(); },
+    _sync() { if (disposed) return; if (dirty) redraw(); UPQ.delete(api); tex.needsUpdate = true; shown = true; vis(); },   // warmup: draw + upload now
     get opacity() { return mat.opacity; },
-    set opacity(v) { mat.opacity = v; },
-    dispose() { LABELS.delete(api); tex.dispose(); mat.dispose(); },
+    set opacity(v) {
+      mat.opacity = v;
+      if (v > 0 && dirty && !disposed && !held) { QUEUE.delete(api); redraw(); }   // reveal reached a label the pump has not drawn yet
+      vis();
+    },
+    dispose() {
+      if (disposed) return; disposed = true;
+      LABELS.delete(api); QUEUE.delete(api); UPQ.delete(api);
+      sprite.removeFromParent(); sprite.onBeforeRender = () => {};
+      mat.map = null; mat.dispose(); giveCanvas(bundle);
+    },
   };
+  vis();   // hidden until its first upload (a pooled canvas may still hold another label's text)
   LABELS.add(api);
+  QUEUE.add(api);
   return api;
 }
 export const fontsLoaded = () => fontsReady;

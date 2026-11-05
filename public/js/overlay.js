@@ -74,17 +74,26 @@ export function createOverlay(root) {
       requestAnimationFrame(step);
     });
   }
+  // The glass sheen (stage.css .sheen) is a real element so its moving layer is clipped by its own box: one <i class="sheen"> first in every
+  // .card / .mini. --sheen-d puts every panel at the shared phase of the 3 s sweep (set once per render, not on every 10 Hz hero event).
+  const SHEEN = '<i class="sheen" aria-hidden="true"></i>';
+  function sheen(host) {
+    host.style.setProperty('--sheen-d', `-${((performance.now() / 1000) % 3).toFixed(2)}s`);
+    for (const el of host.children) if ((el.classList.contains('card') || el.classList.contains('mini')) && !el.firstElementChild?.classList.contains('sheen')) el.insertAdjacentHTML('afterbegin', SHEEN);
+  }
   function swap(host, html, key, beat = null) {
     if (host.dataset.key === key) {
       // Same card, fresh numbers (an SSE state update): swap the content but don't replay entrance animations,
       // which made the card "display again" a second or two after it appeared. Looping effects keep running.
       host.innerHTML = html;
+      sheen(host);
       settle(host);
       return;
     }
     host.dataset.key = key;
     host.classList.remove('in', ...BEAT_CLS); void host.offsetWidth;
     host.innerHTML = html;
+    sheen(host);
     if (beat) applyBeat(host, beat); else host.classList.add('in');
   }
 
@@ -171,10 +180,12 @@ export function createOverlay(root) {
       setTitle(seg.id, sub, title);
       feeds(state);
       if (fresh) { const b = takeBeat(); swap(left, html, key, b); swap(strip, stripHtml, key, b); countUps(left, true); lastFreshAt = performance.now(); }
-      else { left.innerHTML = html; strip.innerHTML = stripHtml; settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
+      else { left.innerHTML = html; strip.innerHTML = stripHtml; sheen(left); sheen(strip); settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
       if (seg.id !== 'standby') addLink(left);
       frame.classList.toggle('short', seg.id === 'top');
       scheduleFit(root);
+      // the connector beam (stagelink.js) re-measures the card once the fit pass has resized it (fit runs 2 frames after this; this fires on the 3rd)
+      requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => document.dispatchEvent(new Event('pnn:cardfit')))));
     },
     /** Top-bar tease: "NEXT: <a> · then <b>". The "then" part drops when the pair doesn't fit. */
     setNext(a, b) {
