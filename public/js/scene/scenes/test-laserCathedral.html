@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>laserCathedral test</title>
+<style>html,body{margin:0;height:100%;background:#07021a;overflow:hidden}canvas{display:block}
+#hud{position:fixed;left:10px;top:8px;color:#9fe;font:12px monospace;background:rgba(0,0,0,.5);padding:6px;white-space:pre}
+.z{position:fixed;border:1px dashed rgba(0,240,255,.5);pointer-events:none;display:none}body.zones .z{display:block}
+#zl{left:0;top:0;width:47vw;height:100vh;border-color:#f0f}#zb{left:0;top:79vh;width:100vw;height:21vh;border-color:#f0f}#zg{left:30vw;top:7vh;width:68.5vw;height:63vh}</style></head>
+<body><div id="hud"></div><div class="z" id="zl"></div><div class="z" id="zb"></div><div class="z" id="zg"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
+import { create } from './laserCathedral.js';
+const Q = new URLSearchParams(location.search);
+if (Q.get('zones')) document.body.classList.add('zones');
+const quality = +(Q.get('q') ?? 2), pr = +(Q.get('pr') ?? Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); renderer.setClearColor(0x07021a);
+document.body.appendChild(renderer.domElement);
+const W = innerWidth, H = innerHeight;
+const camera = new THREE.PerspectiveCamera(38, W / H, 1, 3000); camera.position.set(0, 40, 160);
+camera.setViewOffset(W, H, -0.14 * W, -0.115 * H, W, H);
+const res = new THREE.Vector2(W * pr, H * pr);
+// mock ctx
+const noiseD = new Uint8Array(256 * 256 * 4); let sd = 1234567; for (let i = 0; i < noiseD.length; i++) { sd = (sd * 16807) % 2147483647; noiseD[i] = sd & 255; }
+const noise = new THREE.DataTexture(noiseD, 256, 256); noise.wrapS = noise.wrapT = THREE.RepeatWrapping; noise.magFilter = THREE.LinearFilter; noise.minFilter = THREE.LinearMipmapLinearFilter; noise.generateMipmaps = true; noise.needsUpdate = true;
+const u = { time: { value: 0 }, localTime: { value: 0 }, alert: { value: 0 }, pulse: { value: 0 }, fade: { value: 1 },
+  accent: { value: new THREE.Color('#ff2bd6') }, accent2: { value: new THREE.Color('#00f0ff') }, res: { value: res },
+  guardRect: { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) }, guardAmt: { value: 0.45 } };
+const COMMON = `uniform float uTime,uAlert,uPulse,uFade; uniform vec3 uAccent,uAccent2; uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt; uniform sampler2D uNoise;
+float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
+float vnoise(vec3 p){ vec3 i=floor(p),f=fract(p); f=f*f*(3.-2.*f); vec2 o=vec2(37.,17.)*i.z; vec2 uv=(i.xy+o+f.xy+.5)/256.; vec2 s=texture2D(uNoise,uv).yx; return mix(s.x,s.y,f.z); }
+vec3 pal(float t,vec3 a,vec3 b,vec3 c,vec3 d){return a+b*cos(6.28318*(c*t+d));}
+float guard(){ vec2 q=gl_FragCoord.xy/uRes; vec2 m=smoothstep(uGuardRect.xy-0.08,uGuardRect.xy,q)*(1.-smoothstep(uGuardRect.zw,uGuardRect.zw+0.08,q)); return 1.-uGuardAmt*m.x*m.y; }
+vec3 alertMix(vec3 c){ float l=dot(c,vec3(.3,.59,.11)); vec3 r=vec3(1.,.12,.05)*l*1.6+vec3(.6,.25,0.)*c.r*.3; return mix(c,r,uAlert); }
+vec3 finish(vec3 c){ c=alertMix(c)*guard()*uFade; return c; }`;
+const stage = new THREE.Scene();
+let layerObj = null; const layerScene = new THREE.Scene(); const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const tri = new THREE.BufferGeometry(); tri.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+const ctx = { THREE, renderer, camera, stage, quality, rnd: (() => { let a = 42; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; })(),
+  opts: Object.fromEntries(Q.entries()), ...u, sharedNoise: noise,
+  common: () => ({ uTime: u.localTime, uAlert: u.alert, uPulse: u.pulse, uFade: u.fade, uAccent: u.accent, uAccent2: u.accent2, uRes: u.res, uGuardRect: u.guardRect, uGuardAmt: u.guardAmt, uNoise: { value: noise } }),
+  GLSL: { COMMON }, track: (...o) => o[0],
+  backdrop: (m) => { const mesh = new THREE.Mesh(tri, m); mesh.frustumCulled = false; mesh.renderOrder = -1000; stage.add(mesh); return mesh; },
+  layer: (m, { scale }) => { const rt = new THREE.WebGLRenderTarget(res.x * scale, res.y * scale, { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+    const mesh = new THREE.Mesh(tri, m); mesh.frustumCulled = false; layerScene.add(mesh); layerObj = rt; return { texture: rt.texture, uniforms: m.uniforms }; },
+};
+const sc = create(ctx);
+const holo = new THREE.Scene(); const ico = new THREE.Mesh(new THREE.IcosahedronGeometry(34, 1), new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true })); holo.add(ico);
+const composer = new EffectComposer(renderer); composer.setPixelRatio(pr); composer.setSize(W, H);
+composer.addPass(new RenderPass(stage, camera));
+const rp = new RenderPass(holo, camera); rp.clear = false; rp.clearDepth = true; composer.addPass(rp);
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(W / 2, H / 2), sc.grade.bloom * 0.7, sc.grade.bloomRadius * 0.5, sc.grade.bloomThreshold + 0.15));
+composer.addPass(new OutputPass());
+if (Q.get('enter') !== '0') { sc.setIntensity(1); sc.enter(+(Q.get('enter') || 3)); }
+const par = new THREE.Vector3(); let last = performance.now(), T = 0, frames = 0, fa = performance.now(), fps = 0;
+window.__t = { sc, ctx, u, fps: () => fps, setAlert: v => u.alert.value = v };
+const hud = document.getElementById('hud');
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000) * (+Q.get('speed') || 1); last = now; T += dt;
+  u.localTime.value = T; u.time.value = T; u.pulse.value = Math.max(0, u.pulse.value - dt * 1.6);
+  camera.position.x = Q.get('static') ? 0 : Math.sin(T * 0.15) * 270; par.set(camera.position.x, 0, 0);
+  ico.position.set(camera.position.x, 30, 0); ico.rotation.y = T * 0.3;
+  if (Q.get('alertAt') && T > +Q.get('alertAt')) u.alert.value += (1 - u.alert.value) * Math.min(1, dt * 3);
+  if (Q.get('rippleAt') && !window.__r && T > +Q.get('rippleAt')) { window.__r = 1; u.pulse.value = 1; sc.ripple({ x: camera.position.x, z: 0, color: new THREE.Color('#00f0ff'), strength: 1, screen: new THREE.Vector2(0.64, 0.385) }); }
+  if (Q.get('exitAt') && !window.__e && T > +Q.get('exitAt')) { window.__e = 1; sc.exit(3); }
+  sc.update(dt, T, { camera, dt, k: 1, phase: 'live', alert: u.alert.value, camX: camera.position.x, par, story: null, transition: -1 });
+  renderer.setRenderTarget(null);
+  if (layerObj) { renderer.setRenderTarget(layerObj); renderer.render(layerScene, ortho); renderer.setRenderTarget(null); }
+  composer.render(dt);
+  frames++; if (now - fa > 1000) { fps = frames * 1000 / (now - fa); frames = 0; fa = now; hud.textContent = `fps ${fps.toFixed(1)}  q${quality} pr${pr}  pat ${ctx.opts.pat ?? 'auto'}  calls ${renderer.info.render.calls}`; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script></body></html>

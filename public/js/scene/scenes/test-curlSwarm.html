@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8"><title>test-curlSwarm</title>
+<style>html,body{margin:0;background:#07021a;overflow:hidden;font:12px monospace;color:#fff}#ui{position:fixed;left:8px;top:8px;z-index:3;background:rgba(0,0,0,.5);padding:4px 8px;white-space:pre}
+#holo{position:fixed;left:30%;right:1.5%;top:7%;bottom:30%;border:1px dashed rgba(0,240,255,.45);z-index:2;display:none;pointer-events:none}
+#holo b{position:absolute;left:52%;top:40%;font:900 64px sans-serif;color:#0ff;text-shadow:0 0 12px #0ff}body.zones #holo{display:block}</style>
+<div id="ui">r ripple · a alert · e enter · x exit · 0/1/2 quality · z zones · m morph pts</div><div id="holo"><b>62%</b></div>
+<script type="module">
+// Standalone harness: a minimal ctx shim of the scene contract (common(), GLSL, track, backdrop, layer, anchor) + bloom.
+import * as THREE from '../../../vendor/three/three.module.js';
+import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
+import { createEnvCtx, GLSL as EG } from '../env/common.js';
+import { create } from './curlSwarm.js';
+const Q = new URLSearchParams(location.search);
+if (Q.get('zones') === '1') document.body.classList.add('zones');
+const dpr = +(Q.get('dpr') || Math.min(devicePixelRatio, 2));
+const r = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+r.setPixelRatio(dpr); r.setSize(innerWidth, innerHeight); r.setClearColor(0x07021a); document.body.appendChild(r.domElement);
+const cam = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 1, 8000);
+const W = innerWidth, H = innerHeight; cam.setViewOffset(W, H, W * (0.5 - 0.64), H * (0.5 - 0.385), W, H);
+const env = createEnvCtx(THREE);
+env.res.value.set(W * dpr, H * dpr);
+const stage = new THREE.Scene(), tracked = [];
+const shared = { time: { value: 0 }, localTime: { value: 0 }, alert: { value: 0 }, pulse: { value: 0 }, fade: { value: 1 } };
+let seed = 7; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const COMMON = `uniform float uTime, uAlert, uPulse, uFade; uniform vec3 uAccent, uAccent2; uniform sampler2D uNoise;
+${EG.GUARD}
+float hash12(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+float hash13(vec3 p3){ p3=fract(p3*.1031); p3+=dot(p3,p3.zyx+31.32); return fract((p3.x+p3.y)*p3.z); }
+float vnoise(vec3 p){ vec2 uv=p.xy+vec2(37.,17.)*floor(p.z); vec2 a=texture2D(uNoise,(uv+.5)/256.).xy; vec2 b=texture2D(uNoise,(uv+vec2(37.,17.)+.5)/256.).xy; return mix(a.x,b.x,fract(p.z)); }
+${EG.PALETTE}
+vec3 alertMix(vec3 c){ float l=dot(c,vec3(.2126,.7152,.0722)); return mix(c, vec3(l*2.2,l*0.5,l*0.12), uAlert); }
+vec3 finish(vec3 c){ return alertMix(c)*guard()*uFade; }`;
+const layers = [];
+const fsTri = new THREE.BufferGeometry(); fsTri.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+const ortho = new THREE.OrthographicCamera();
+const ctx = {
+  THREE, renderer: r, camera: cam, stage, quality: +(Q.get('q') ?? 2), rnd, opts: {},
+  ...shared, accent: env.accent, accent2: env.accent2, res: env.res, guardRect: env.guardRect, guardAmt: env.guardAmt, sharedNoise: env.noiseTex,
+  common: () => ({ uTime: shared.localTime, uAlert: shared.alert, uPulse: shared.pulse, uFade: shared.fade, uAccent: env.accent, uAccent2: env.accent2, uRes: env.res, uGuardRect: env.guardRect, uGuardAmt: env.guardAmt, uNoise: { value: env.noiseTex } }),
+  GLSL: { COMMON },
+  track: (...o) => { tracked.push(...o); return o[0]; },
+  backdrop(mat) { const m = new THREE.Mesh(fsTri, mat); m.frustumCulled = false; m.renderOrder = -1000; mat.depthTest = false; mat.depthWrite = false; stage.add(m); return m; },
+  layer(mat, { scale = 0.5 } = {}) {
+    const rt = new THREE.WebGLRenderTarget(Math.round(W * scale * 2), Math.round(H * scale * 2), { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+    const sc = new THREE.Scene(), m = new THREE.Mesh(fsTri, mat); m.frustumCulled = false; sc.add(m);
+    layers.push({ rt, sc }); return { texture: rt.texture, uniforms: mat.uniforms };
+  },
+  anchor() {},
+};
+const S = create(ctx);
+const composer = new EffectComposer(r, new THREE.WebGLRenderTarget(W * dpr, H * dpr, { type: THREE.HalfFloatType }));
+composer.setPixelRatio(dpr); composer.setSize(W, H);
+composer.addPass(new RenderPass(stage, cam));
+const bloom = new UnrealBloomPass(new THREE.Vector2(W / 2, H / 2), S.grade.bloom, S.grade.bloomRadius, S.grade.bloomThreshold); composer.addPass(bloom);
+composer.addPass(new OutputPass());
+const P0 = new THREE.Vector3(), par = new THREE.Vector3();
+const info = { camera: cam, dt: 0, k: 1, phase: 'live', alert: 0, camX: 0, par, story: { x: 0, z: 0, color: env.accent.value }, transition: -1 };
+S.setIntensity(1); S.enter(2.5);
+const st = [-270, -90, 90, 270]; let si = 0, tx = st[0], cx = st[0];
+function camPath(t, dt) { cx += (tx - cx) * (1 - Math.exp(-1.6 * dt)); cam.position.set(cx + Math.sin(t * 0.2) * 8, 22 + Math.sin(t * 0.3) * 3, 150); cam.lookAt(cx, 12, 0); cam.updateMatrixWorld(); }
+camPath(0, 1); P0.copy(cam.position);
+setInterval(() => { si = (si + 1) % st.length; tx = st[si]; S.ripple({ strength: 0.4 }); }, 6000);
+let last = performance.now(), t0 = last, frames = [];
+window.__t = { S, ctx, r, frames, calls: 0, alert: (v) => { shared.alert.value = v; S.event(v ? 'alert' : 'alertClear'); } };
+function loop(n) {
+  const dt = Math.min((n - last) / 1000, 0.1); last = n; frames.push(n); if (frames.length > 400) frames.shift();
+  const t = (n - t0) / 1000; shared.localTime.value = t % 3600; shared.time.value = t;
+  shared.pulse.value = Math.max(0, shared.pulse.value - dt * 1.6);
+  camPath(t, dt); par.copy(cam.position).sub(P0); info.dt = dt; info.camX = cam.position.x; info.alert = shared.alert.value;
+  S.update(dt, shared.localTime.value, info);
+  r.info.autoReset = false; r.info.reset();
+  for (const L of layers) { r.setRenderTarget(L.rt); r.render(L.sc, ortho); }
+  r.setRenderTarget(null);
+  composer.render(dt);
+  window.__t.calls = r.info.render.calls;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+addEventListener('keydown', (e) => {
+  if (e.key === 'r') S.ripple({ strength: 1 }); if (e.key === 'a') window.__t.alert(shared.alert.value ? 0 : 1);
+  if (e.key === 'e') S.enter(2.5); if (e.key === 'x') S.exit(2.0); if ('012'.includes(e.key)) S.setQuality(+e.key);
+  if (e.key === 'z') document.body.classList.toggle('zones');
+  if (e.key === 'm') { const o = new Float32Array(4096 * 3); console.log('morphPoints', S.morphPoints(o, 4096), o.slice(0, 6)); }
+});
+window.__t.dispose = () => { const m0 = { ...r.info.memory }; S.dispose?.(); for (const o of tracked) o.dispose?.(); stage.clear(); return { before: m0, after: { ...r.info.memory } }; };
+window.__fps = () => { const f = frames.slice(-120); return 1000 * (f.length - 1) / (f[f.length - 1] - f[0]); };
+</script>

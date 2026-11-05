@@ -32,12 +32,13 @@ export function createScene(canvas, opts = {}) {
   renderer.toneMapping = THREE.NoToneMapping;
   let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pixelRatio);
-  let W = canvas.clientWidth || window.innerWidth, Hh = canvas.clientHeight || window.innerHeight;
+  // window size first: WebKit can report the default 300x150 clientWidth before first layout (full-screen canvas)
+  let W = window.innerWidth || canvas.clientWidth, Hh = window.innerHeight || canvas.clientHeight;
   renderer.setSize(W, Hh, false);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, W / Hh, 0.1, 6000);
-  const world = createWorld(scene);
+  const world = createWorld(scene, { renderer, camera });
   const fx = createFx(scene);
   const post = createPost(renderer, scene, camera, { samples: pixelRatio < 1.5 ? 4 : 0 });
   world.attachPost(post);
@@ -126,11 +127,12 @@ export function createScene(canvas, opts = {}) {
     rig.zm = damp(rig.zm, cf ? cf.zoom || 1 : 1, 2.6, dt);
     _off.subVectors(rig.pos, rig.tgt);
     const cb = world.env.cameraBias, os = Math.min(1.3, Math.max(0.7, cb.orbitScale)), bob = Math.min(1.3, Math.max(0.7, cb.bob));
+    rig.whip = damp(rig.whip || 0, cb.whip || 0, 10, dt);
     const ang = (Math.sin(t * 0.11) * rig.orbit + Math.sin(t * 0.047) * rig.orbit * 0.5) * rig.orbitDir * os;
     _off.applyAxisAngle(THREE.Object3D.DEFAULT_UP, ang);
     _p.copy(rig.tgt).add(_off);
     _p.y += Math.sin(t * 0.23) * 0.6 * bob;
-    const zoom = (1 + Math.sin(t * 0.09) * 0.035) * rig.push * rig.zm;
+    const zoom = (1 + Math.sin(t * 0.09) * 0.035) * rig.push * rig.zm * (cb.push || 1);
     _p.sub(rig.tgt).multiplyScalar(zoom).add(rig.tgt);
     _t.copy(rig.tgt);
     if (rig.shake > 0) {
@@ -141,6 +143,7 @@ export function createScene(canvas, opts = {}) {
     _p.x += rig.fx; _p.y += rig.fy; _t.x += rig.fx; _t.y += rig.fy;
     camera.position.copy(_p);
     camera.lookAt(_t);
+    if (Math.abs(rig.whip) > 1e-4) camera.rotateY(-rig.whip * 0.0524);   // whip transition: +-3 deg pan impulse
   }
 
   // ---------- resize ----------
@@ -220,7 +223,7 @@ export function createScene(canvas, opts = {}) {
       case 'movers': holo = tickerMarkets.length ? createMovers(ctx, tickerMarkets) : (story ? createDial(ctx, story) : null); break;
       default: holo = createDial(ctx, story, o);
     }
-    return { holo, pal, station, vis };
+    return { holo, pal, station, vis, storyId: story?.id ?? null };
   }
   function pickTheme(cat) { return ['politics', 'economy', 'courts', 'tech', 'science', 'health', 'culture', 'weather', 'world'].includes(cat) ? cat : null; }
   function swapTo(built, { fly = true } = {}) {
@@ -232,13 +235,20 @@ export function createScene(canvas, opts = {}) {
     world.event('story', { x: built.station.x, z: built.station.z, color: built.pal.b });
     if (fly) flyTo(current.pose());
     rig.orbitDir = (built.pal.seed & 4) ? 1 : -1;
-    post.glitch(0.22);
+    // background beat: when the scene's hold is up, the scene transition fires on this card change
+    const beat = built.vis !== 'alert' ? world.beat({ station: built.station, pal: built.pal, storyId: built.storyId }) : null;
+    if (beat) {
+      window.__pnnBeat = beat;
+      try { document.dispatchEvent(new CustomEvent('pnn:beat', { detail: beat })); } catch (e) { reportErr('beat', e); }
+      post.glitch(0.12);   // the transition is the show
+    } else post.glitch(0.22);
     fx.ring(new THREE.Vector3(built.station.x, 0.15, built.station.z), built.pal.b, { radius: 26, dur: 1.6, bright: 1.6 });
   }
 
   // ---------- loop ----------
   let last_t = performance.now(), t = 0, errCount = 0, raf = 0, running = true;
   let fpsAcc = 0, fpsN = 0, fpsCheckAt = 8;
+  const NO_FPS_GUARD = new URLSearchParams(location.search).get('fpsguard') === '0';   // tests: keep quality fixed
   let envQ = world.env.getState().quality, goodChecks = 0, lastQChange = 0;
   function frame(now) {
     if (!running) return;
@@ -260,7 +270,7 @@ export function createScene(canvas, opts = {}) {
       post.render(dt);
     } catch (e) { if (errCount++ < 5) reportErr('frame', e); }
     fpsAcc += dt; fpsN++;
-    if (t > fpsCheckAt) {
+    if (t > fpsCheckAt && !NO_FPS_GUARD) {
       const fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0; fpsCheckAt = t + 5;
       api.fps = fps;
       // FPS guard: shed env quality first, then pixel ratio; step env quality back up only after 30 s of headroom
@@ -299,7 +309,9 @@ export function createScene(canvas, opts = {}) {
   }
 
   const api = {
-    fps: 0, envQ: 2, timing: { warmupMs: 0, frames: [] },
+    fps: 0, envQ: 2, timing: { warmupMs: 0, envWarmMs: 0, frames: [] },
+    forceBeat(type) { return world.env.forceBeat(type); },
+    cut(type) { return world.env.cut(type); },
     get env() { return world.env.getState(); },
     envEvent(type, data) { try { world.event(type, data); } catch (e) { reportErr('envEvent', e); } },
     showStory(story, segmentName = 'top') {
@@ -351,7 +363,7 @@ export function createScene(canvas, opts = {}) {
       if (last?.seg === 'movers' && current && !alertActive) { curKey = null; api.showStory(last.story, 'movers'); }
     },
     resize(w, h) { resize(w, h); },
-    setStageRect(rect) { RECT = rect || STAGE_RECT; SUBJECT_X = (RECT.x0 + RECT.x1) / 2; SUBJECT_Y = (RECT.y0 + RECT.y1) / 2; reframe(); },
+    setStageRect(rect) { RECT = rect || STAGE_RECT; SUBJECT_X = (RECT.x0 + RECT.x1) / 2; SUBJECT_Y = (RECT.y0 + RECT.y1) / 2; world.setStageRect(RECT); reframe(); },
     dispose() {
       running = false; cancelAnimationFrame(raf);
       window.removeEventListener('resize', onWinResize);
@@ -363,6 +375,12 @@ export function createScene(canvas, opts = {}) {
   };
   window.__pnnScene = { api, camera, rig, world, post, fx, globe, scene, flyTo, get current() { return current; }, get RECT() { return RECT; } };
   warmup();
-  raf = requestAnimationFrame(frame);
+  world.setStageRect(RECT);
+  // background: first scene + all transition programs compiled before the first frame (capped so a stuck import
+  // never blanks the broadcast; the canvas shows the clear colour meanwhile)
+  const envT0 = performance.now();
+  Promise.race([world.warm(), new Promise((r) => setTimeout(r, 4000))])
+    .catch((e) => reportErr('envWarm', e))
+    .finally(() => { api.timing.envWarmMs = Math.round(performance.now() - envT0); last_t = performance.now(); if (running) raf = requestAnimationFrame(frame); });
   return api;
 }

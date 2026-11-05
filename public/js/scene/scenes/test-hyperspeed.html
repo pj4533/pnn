@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>Hyperspeed test</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block}#hud{position:fixed;left:10px;top:8px;color:#9fe;font:12px monospace;background:rgba(0,0,0,.5);padding:6px;white-space:pre;z-index:2}
+#zone{position:fixed;left:30%;right:1.5%;top:7%;bottom:30%;border:1px dashed #0f0;display:none;pointer-events:none}</style>
+</head><body><div id="hud"></div><div id="zone"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
+import { create } from './hyperspeed.js';
+const q = new URLSearchParams(location.search);
+const pr = +(q.get('dpr') || 1);
+let quality = +(q.get('q') ?? 2);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight); renderer.setClearColor(0x07021a);
+document.body.appendChild(renderer.domElement);
+const W = innerWidth, H = innerHeight;
+const camera = new THREE.PerspectiveCamera(38, W / H, 0.1, 6000);
+const camBase = new THREE.Vector3(0, 40, 160);
+camera.position.copy(camBase); camera.lookAt(0, 20, 0);
+camera.setViewOffset(W, H, W * (0.5 - 0.64), H * (0.5 - 0.385), W, H);
+const main = new THREE.Scene();
+const holo = new THREE.Mesh(new THREE.IcosahedronGeometry(45, 1), new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true })); holo.position.set(0, 40, 0); main.add(holo);
+// ---- minimal ctx mirroring the contract
+const N = 256, d = new Uint8Array(N * N * 4); let s = 1234567; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s & 255; }
+const noise = new THREE.DataTexture(d, N, N, THREE.RGBAFormat); noise.wrapS = noise.wrapT = THREE.RepeatWrapping; noise.magFilter = THREE.LinearFilter; noise.minFilter = THREE.LinearMipmapLinearFilter; noise.generateMipmaps = true; noise.needsUpdate = true;
+const res = { value: new THREE.Vector2(W * pr, H * pr) };
+const sh = { time: { value: 0 }, localTime: { value: 0 }, alert: { value: 0 }, pulse: { value: 0 }, fade: { value: 1 },
+  accent: { value: new THREE.Color('#ff2bd6') }, accent2: { value: new THREE.Color('#00f0ff') }, res,
+  guardRect: { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) }, guardAmt: { value: 0.55 } };
+const COMMON = `uniform float uTime,uAlert,uPulse,uFade; uniform vec3 uAccent,uAccent2; uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt; uniform sampler2D uNoise;
+vec3 hash13(vec3 p3){ p3=fract(p3*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yxz+33.33); return fract((p3.xxy+p3.yxx)*p3.zyx); }
+float vnoise(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); vec2 o=vec2(37.,17.)*i.z; vec2 uv=(i.xy+o+f.xy+.5)/256.; vec2 rg=texture2D(uNoise,uv).yx; return mix(rg.x,rg.y,f.z); }`;
+const GLSL = { COMMON,
+  guard: `float guard(){ vec2 q=gl_FragCoord.xy/uRes; vec2 m=smoothstep(uGuardRect.xy-0.08,uGuardRect.xy,q)*(1.-smoothstep(uGuardRect.zw,uGuardRect.zw+0.08,q)); return 1.-uGuardAmt*m.x*m.y; }`,
+  alertMix: `vec3 alertMix(vec3 c){ float l=dot(c,vec3(.299,.587,.114)); vec3 r=mix(vec3(1.,.08,.04),vec3(1.,.55,.1),clamp(l*.5,0.,1.))*l*1.4; return mix(c,r,uAlert); }`,
+  finish: `vec3 finish(vec3 c){ c=alertMix(c)*guard()*uFade; return c; }` };
+function mulberry(a){ return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const stage = new THREE.Scene(); const tracked = [];
+const ctx = { THREE, renderer, camera, stage, quality, rnd: mulberry(42), opts: q,
+  time: sh.time, localTime: sh.localTime, alert: sh.alert, pulse: sh.pulse, fade: sh.fade, accent: sh.accent, accent2: sh.accent2, res, guardRect: sh.guardRect, guardAmt: sh.guardAmt, sharedNoise: noise, GLSL,
+  common: () => ({ uTime: sh.localTime, uAlert: sh.alert, uPulse: sh.pulse, uFade: sh.fade, uAccent: sh.accent, uAccent2: sh.accent2, uRes: res, uGuardRect: sh.guardRect, uGuardAmt: sh.guardAmt, uNoise: { value: noise } }),
+  track: (...o) => { tracked.push(...o); return o[0]; },
+  backdrop: (m) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+    const mesh = new THREE.Mesh(g, m); mesh.renderOrder = -1000; mesh.frustumCulled = false; m.depthTest = false; m.depthWrite = false; stage.add(mesh); tracked.push(g); return mesh; },
+  anchor: (o, { parallax = 0, y = 0, z = 0 }) => { o.position.set(0, y, z); anchors.push({ o, parallax }); } };
+const anchors = [];
+const inst = create(ctx);
+// ---- post
+stage.background = new THREE.Color(0x07021a);
+const composer = new EffectComposer(renderer);
+const bg = new RenderPass(stage, camera); composer.addPass(bg);
+const rp = new RenderPass(main, camera); rp.clear = false; rp.clearDepth = true; composer.addPass(rp);
+const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), inst.grade.bloom, inst.grade.bloomRadius, inst.grade.bloomThreshold); composer.addPass(bloom);
+composer.addPass(new OutputPass());
+composer.setPixelRatio(pr); composer.setSize(W, H);
+inst.setQuality(quality); inst.setIntensity(1);
+if (q.get('enter')) inst.enter(+q.get('enter'));
+let auto = q.get('auto') ? +q.get('auto') : 0;
+addEventListener('keydown', (e) => {
+  if (e.key === 'a') sh.alert.value = sh.alert.value ? 0 : 1;
+  if (e.key === 'e') inst.ripple({ x: 0, z: 0, color: new THREE.Color('#ff2bd6'), strength: 1, screen: null });
+  if (e.key === 'n') inst.enter(2.5); if (e.key === 'x') inst.exit(2.5);
+  if ('012'.includes(e.key)) { quality = +e.key; inst.setQuality(quality); }
+  if (e.key === 'z') { const z = document.getElementById('zone'); z.style.display = z.style.display ? '' : 'block'; }
+});
+if (q.get('zones')) document.getElementById('zone').style.display = 'block';
+const hud = document.getElementById('hud');
+let last = performance.now(), frames = 0, fpsT = last, fps = 0, t = 0, ft = 0, autoT = 0;
+window.__h = { inst, ctx, sh, get fps() { return fps; }, camera, tracked, renderer };
+const tgt = new THREE.Vector3();
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now; t += dt; ft += dt;
+  sh.localTime.value = t % 3600; sh.time.value = t; sh.pulse.value = Math.max(0, sh.pulse.value - dt * 1.6);
+  // dummy camera path: slow station drift
+  camera.position.x = Math.sin(t * 0.25) * 90; camera.lookAt(camera.position.x, 20, 0);
+  for (const a of anchors) a.o.position.x = camera.position.x * (1 - a.parallax);
+  holo.rotation.y += dt * 0.4;
+  inst.update(dt, sh.localTime.value, { camera, dt, k: 1, phase: 'live', alert: sh.alert.value, camX: camera.position.x, par: tgt.copy(camera.position).sub(camBase), story: null, transition: -1 });
+  autoT += dt; if (auto && autoT > auto) { autoT = 0; inst.exit(2); setTimeout(() => inst.enter(2.5), 2200); }
+  composer.render();
+  frames++; if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  hud.textContent = `hyperspeed q${quality} dpr${pr} ${fps.toFixed(0)} fps calls ${renderer.info.render.calls}\na alert  e ripple  n enter  x exit  0/1/2 quality  z zone`;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

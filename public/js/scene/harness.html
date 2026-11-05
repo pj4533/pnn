@@ -61,8 +61,20 @@
   play();
   let timer = 0;
   if (q.get('auto') !== '0') timer = setInterval(() => { i = (i + 1) % items.length; play(); }, holdMs);
-  window.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'ArrowRight') { i = (i + 1) % items.length; play(); } if (e.key === 'ArrowLeft') { i = (i - 1 + items.length) % items.length; play(); } if (e.key === 'a') scene.showAlert(FIXTURE.alerts[0]); if (e.key === 'c') scene.clearAlert(); });
-  setInterval(() => { const fps = window.__pnnScene?.api?.fps; if (fps) hud.textContent = hud.textContent.replace(/( · \d+ fps)?$/, ` · ${Math.round(fps)} fps`); }, 2000);
+  window.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'ArrowRight') { i = (i + 1) % items.length; play(); } if (e.key === 'ArrowLeft') { i = (i - 1 + items.length) % items.length; play(); } if (e.key === 'a') scene.showAlert(FIXTURE.alerts[0]); if (e.key === 'c') scene.clearAlert();
+    if (e.key === 'b') {   // b: force a background beat, then change card as soon as the next scene is warm
+      scene.forceBeat(q.get('trans') || undefined);
+      let n = 0; const iv = setInterval(() => { if (window.__pnnScene.world.env.getState().next || ++n > 100) { clearInterval(iv); i = (i + 1) % items.length; play(); } }, 50);
+    }
+    if (e.key === 'f') scene.envEvent('flash');
+    if (e.key === 'q') { const l = (window.__pnnScene.world.env.getState().quality + 2) % 3; window.__pnnScene.world.setQuality(l); } });
+  // ?scene=<id> pins a scene, ?scenefast=1 runs 12-20 s holds (beats still sync to card changes), ?trans=<type> forces it
+  setInterval(() => {
+    const st = window.__pnnScene?.world?.env?.getState?.(); if (!st) return;
+    const base = hud.textContent.split('\n')[0];
+    hud.textContent = `${base}\nscene ${st.scene}${st.next ? ' > ' + st.next : ''} · hold ${st.holdLeft}s${st.due ? ' DUE' : ''}${st.k >= 0 ? ' · ' + st.trans + ' ' + st.k.toFixed(2) : ''} · q${st.quality}`;
+  }, 250);
+  setInterval(() => { const fps = window.__pnnScene?.api?.fps; if (fps) { const [a, ...b] = hud.textContent.split('\n'); hud.textContent = [a.replace(/( · \d+ fps)?$/, ` · ${Math.round(fps)} fps`), ...b].join('\n'); } }, 2000);
   window.__next = () => { i = (i + 1) % items.length; play(); };
   window.__goto = (k) => { i = k; play(); };
 </script>

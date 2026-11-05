@@ -234,3 +234,16 @@ countdown: [{ id, title, at: ISO, storyId|null, label, yesPrice, change1d, sourc
 - Debug: `?mood=<name>` pins, `?envfast=1` (20x director time), `?moodfast=1` (~10 s hold + ~10 s blend), `?envquality=0|1|2`. `window.__pnnScene.world.env` (`setMood(name,{transition})`, `next()`, `getState()`); `api.env` / `api.envQ` report state.
 - FPS guard (index.js, 5 s checks): fps < 50 drops env quality first, then < 48 drops pixel ratio; env quality steps back up after 6 checks > 58 fps, at most once per 60 s.
 - Rules: phases accumulate in JS and wrap (no shader uses absolute time), constant loop bounds, no render-target reallocation, every object exists at createWorld so warmup compiles it, background stays under the bloom threshold except the sun core and lightning, GUARD dims the stage rect, the alert red mix is applied last everywhere.
+
+## Scenes and director (public/js/scene/scenes/, 2026-11-05)
+
+- `registry.js`: `SCENES` (lazy imports) and static `META` { id, title, family, weight, similar, hasLayer, morph }. Modules are prefetched on idle.
+- `common.js`: the per-scene ctx (shared uniforms through `ctx.common()`, GLSL `COMMON`/`finish()` = alertMix × guard × fade, `track`, `backdrop`, `layer`, `anchor`, `gpgpu`).
+- Scene module: `create(ctx)` returns { update, setIntensity, enter, exit, ripple, shockwave?, event?, setQuality, morphPoints?, grade, cameraBias, dispose? }. Geometry stays out of |z|<80, 0<y<80 near the station line.
+- `director.js`: two slots (cur/next), prepare → compileAsync → warm draw → beat-synced transition → dispose 2 frames later, with a leak check against the renderer.info baseline. `getState()` feeds `npm run health`.
+- `transitions.js`: 8 fullscreen transition materials, which sample tRA/tRB (half-res HalfFloat RTs owned by post). Every transition and the morph cloud is compiled in `world.warm()` at boot.
+- Pipeline (`post.js`): BackdropPass (director: layer RTs, then stage or transition) → RenderPass(main scene, clear=false, clearDepth=true) → bloom → final → output. Holograms always draw on top.
+- `world.js` is a facade over the director. Its surface is unchanged, plus `beat(info)`, `warm()` and `setStageRect()`.
+- Flags: `?scene=<id>` pins a scene, `?scenefast=1` sets 12-20 s holds, `?trans=<type>` forces a transition and `?fpsguard=0` holds quality fixed. Legacy `?mood=` maps to outrunClassic.
+- Overlay: `pnn:beat` makes the next card swap use `beat beat-<type>` with `--beat-dur` and `--beat-at`.
+- Test pages: `scenes/test-<id>.html` (standalone with a mock ctx) and `js/scene/harness.html` (keys b beat, f flash, q quality).

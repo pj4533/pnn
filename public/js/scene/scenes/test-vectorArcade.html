@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><title>vectorArcade test</title>
+<style>html,body{margin:0;background:#07021a;overflow:hidden}canvas{display:block}#z{position:fixed;border:1px dashed #0f0;pointer-events:none;display:none}#i{position:fixed;left:8px;top:8px;color:#8f8;font:12px monospace}</style></head><body>
+<div id="z"></div><div id="i"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
+import { create } from './vectorArcade.js';
+const Q = new URLSearchParams(location.search), q = +(Q.get('q') ?? 2), dpr = +(Q.get('dpr') ?? 1);
+const W = innerWidth, H = innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias: false }); renderer.setPixelRatio(dpr); renderer.setSize(W, H); renderer.setClearColor(0x07021a); document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(40, W / H, 1, 5000); camera.position.set(0, 30, 150);
+camera.setViewOffset(W, H, -0.14 * W, 0.115 * H, W, H);
+const stage = new THREE.Scene();
+// ---- mock ctx (contract) ----
+const u = (v) => ({ value: v });
+const shared = { uTime: u(0), uAlert: u(0), uPulse: u(0), uFade: u(1), uAccent: u(new THREE.Color('#ff2bd6')), uAccent2: u(new THREE.Color('#00f0ff')),
+  uRes: u(new THREE.Vector2(W * dpr, H * dpr)), uGuardRect: u(new THREE.Vector4(.30, .30, .985, .93)), uGuardAmt: u(.45), uNoise: u(null) };
+const tracked = [], anchors = [];
+let sd = 12345; const rnd = () => { sd |= 0; sd = sd + 0x6D2B79F5 | 0; let t = Math.imul(sd ^ sd >>> 15, 1 | sd); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const COMMON = `uniform float uTime,uAlert,uPulse,uFade; uniform vec3 uAccent,uAccent2; uniform vec2 uRes; uniform vec4 uGuardRect; uniform float uGuardAmt;
+float hash12(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+float guard(){ vec2 q=gl_FragCoord.xy/uRes; vec2 m=smoothstep(uGuardRect.xy-0.08,uGuardRect.xy,q)*(1.-smoothstep(uGuardRect.zw,uGuardRect.zw+0.08,q)); return 1.-uGuardAmt*m.x*m.y; }
+vec3 alertMix(vec3 c){ float l=dot(c,vec3(.299,.587,.114)); vec3 r=mix(vec3(1.,.05,.03),vec3(1.,.5,.05),clamp(l*.5,0.,1.))*l; return mix(c,r,uAlert); }
+vec3 finish(vec3 c){ return alertMix(c)*guard()*uFade; }`;
+const ctx = { THREE, renderer, camera, stage, quality: q, rnd, opts: Q, time: shared.uTime, localTime: shared.uTime, alert: shared.uAlert, pulse: shared.uPulse, fade: shared.uFade,
+  accent: shared.uAccent, accent2: shared.uAccent2, res: shared.uRes, guardRect: shared.uGuardRect, guardAmt: shared.uGuardAmt,
+  common: () => ({ ...shared }), GLSL: { COMMON }, track: (...o) => { tracked.push(...o); return o[0]; },
+  anchor: (o, { parallax = .15 } = {}) => anchors.push([o, parallax]) };
+const scene = create(ctx); window.__scene = scene;
+const info = { camera, dt: 0, k: 1, phase: 'live', alert: 0, camX: 0, par: new THREE.Vector3(), story: { x: 0, z: 0, color: shared.uAccent2.value }, transition: -1 };
+const g = scene.grade;
+const comp = new EffectComposer(renderer); comp.addPass(new RenderPass(stage, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(W, H), g.bloom, g.bloomRadius, g.bloomThreshold); comp.addPass(bloom); comp.addPass(new OutputPass());
+if (Q.get('zones')) { const z = document.getElementById('z'); z.style.display = 'block'; z.style.left = .30 * W + 'px'; z.style.width = (.985 - .30) * W + 'px'; z.style.top = (1 - .93) * H + 'px'; z.style.height = (.93 - .30) * H + 'px'; }
+let alertOn = !!Q.get('alert'), last = performance.now(), T = 0, frames = 0, fa = 0, fps = 0;
+const key = (c) => { if (c === 'r') scene.ripple({ x: 0, z: 0, color: 0xff2bd6, strength: 1 }); if (c === 'a') alertOn = !alertOn; if (c === 'e') { scene.enter(2.5); } if (c === 'x') scene.exit(2); };
+addEventListener('keydown', (e) => key(e.key)); window.__key = key;
+if (Q.get('enter')) scene.enter(2.5);
+if (Q.get('auto')) { setTimeout(() => key('r'), 2300); setTimeout(() => key('a'), 4000); setTimeout(() => key('x'), 8000); }
+const dtMax = 0.1;
+function frame(now) {
+  const dt = Math.min(dtMax, (now - last) / 1000); last = now; T += dt;
+  const cx = Q.get('still') ? 0 : Math.sin(T * .26) * 540;
+  camera.position.set(cx, 30, 150 + 20 * Math.sin(T * .4)); camera.lookAt(cx, 20, 0);
+  shared.uTime.value = T % 3600; shared.uAlert.value += ((alertOn ? 1 : 0) - shared.uAlert.value) * Math.min(1, dt * 3);
+  shared.uPulse.value = Math.max(0, shared.uPulse.value - dt * 1.6);
+  for (const [o, p] of anchors) o.position.x = cx * (1 - p);
+  info.dt = dt; info.camX = cx; info.alert = shared.uAlert.value;
+  scene.update(dt, T, info); comp.render();
+  frames++; fa += dt; if (fa >= 2) { fps = frames / fa; frames = 0; fa = 0; window.__fps = fps; document.getElementById('i').textContent = fps.toFixed(1) + ' fps  calls ' + renderer.info.render.calls + ' tris ' + renderer.info.render.triangles; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+window.__ctx = { renderer, tracked };
+</script></body></html>

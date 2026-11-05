@@ -367,3 +367,14 @@ The user said the list boards were unreadable ("so much on the screen just doesn
   - Height wander dropped from ±12% to ±4%.
   - Mood blends move the seed ×1.2 instead of ×7.
   - The idle morph runs at half speed.
+
+## 2026-11-05: showcase backgrounds
+
+The user rejected the terrain-mood pass ("it's all like planets... one template tweaked"). The background is now a rotation of 12 distinct scenes run by a scene director, with 8 showy transitions synced to card changes.
+- Scenes (`public/js/scene/scenes/`): hyperspeed, megacity, curlSwarm, chromeBlobs, kaleidoTunnel, copperDemo, laserCathedral, vectorArcade, dataCyberspace, vaporGallery, auroraFireworks, outrunClassic. outrunClassic wraps the old env/ moods, so the previous work is one scene of 12.
+- Rotation: weighted shuffle bag, no repeats until all have played, never two of the same family or `similar` in a row. Hold is 60-120 s (`?scenefast=1` gives 12-20 s).
+- Changes happen only on a card change (`world.beat()` → `pnn:beat`), so the background reveal and the card animation land together. A 240 s failsafe fires if no card changes.
+- Transitions: morph, warp, vhs, scanwipe, inkbleed, gridfold, wormhole, whip. Each card has a matching animation. Holograms render after the backdrop and are never part of a transition.
+- Calls made during build: the incoming scene fades in over [peak-0.2, peak+0.3] instead of [peak-0.1, 1], so revealed areas are never empty. inkbleed reaches mid-screen at the peak. The director switches to lite transitions when the first 30 transition frames average over 22 ms.
+- Integration pass: the left card is opaque, so chromeBlobs and curlSwarm heroes moved from screen x 0.2 to 0.4 (between card and hologram, under the guard). vaporGallery's wall was dimmed 40%, because it washed out the hologram.
+- Open: fps is unverified on real Safari. Headless Chromium runs at about 35 fps with an empty stage and 33-37 fps with each scene, so scene cost is small, but the 60 fps check still needs a real MacBook. Headless WebKit crashes on the main page (a CoreAnimation `CAPresentationModifier` exception), though the harness runs fine in it.

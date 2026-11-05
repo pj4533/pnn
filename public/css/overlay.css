@@ -66,3 +66,54 @@ body.alerting .frame, body.alerting .ov-strip { opacity: 0; transition: opacity 
 #overlay [data-story]:not([data-story=""]):hover, #chyron [data-story]:not([data-story=""]):hover { filter: brightness(1.18); box-shadow: 0 0 0 2px var(--cyan), 0 0 1.2vw rgba(0,240,255,.55); }
 [data-story].clicked { animation: pnn-click .45s ease-out; }
 @keyframes pnn-click { 0% { box-shadow: 0 0 0 3px #fff, 0 0 2vw var(--magenta); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* Beat card entrances: when a background scene transition fires on this card change (overlay.js 'pnn:beat'), the card
+   lands at the background reveal: --beat-at = dur * peak, each animation centred on it. Fill is backwards only, so every
+   animation ends at the natural state (transform none, opacity 1, no clip-path). */
+.ov-left.beat, .ov-strip.beat { --bd: .9s; --bdel: calc(var(--beat-at, .9s) - .45s); }
+.ov-left.beat > *:nth-child(2) { --bi: 1; } .ov-left.beat > *:nth-child(3) { --bi: 2; } .ov-left.beat > *:nth-child(4) { --bi: 3; } .ov-left.beat > *:nth-child(n+5) { --bi: 4; }
+.ov-strip.beat > * { --bi: var(--i, 0); }
+/* morph: blur + scale in, headline tracking collapse (scaleX, so fit.js measurements are untouched) */
+.beat-morph > * { animation: beatMorph 1.1s cubic-bezier(.2,.9,.2,1) calc(var(--bdel) + var(--bi, 0) * 60ms) backwards; }
+.beat-morph .headline, .beat-morph .bc-head { transform-origin: left center; animation: beatTrack 1.1s cubic-bezier(.2,.9,.2,1) calc(var(--bdel) + 60ms) backwards; }
+@keyframes beatMorph { 0% { opacity: 0; filter: blur(8px); transform: scale(.96); } 100% { opacity: 1; filter: none; transform: none; } }
+@keyframes beatTrack { 0% { transform: scaleX(1.35); opacity: 0; } 100% { transform: none; opacity: 1; } }
+/* warp: horizontal stretch + skew + blur, cyan streak across the card */
+.beat-warp { animation: beatWarp var(--bd) cubic-bezier(.15,.85,.2,1) var(--bdel) backwards; transform-origin: 0 50%; }
+@keyframes beatWarp { 0% { opacity: 0; transform: scaleX(1.6) skewX(-18deg); filter: blur(4px); } 55% { opacity: 1; } 100% { opacity: 1; transform: none; filter: none; } }
+.ov-left.beat-warp::after { content: ''; position: absolute; left: 0; right: 0; top: 42%; height: .3vh; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--cyan), #fff, var(--cyan), transparent); box-shadow: 0 0 1vw var(--cyan);
+  opacity: 0; animation: beatStreak .8s ease-out var(--bdel) both; }
+@keyframes beatStreak { 0% { opacity: 0; transform: translateX(-60%) scaleX(.3); } 35% { opacity: 1; } 100% { opacity: 0; transform: translateX(60%) scaleX(1.4); } }
+/* vhs: stepped slice jitter, RGB split decaying, hue kick */
+.beat-vhs { animation: beatVhs var(--bd) steps(1, end) var(--bdel) backwards; }
+@keyframes beatVhs {
+  0% { opacity: 0; clip-path: inset(0 0 100% 0); }
+  8% { opacity: 1; clip-path: inset(12% 0 58% 0); transform: translateX(-1.2vw); text-shadow: 3px 0 #ff2bd6, -3px 0 #00f0ff; filter: hue-rotate(80deg); }
+  20% { clip-path: inset(46% 0 18% 0); transform: translateX(.9vw); text-shadow: -3px 0 #ff2bd6, 3px 0 #00f0ff; }
+  32% { clip-path: inset(0 0 52% 0); transform: translateX(-.5vw); filter: hue-rotate(-40deg); }
+  46% { clip-path: inset(30% 0 0 0); transform: translateX(.3vw); text-shadow: 2px 0 #ff2bd6, -2px 0 #00f0ff; filter: none; }
+  62% { clip-path: inset(0 0 8% 0); transform: translateX(-.15vw); text-shadow: 1px 0 #ff2bd6, -1px 0 #00f0ff; }
+  80% { clip-path: inset(0); transform: none; text-shadow: 1px 0 #ff2bd6, -1px 0 #00f0ff; }
+  100% { clip-path: inset(0); transform: none; text-shadow: none; filter: none; opacity: 1; } }
+/* scanwipe: top-down reveal with a bright 2px line riding the edge */
+.beat-scanwipe { animation: beatScan var(--bd) cubic-bezier(.5,0,.5,1) var(--bdel) backwards; }
+@keyframes beatScan { 0% { clip-path: inset(0 0 100% 0); } 100% { clip-path: inset(0 0 0 0); } }
+.ov-left.beat-scanwipe::after, .ov-strip.beat-scanwipe::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px; pointer-events: none;
+  background: #fff; box-shadow: 0 0 .6vw var(--cyan), 0 0 1.4vw var(--magenta); opacity: 0; animation: beatScanLine var(--bd) cubic-bezier(.5,0,.5,1) var(--bdel) both; }
+@keyframes beatScanLine { 0% { top: 0; opacity: 1; } 96% { opacity: 1; } 100% { top: calc(100% - 2px); opacity: 0; } }
+/* inkbleed: bleeds out from the hologram side */
+.ov-left.beat-inkbleed { animation: beatInk var(--bd) cubic-bezier(.3,.6,.3,1) var(--bdel) backwards; }
+.ov-strip.beat-inkbleed { animation: beatInkS var(--bd) cubic-bezier(.3,.6,.3,1) var(--bdel) backwards; }
+@keyframes beatInk { 0% { clip-path: circle(0% at 100% 40%); } 100% { clip-path: circle(150% at 100% 40%); } }
+@keyframes beatInkS { 0% { clip-path: circle(0% at 60% 0%); } 100% { clip-path: circle(150% at 60% 0%); } }
+/* gridfold: children unfold rotateY 90 -> 0, staggered by index */
+.beat-gridfold > * { transform-origin: 0 50%; animation: beatFold .8s cubic-bezier(.2,.9,.25,1.15) calc(var(--bdel) + var(--bi, 0) * 80ms) backwards; }
+@keyframes beatFold { 0% { opacity: 0; transform: perspective(60vw) rotateY(90deg); } 40% { opacity: 1; } 100% { opacity: 1; transform: perspective(60vw) rotateY(0deg); } }
+/* wormhole: spun + scaled in out of the vortex */
+.beat-wormhole { transform-origin: 100% 40%; animation: beatWorm var(--bd) cubic-bezier(.2,.9,.2,1) var(--bdel) backwards; }
+@keyframes beatWorm { 0% { opacity: 0; transform: scale(.7) rotate(-4deg); filter: blur(6px); } 100% { opacity: 1; transform: none; filter: none; } }
+/* whip: slides in from the right with motion blur and a skew overshoot */
+.beat-whip { animation: beatWhip var(--bd) cubic-bezier(.2,.9,.2,1) var(--bdel) backwards; }
+@keyframes beatWhip { 0% { opacity: 0; transform: translateX(8vw) skewX(-14deg); filter: blur(6px); } 65% { opacity: 1; transform: translateX(-.6vw) skewX(4deg); filter: blur(1px); } 100% { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .beat > *, .beat, .beat::after { animation-duration: .01s !important; } }

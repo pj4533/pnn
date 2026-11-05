@@ -1,10 +1,23 @@
-// Post-processing: bloom + chromatic aberration / glitch / vignette / grain + flash + alert tint.
+// Post-processing: BackdropPass (scene director) -> main scene (holograms on top) -> bloom -> grade/CA/glitch/vignette/grain + flash + alert tint.
 import * as THREE from '../../vendor/three/three.module.js';
 import { EffectComposer } from '../../vendor/three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from '../../vendor/three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from '../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from '../../vendor/three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from '../../vendor/three/addons/postprocessing/OutputPass.js';
+import { Pass } from '../../vendor/three/addons/postprocessing/Pass.js';
+
+// BackdropPass: the scene director draws the background (steady state: its stage; during a transition: both scenes to
+// tRA/tRB, then the transition quad + morph cloud) straight into the composer read buffer. No swap.
+class BackdropPass extends Pass {
+  constructor() { super(); this.needsSwap = false; this.draw = null; }
+  render(renderer, writeBuffer, readBuffer) {
+    if (this.draw) { this.draw(renderer, readBuffer); return; }
+    const ac = renderer.autoClear; renderer.autoClear = false;
+    renderer.setRenderTarget(readBuffer); renderer.clear();
+    renderer.autoClear = ac;
+  }
+}
 import { TIME } from './holo.js';
 
 const FinalShader = {
@@ -55,7 +68,14 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   const pr = renderer.getPixelRatio();
   const rt = new THREE.WebGLRenderTarget(size.x * pr, size.y * pr, { type: THREE.HalfFloatType, samples });
   const composer = new EffectComposer(renderer, rt);
-  composer.addPass(new RenderPass(scene, camera));
+  const backdrop = new BackdropPass();
+  composer.addPass(backdrop);
+  const main = new RenderPass(scene, camera);
+  main.clear = false; main.clearDepth = true;           // holograms, fx and globe always draw on top of the backdrop
+  composer.addPass(main);
+  // transition targets: fixed HalfFloat RTs at drawing-buffer x 0.5, allocated in setSize only
+  const tOpts = { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, samples: 0 };
+  const tRA = new THREE.WebGLRenderTarget(4, 4, tOpts), tRB = new THREE.WebGLRenderTarget(4, 4, tOpts);
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.55, 0.4, 0.78);
   composer.addPass(bloom);
   const fin = new ShaderPass(FinalShader);
@@ -66,8 +86,13 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
   const U = fin.uniforms;
   let flash = 0, ca = 0, glitch = 0, alert = 0, alertTarget = 0;
   return {
-    composer, bloom,
+    composer, bloom, backdrop,
+    get readBuffer() { return composer.readBuffer; },
+    getTransRT() { return { a: tRA, b: tRB }; },
+    setBackdrop(fn) { backdrop.draw = fn || null; },
     setSize(w, h, pixelRatio) {
+      const tw = Math.max(1, Math.round(w * pixelRatio / 2)), th = Math.max(1, Math.round(h * pixelRatio / 2));
+      tRA.setSize(tw, th); tRB.setSize(tw, th);
       composer.setPixelRatio(pixelRatio);
       composer.setSize(w, h);
       bloom.setSize(Math.round(w * pixelRatio / 2), Math.round(h * pixelRatio / 2));
@@ -106,6 +131,6 @@ export function createPost(renderer, scene, camera, { samples = 0 } = {}) {
       bloom.strength = base.strength + flash * 0.5 + alert * 0.25;
       composer.render(dt);
     },
-    dispose() { composer.dispose?.(); rt.dispose(); bloom.dispose?.(); },
+    dispose() { backdrop.draw = null; composer.dispose?.(); rt.dispose(); tRA.dispose(); tRB.dispose(); bloom.dispose?.(); },
   };
 }

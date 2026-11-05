@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>kaleidoTunnel test</title>
+<style>html,body{margin:0;height:100%;background:#07021a;overflow:hidden}canvas{display:block}
+#hud{position:fixed;right:10px;top:8px;color:#9fe;font:12px monospace;background:rgba(0,0,0,.55);padding:6px;white-space:pre;z-index:5}
+.mock{position:fixed;background:rgba(10,4,30,.62);border:1px solid rgba(0,240,255,.35);color:#fff;font:600 1.4vw system-ui;padding:1vw;box-sizing:border-box}
+#zone{position:fixed;border:1px dashed rgba(255,255,0,.6);pointer-events:none}
+</style></head><body><div id="hud"></div>
+<div class="mock" id="left" style="left:2vw;top:12vh;width:43vw;height:58vh">Fed December hike odds rise to 80%, up 7 points today<br><span style="font-weight:400;font-size:1vw;opacity:.8">Kalshi · updated 2 min ago · $4.1M 24h volume</span></div>
+<div class="mock" id="bottom" style="left:0;bottom:0;width:100vw;height:21vh">Odds are not facts</div>
+<div id="zone"></div>
+<script type="module">
+import * as THREE from '../../../vendor/three/three.module.js';
+import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
+import { GLSL as EG } from '../env/common.js';
+import { create } from './kaleidoTunnel.js';
+
+const Q = new URLSearchParams(location.search);
+const pr = Math.min(+(Q.get('dpr') || devicePixelRatio), 2);
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x07021a, 1);
+document.body.appendChild(renderer.domElement);
+if (!Q.has('mock')) { document.getElementById('left').style.display = 'none'; document.getElementById('bottom').style.display = 'none'; }
+if (!Q.has('zones')) document.getElementById('zone').style.display = 'none';
+
+// main camera + dummy hologram at a station, subject pushed to (0.64, 0.385) via setViewOffset
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 6000);
+const W = innerWidth, Hh = innerHeight;
+camera.setViewOffset(W, Hh, -(0.64 - 0.5) * W, (0.385 - 0.5) * -Hh * -1, W, Hh);
+const main = new THREE.Scene();
+const holo = new THREE.Mesh(new THREE.IcosahedronGeometry(26, 1), new THREE.MeshBasicMaterial({ color: 0x00f0ff, wireframe: true }));
+holo.position.set(0, 30, 0); main.add(holo);
+
+// --- stub director ctx (mirrors the contract)
+const res = new THREE.Vector2(innerWidth * pr, innerHeight * pr);
+const shared = {
+  time: { value: 0 }, alert: { value: 0 }, pulse: { value: 0 },
+  accent: { value: new THREE.Color('#ff2bd6') }, accent2: { value: new THREE.Color('#00f0ff') },
+  res: { value: res }, guardRect: { value: new THREE.Vector4(0.30, 0.30, 0.985, 0.93) }, guardAmt: { value: 0.45 },
+};
+const noise = new THREE.DataTexture(new Uint8Array(256 * 256 * 4).map(() => Math.random() * 255), 256, 256); noise.needsUpdate = true;
+const COMMON = `uniform float uTime, uAlert, uPulse, uFade; uniform vec3 uAccent, uAccent2; uniform sampler2D uNoise;
+${EG.GUARD}
+${EG.PALETTE}`;
+const triGeo = new THREE.BufferGeometry();
+triGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+let layerRT = null, layerScene = null;
+const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+function makeCtx() {
+  const tracked = [], stage = new THREE.Scene();
+  const ctx = {
+    THREE, renderer, camera, stage, quality: +(Q.get('q') ?? 2), rnd: Math.random, opts: {},
+    time: shared.time, localTime: { value: 0 }, alert: shared.alert, pulse: shared.pulse, fade: { value: 1 },
+    accent: shared.accent, accent2: shared.accent2, res: shared.res, guardRect: shared.guardRect, guardAmt: shared.guardAmt, sharedNoise: noise,
+    GLSL: { COMMON },
+    common() { return { uTime: ctx.localTime, uAlert: ctx.alert, uPulse: ctx.pulse, uFade: ctx.fade, uAccent: ctx.accent, uAccent2: ctx.accent2,
+      uRes: ctx.res, uGuardRect: ctx.guardRect, uGuardAmt: ctx.guardAmt, uNoise: { value: noise } }; },
+    track(...o) { tracked.push(...o); return o[0]; },
+    backdrop(mat) { const m = new THREE.Mesh(triGeo, mat); m.frustumCulled = false; m.renderOrder = -1000; stage.add(m); return m; },
+    layer(mat, { scale = 0.25 } = {}) {
+      layerRT = layerRT || new THREE.WebGLRenderTarget(Math.round(res.x / 4), Math.round(res.y / 4), { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+      layerScene = new THREE.Scene(); const m = new THREE.Mesh(triGeo, mat); m.frustumCulled = false; layerScene.add(m);
+      return { texture: layerRT.texture, uniforms: mat.uniforms };
+    },
+    anchor() {},
+    _dispose() { for (const o of tracked) o.dispose && o.dispose(); },
+  };
+  return ctx;
+}
+let ctx = makeCtx(), sc = create(ctx);
+sc.enter(2.5); sc.setIntensity(1);
+window.__kt = { get sc() { return sc; }, ctx, shared, renderer, fps: 0 };
+
+// --- composer: backdrop stage, then main scene on top, bloom approximating post.js
+const composer = new EffectComposer(renderer);
+const rpStage = { pass: null };
+const p1 = new RenderPass(ctx.stage, camera); composer.addPass(p1);
+const p2 = new RenderPass(main, camera); p2.clear = false; p2.clearDepth = true; composer.addPass(p2);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), sc.grade.bloom, sc.grade.bloomRadius, sc.grade.bloomThreshold);
+if (!Q.has('nobloom')) composer.addPass(bloom); composer.addPass(new OutputPass());
+
+const zone = document.getElementById('zone'); const g = shared.guardRect.value;
+Object.assign(zone.style, { left: g.x * 100 + 'vw', width: (g.z - g.x) * 100 + 'vw', bottom: g.y * 100 + 'vh', height: (g.w - g.y) * 100 + 'vh' });
+
+let q = ctx.quality;
+addEventListener('keydown', (e) => {
+  if (e.key === 'r') sc.ripple({ x: 0, z: 0, color: shared.accent2.value, strength: 1, screen: null });
+  if (e.key === 'a') shared.alert.value = shared.alert.value > 0.5 ? 0 : 1;
+  if (e.key === 'e') sc.enter(2.5);
+  if (e.key === 'x') sc.exit(1.6);
+  if (e.key === 'q') { q = (q + 2) % 3; sc.setQuality(q); }
+  if (e.key === 'd') { const before = renderer.info.memory; ctx._dispose(); sc.dispose && sc.dispose(); console.log('disposed', JSON.stringify(renderer.info.memory)); }
+});
+const hud = document.getElementById('hud');
+let last = performance.now(), frames = 0, fpsT = last, fps = 0, t = 0, calls = 0;
+const par = new THREE.Vector3(), info = { camera, dt: 0, k: 1, phase: 'live', alert: 0, camX: 0, par, story: { x: 0, z: 0, color: shared.accent.value }, transition: -1 };
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now; t += dt;
+  // dummy camera path: slow drift between stations
+  const cx = Math.sin(t * 0.08) * 270;
+  camera.position.set(cx, 40, 160); camera.lookAt(cx, 30, 0); holo.position.x = cx; holo.rotation.y += dt * 0.4;
+  par.set(cx, 0, 0);
+  shared.pulse.value = Math.max(0, shared.pulse.value - dt * 1.6);
+  ctx.localTime.value = (ctx.localTime.value + dt) % 3600;
+  info.dt = dt; info.alert = shared.alert.value; info.camX = cx;
+  sc.update(dt, ctx.localTime.value, info);
+  renderer.info.autoReset = false; renderer.info.reset();
+  const gl = renderer.getContext(), tq = window.__tqExt || (window.__tqExt = gl.getExtension('EXT_disjoint_timer_query_webgl2') || 0);
+  let q1 = null;
+  if (tq && !window.__tqBusy) { q1 = gl.createQuery(); gl.beginQuery(tq.TIME_ELAPSED_EXT, q1); }
+  if (layerScene && !Q.has('nolayer')) { renderer.setRenderTarget(layerRT); renderer.render(layerScene, fsCam); renderer.setRenderTarget(null); }
+  if (q1) { gl.endQuery(tq.TIME_ELAPSED_EXT); window.__tqBusy = q1; }
+  const qb = window.__tqBusy;
+  if (qb && qb !== q1 && gl.getQueryParameter(qb, gl.QUERY_RESULT_AVAILABLE)) {
+    const ns = gl.getQueryParameter(qb, gl.QUERY_RESULT); gl.deleteQuery(qb); window.__tqBusy = null;
+    window.__kt.layerMs = (window.__kt.layerMs || ns / 1e6) * 0.9 + ns / 1e6 * 0.1;
+  }
+  composer.render(dt);
+  calls = renderer.info.render.calls;
+  frames++; if (now - fpsT > 1000) { fps = frames * 1000 / (now - fpsT); window.__kt.fps = fps; frames = 0; fpsT = now; }
+  hud.textContent = `kaleidoTunnel q${q} dpr${pr} ${fps.toFixed(0)} fps calls(total)=${calls}\nr ripple a alert e enter x exit q quality d dispose`;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

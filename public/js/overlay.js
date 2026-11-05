@@ -29,6 +29,25 @@ export function createOverlay(root) {
   tick(); setInterval(tick, 1000);
 
   let lastKey = '';
+  // Background beats (scene/index.js dispatches 'pnn:beat' when a scene transition fires on a card change): the card
+  // swap that goes with it animates in the transition's style, landing at the background reveal (dur * peak).
+  const BEAT_CLS = ['beat', 'beat-morph', 'beat-warp', 'beat-vhs', 'beat-scanwipe', 'beat-inkbleed', 'beat-gridfold', 'beat-wormhole', 'beat-whip'];
+  let pendingBeat = null, lastFreshAt = -1e9;
+  function applyBeat(host, b) {
+    host.classList.remove('in', ...BEAT_CLS); void host.offsetWidth;
+    host.style.setProperty('--beat-dur', `${b.dur}s`);
+    host.style.setProperty('--beat-at', `${(b.dur * b.peak).toFixed(2)}s`);
+    host.classList.add('beat', 'beat-' + b.type);
+  }
+  document.addEventListener('pnn:beat', (e) => {
+    const b = e.detail; if (!b?.type) return;
+    if (performance.now() - lastFreshAt < 300) { applyBeat(left, b); applyBeat(strip, b); pendingBeat = null; }
+    else pendingBeat = { ...b, recv: performance.now() };
+  });
+  function takeBeat() {
+    const b = pendingBeat; pendingBeat = null;
+    return b && performance.now() - b.recv < 1500 ? b : null;
+  }
   function settle(host) {
     for (const a of host.getAnimations({ subtree: true })) {
       const it = a.effect?.getTiming?.().iterations;
@@ -53,7 +72,7 @@ export function createOverlay(root) {
       requestAnimationFrame(step);
     });
   }
-  function swap(host, html, key) {
+  function swap(host, html, key, beat = null) {
     if (host.dataset.key === key) {
       // Same card, fresh numbers (an SSE state update): swap the content but don't replay entrance animations,
       // which made the card "display again" a second or two after it appeared. Looping effects keep running.
@@ -62,9 +81,9 @@ export function createOverlay(root) {
       return;
     }
     host.dataset.key = key;
-    host.classList.remove('in'); void host.offsetWidth;
+    host.classList.remove('in', ...BEAT_CLS); void host.offsetWidth;
     host.innerHTML = html;
-    host.classList.add('in');
+    if (beat) applyBeat(host, beat); else host.classList.add('in');
   }
 
   function setTitle(id, sub, title) {
@@ -123,7 +142,7 @@ export function createOverlay(root) {
       if (!html) html = standbyCard();
       setTitle(seg.id, sub, title);
       feeds(state);
-      if (fresh) { swap(left, html, key); swap(strip, stripHtml, key); countUps(left, true); }
+      if (fresh) { const b = takeBeat(); swap(left, html, key, b); swap(strip, stripHtml, key, b); countUps(left, true); lastFreshAt = performance.now(); }
       else { left.innerHTML = html; strip.innerHTML = stripHtml; settle(left); settle(strip); countUps(left, false); }  // in-place refresh: no replayed entrances
       frame.querySelector('.frame-lbl').textContent = label ? `LIVE 3D // ${label.toUpperCase()}` : '';
       frame.classList.toggle('short', seg.id === 'top');
