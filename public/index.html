@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <!-- iPad: "Add to Home Screen" opens PNN full-screen like an app (no Safari bars) -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PNN" />
+  <meta name="theme-color" content="#07021a" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <link rel="manifest" href="/manifest.json" />
   <title>PNN // Pre News Network</title>
   <link rel="icon" href="data:," />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,6 +29,7 @@
   </script>
 </head>
 <body>
+  <div id="rotate" aria-live="polite"><i>📱</i>Rotate to landscape<small>PNN is a widescreen broadcast</small></div>
   <div id="backdrop" aria-hidden="true"><div class="bd-sun"></div><div class="bd-grid"></div></div>
   <canvas id="scene"></canvas>
   <div id="scanlines" aria-hidden="true"></div>

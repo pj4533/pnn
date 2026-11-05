@@ -50,7 +50,7 @@ The MVP is built: live Polymarket and Kalshi feeds, editorial filter and ranking
 
 ## Commands
 
-- `npm start`: live server on http://localhost:4180 (`PORT` overrides).
+- `npm start`: live server on http://localhost:4180 (`PORT` overrides). On the LAN (the user's iPad): http://192.168.7.34:4180 or http://Peej-MacBook-Pro.local:4180. Use landscape; Add to Home Screen gives a full-screen app.
 - `npm run sim`: replay saved samples, no network (no Kalshi data in SIM).
 - `npm run check`: `node --check` over server and client JS. Run after every change.
 - `npm run health`: `curl localhost:4180/api/health`. It includes `moments` (corner-pop detectors), `build.dead` (dead-content drops), `sotd` and `countdown`.

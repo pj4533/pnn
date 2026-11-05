@@ -48,6 +48,8 @@ export function createOverlay(root) {
     const b = pendingBeat; pendingBeat = null;
     return b && performance.now() - b.recv < 1500 ? b : null;
   }
+  let lastNext = [null, null];   // re-fit the NEXT tease on resize / iPad rotation (its shrink is width-dependent)
+  window.addEventListener('resize', () => { if (lastNext[0]) api.setNext(...lastNext); });
   let frameOverride = null, lastFrameLabel = '';  // flash label override (the 3D shows the flash's story, not the card's)
   function settle(host) {
     for (const a of host.getAnimations({ subtree: true })) {
@@ -102,7 +104,7 @@ export function createOverlay(root) {
     feedsEl.innerHTML = row + (state?.sim ? '<span class="feed sim">REPLAY DATA</span>' : '');
   }
 
-  return {
+  const api = {
     /** seg: {id, story?, index?, count?}. */
     render(seg, state, now = Date.now()) {
       document.body.dataset.segment = seg.id;
@@ -152,6 +154,7 @@ export function createOverlay(root) {
     },
     /** Top-bar tease: "NEXT: <a> · then <b>". The "then" part drops when the pair doesn't fit. */
     setNext(a, b) {
+      lastNext = [a, b];
       if (!a) { nx.innerHTML = ''; top.classList.remove('has-next'); return; }
       top.classList.add('has-next');
       const full = `<b>NEXT</b>${esc(a)}${b ? `<i> · then ${esc(b)}</i>` : ''}`;
@@ -183,4 +186,5 @@ export function createOverlay(root) {
       return { x0: 0.308, x1: 0.992, y0: 0.084, y1: 0.78 };
     },
   };
+  return api;
 }

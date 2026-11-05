@@ -1,0 +1,10 @@
+{
+  "name": "PNN // Pre News Network",
+  "short_name": "PNN",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#07021a",
+  "theme_color": "#07021a",
+  "icons": [{ "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" }]
+}

@@ -131,3 +131,12 @@ setInterval(() => {
   fetch('/api/client-log', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ level: 'info', kind: 'heartbeat', fps: Math.round(frames / 60), segment: director.current?.id, scene: !!sceneImpl, stateAge: latest ? Date.now() - Date.parse(latest.generatedAt) : null }) }).catch(() => {});
   frames = 0;
 }, 60000);
+
+// iPad / TV: keep the screen from sleeping while PNN is on air (Screen Wake Lock API; silently skipped if unsupported).
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && document.visibilityState === 'visible' && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch { /* needs a user gesture on some versions: retried on tap */ }
+}
+keepAwake();
+document.addEventListener('visibilitychange', keepAwake);
+document.addEventListener('pointerdown', keepAwake, { passive: true });

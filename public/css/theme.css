@@ -50,3 +50,15 @@ body.has-scene #backdrop { display: none; }
 .thin { display: inline-block; flex: 0 0 auto; font: 700 max(var(--min), .72vw) var(--font-display); letter-spacing: .12em; color: #1a0533; background: var(--amber);
   padding: .15em .5em; box-shadow: 0 0 .6vw rgba(255,177,59,.6); white-space: nowrap; }
 .thin.sm { padding: .05em .4em; }
+
+/* iPad/phone portrait: PNN is a landscape broadcast; ask to rotate instead of showing a cramped layout */
+#rotate { display: none; }
+@media (orientation: portrait) and (max-width: 1100px) {
+  #rotate { display: flex; position: fixed; inset: 0; z-index: 100; flex-direction: column; align-items: center; justify-content: center; gap: 3vh;
+    background: radial-gradient(circle at 50% 35%, rgba(255,43,214,.35), rgba(7,2,26,.96) 60%); color: #fff; text-align: center; padding: 6vw;
+    font: 700 max(18px, 5vw)/1.2 var(--font-display, sans-serif); letter-spacing: .06em; }
+  #rotate i { font-style: normal; font-size: max(48px, 16vw); animation: rot 2.4s ease-in-out infinite; }
+  #rotate small { font: 600 max(14px, 3.4vw)/1.4 var(--font-ui, sans-serif); letter-spacing: .02em; color: #cdbdff; }
+  @keyframes rot { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+}
+html, body { background: #07021a; }
