@@ -239,7 +239,8 @@ const sideLabel = (m, fallback) => { const l = String(marketLabel(m) || '').trim
 function tossupCard(seg, now) {
   const s = seg.story, m = s.lead, p = m.yesPrice;
   const others = (s.markets || []).filter((x) => x.id !== m.id && Number.isFinite(x.yesPrice)).sort((a, b) => b.yesPrice - a.yesPrice);
-  const multi = (s.markets || []).length > 1 && others.length > 0;
+  // head to head only when the runner-up is close; otherwise a toss-up is about this side vs even (a 44% leader 29 points clear of #2 is not 'too close' against #2)
+  const multi = (s.markets || []).length > 1 && others.length > 0 && Math.abs(p - others[0].yesPrice) <= 0.10;
   const aName = multi ? sideLabel(m, 'Leading side') : 'Chance it happens', bName = multi ? sideLabel(others[0], 'Runner-up') : 'Chance it does not';
   const bp = multi ? others[0].yesPrice : 1 - p;
   const gap = Math.abs(Math.round(p * 100) - Math.round(bp * 100));
@@ -250,7 +251,7 @@ function tossupCard(seg, now) {
       <div class="bc-n"><span class="bc-v">${esc(pctNum(p))}</span><span class="bc-p">%</span></div>
       <div class="bc-side">
         <div class="tu-ctc fit">TOO CLOSE TO CALL</div>
-        <div class="tu-gap fit">${gap === 0 ? 'Dead even' : `${gap} ${gap === 1 ? 'point' : 'points'} apart`}</div>
+        <div class="tu-gap fit">${multi ? (gap === 0 ? `Dead even with ${esc(bName)}` : `${gap} ${gap === 1 ? 'point' : 'points'} ${p > bp ? 'ahead of' : 'behind'} ${esc(bName)}`) : (Math.round(Math.abs(p - 0.5) * 100) === 0 ? 'Dead even' : `${Math.round(Math.abs(p - 0.5) * 100)} ${Math.round(Math.abs(p - 0.5) * 100) === 1 ? 'point' : 'points'} from even`)}</div>
         ${d ? `<div class="bc-wk fit" data-drop="3">${esc(pointsText(m.change1d, 'today'))}</div>` : ''}
       </div>
     </div>
