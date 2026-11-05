@@ -86,7 +86,9 @@ for (const s of [...out.stories, ...deskStories]) {
   if (!/%|\bodds\b|\bchance\b/i.test(s.headline)) problems.push(`not a probability: ${s.headline}`);
   if (s.headline.length > 90) problems.push(`long headline (${s.headline.length}): ${s.headline}`);
   const txt = `${s.eventTitle} ${s.lead.title}`;
-  if (/\bvs\.?\s|bitcoin|tweets|ceasefire|invade|military|champions league/i.test(txt)) problems.push(`noise aired: ${txt}`);
+  // sports/games futures (e.g. Champions League winner) are allowed since 2026-11-05 (news-gated in ingest); game-level noise is not
+  if (/\bvs\.?\s|bitcoin|tweets|ceasefire|invade|military/i.test(txt)) problems.push(`noise aired: ${txt}`);
+  if ((s.category === 'sports' || s.category === 'games') && /\b(spread|over\/under|o\/u|total (points|goals)|player props?|both teams to score|map \d)\b/i.test(txt)) problems.push(`sports micro-prop aired: ${txt}`);
 }
 // Board/desk structure checks
 const cnt = out.stories.reduce((a, s) => ((a[boardCat(s)] = (a[boardCat(s)] || 0) + 1), a), {});
