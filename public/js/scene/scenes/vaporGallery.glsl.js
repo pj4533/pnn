@@ -8,31 +8,43 @@ mat3 vrot(vec3 a,float t){ float c=cos(t),s=sin(t),o=1.-c; return mat3(o*a.x*a.x
 vec3 vpal(float t){ return .5+.5*cos(6.28318*(t+vec3(0.,.33,.67))); }
 float vbounce(float x){ x=clamp(x,0.,1.); float e=1.-pow(1.-x,3.); return x<.82? e : 1.-.05*sin((x-.82)/.18*3.14159)*(1.-x); }
 `;
-export const FHEAD = `uniform float uP;\n` + HASH;
-export const VHEAD = `uniform float uP; uniform vec2 uRes;\n` + HASH;
+// projector stage: the plinth-on-floor geometry shared by the floor shader and the colonnade
+const STAGE_FN = `
+float vFloorPl(){ return uHero.y - uHero.w*.93; }                                  // screen y of the plinth contact point
+float vFloorH(){ float pl = vFloorPl(); return clamp(pl + (uHero.y - pl)*.55, .30, .52); }   // horizon sits behind the widget's lower half
+`;
+export const FHEAD = `uniform float uP; uniform float uSunPh; uniform vec2 uWv;\n` + HASH + STAGE_FN;
+export const VHEAD = `uniform float uP; uniform vec2 uRes; uniform vec4 uHero; uniform vec4 uHeroW; uniform vec4 uStory; uniform vec3 uStoryCol;
+vec3 vRay(vec2 uv){ vec2 n = uv*2.-1.; return vec3((n.x+projectionMatrix[2][0])/projectionMatrix[0][0], (n.y+projectionMatrix[2][1])/projectionMatrix[1][1], -1.); }
+\n` + HASH + STAGE_FN;
 
 export const BACK_VS = `void main(){ gl_Position=vec4(position.xy,1.,1.); }`;
 export const BACK_FS = `uniform float uFloor; uniform vec4 uRip; uniform vec3 uRipCol; uniform vec2 uPar;
 void main(){
-  vec2 q=gl_FragCoord.xy/uRes; float asp=uRes.x/uRes.y; const float H=.285;
+  vec2 q=gl_FragCoord.xy/uRes; float asp=uRes.x/uRes.y; float H=vFloorH(); float PL=vFloorPl();
   // ---- lavender to peach wall
   float wy=clamp((q.y-H)/(1.-H),0.,1.);
   vec3 wall=mix(vec3(.30,.15,.15),vec3(.22,.09,.24),smoothstep(0.,.35,wy)); wall=mix(wall,vec3(.10,.065,.23),smoothstep(.25,1.,wy));
   wall+=vec3(.02,.012,.02)*smoothstep(.3,1.,sin((q.x*asp*2.2+q.y*1.4-uP*.04)*3.)*.5+.5);
   // pixel stars on the wall (static grid, twinkling)
   vec2 sg=floor(vec2(q.x*asp,q.y)*vec2(150.)); float sh=vh21(sg);
-  float st=step(.985,sh)*step(H+.03,q.y)*(.4+.6*pow(.5+.5*sin(uP*(1.+sh*3.)+sh*60.),2.));
+  float st=step(.985,sh)*step(H+.03,q.y)*(.4+.6*pow(abs(.5+.5*sin(uP*(1.+sh*3.)+sh*60.)),2.));
   wall+=vec3(1.,.8,1.)*st*.9*smoothstep(.5,.9,q.y);
-  // halftone moon + dashed neon ring
-  vec2 mp=(q-vec2(.68-uPar.x*.5,.74))*vec2(asp,1.)*1.2; float md=length(mp);
-  float rr=.5*(.25+.75*clamp(.5+mp.y/.42,0.,1.));
-  float dots=smoothstep(rr+.12,rr-.12,length(fract(mp*58.)-.5));
-  wall=mix(wall,vec3(.46,.17,.34)*(.5+.5*dots),smoothstep(.215,.205,md)*.8);
-  float ang=atan(mp.y,mp.x); float ring=exp(-pow((md-.245)/.0035,2.))*step(.5,fract(ang*3.+uP*.12));
-  wall+=vec3(.9,.45,1.)*ring*1.3+vec3(.3,.9,.9)*exp(-pow((md-.265)/.002,2.))*step(.3,fract(-ang*5.+uP*.2))*1.1;
+  // the vapor sun: a big striped disc directly behind the widget (its halo). Stripes rise on up-moves, sink on down-moves.
+  vec2 mp=(q-uHero.xy)*vec2(asp,1.); float R=max(uHero.w*1.5,uHero.z*asp*.62); float md=length(mp)/R; float sy=mp.y/R;
+  float disc=smoothstep(1.,.985,md);
+  float bandW=mix(.0,.6,smoothstep(.35,-.9,sy));
+  float lit=mix(1.,step(bandW,fract(sy*7.-uSunPh)),smoothstep(.4,.0,sy));
+  vec3 sunC=mix(vec3(.95,.3,.55),vec3(1.,.78,.36),smoothstep(-.8,.85,sy)); sunC=mix(sunC,uStoryCol*1.15,.45);
+  wall=mix(wall,sunC*.62,disc*lit*.82);
+  wall+=sunC*exp(-pow(abs(max(md-1.,0.)*5.),2.))*.12*(1.-disc);
+  // dashed eye-wall ring, orbiting at a speed set by the story
+  vec2 hd=heroD(q); float ang=atan(hd.y,hd.x); float hr=length(hd);
+  float ring=exp(-pow(abs((hr-1.36)/.016),2.))*step(.5,fract(ang*3.+uSunPh*.35));
+  wall+=uStoryCol*ring*(1.+uStory.y+uStory.w*2.)*1.1+vec3(.3,.9,.9)*exp(-pow(abs((hr-1.46)/.008),2.))*step(.3,fract(-ang*5.+uP*.2))*.8;
   vec3 col=wall*.6;
   if(q.y<H){
-    float t=1./max(H-q.y,.004); float xw=(q.x-.5+uPar.x)*asp*t;
+    float t=1./max(H-q.y,.004); float xw=(q.x-uHero.x+uPar.x)*asp*t;
     vec2 p=vec2(xw*.9,t*1.6)+vec2(uP*.30,uP*.55);
     vec2 w=fwidth(p)+1e-4;
     vec2 i=2.*(abs(fract((p-.5*w)*.5)-.5)-abs(fract((p+.5*w)*.5)-.5))/w; float chk=.5-.5*i.x*i.y;
@@ -47,19 +59,23 @@ void main(){
       fc=mix(vec3(.02,.01,.05),fc,inside);
     }
     vec3 hz=vec3(.34,.17,.16);
-    fc=mix(fc,hz*.8,pow(1.-clamp(fy,0.,1.),2.)*.55);
-    float streak=exp(-pow((q.x-.68)/(.02+.09*(1.-fy)+.01*sin(fy*30.-uP*2.)),2.))*smoothstep(0.,.5,fy)*(1.-smoothstep(.5,1.,fy));
+    fc=mix(fc,hz*.8,pow(abs(1.-clamp(fy,0.,1.)),2.)*.55);
+    float streak=exp(-pow(abs((q.x-uHero.x)/(.02+.09*(1.-fy)+.01*sin(fy*30.-uP*2.))),2.))*smoothstep(0.,.5,fy)*(1.-smoothstep(.5,1.,fy));
     fc+=vec3(.5,.2,.4)*streak*(.5+.5*chk)*.7;
     // ripple ring across the floor
     float cx=(uRip.x-.5)*asp*(1./(H-.13)); float d=length(vec2(xw-cx,(t-1./(H-.13))*.9)); float R=uRip.y*7.;
-    float rg=exp(-pow((d-R)/.32,2.))*(1.-smoothstep(0.,1.7,uRip.y))*uRip.z;
+    float rg=exp(-pow(abs((d-R)/.32),2.))*(1.-smoothstep(0.,1.7,uRip.y))*uRip.z;
     fc+=uRipCol*rg*(.5+.9*chk)*1.4;
+    // heroPulse: the floor tiles light up in a ring wave out from the plinth (the lines already converge on it)
+    float tp=1./max(H-PL,.02); float dp=length(vec2(xw,(t-tp)*.9));
+    float wv=exp(-pow(abs((dp-uWv.x*7.)/.55),2.))*uWv.y*(1.-smoothstep(.9,1.5,uWv.x));
+    fc+=mix(uStoryCol,vec3(1.),.2)*wv*(.4+1.1*chk);
     fc*=smoothstep(.0,.04,fy);
     col=fc+vec3(.34,.17,.16)*exp(-abs(q.y-H)*220.)*1.8*smoothstep(0.,.2,uFloor);
   }
   // wall shock ring
   float rr2=length((q-vec2(uRip.x,.55))*vec2(asp,1.)); float R2=uRip.y*1.1;
-  col+=uRipCol*exp(-pow((rr2-R2)/.008,2.))*(1.-smoothstep(0.,1.4,uRip.y))*uRip.z*2.;
+  col+=uRipCol*exp(-pow(abs((rr2-R2)/.008),2.))*(1.-smoothstep(0.,1.4,uRip.y))*uRip.z*2.;
   gl_FragColor=vec4(finish(col),1.);
 }`;
 
@@ -77,7 +93,7 @@ varying vec3 vB; varying vec3 vV; varying float vYh; varying float vR;
 vec3 env(vec3 R){ float e=R.y;
   vec3 c=mix(vec3(.06,.35,.42),vec3(.95,.42,.78),smoothstep(-.25,.75,e));
   c=mix(c,vec3(.12,.05,.25),smoothstep(.05,-.5,e)*.7);
-  c+=vec3(1.,.8,.65)*exp(-pow(e*7.,2.))*.7; c*=.55*(.8+.2*sin(R.x*9.+R.z*5.)); return c; }
+  c+=vec3(1.,.8,.65)*exp(-pow(abs(e*7.),2.))*.7; c*=.55*(.8+.2*sin(R.x*9.+R.z*5.)); return c; }
 void main(){
   vec3 N=normalize(cross(dFdx(vV),dFdy(vV))); vec3 V=normalize(vV); if(dot(N,V)>0.) N=-N;
   vec3 R=reflect(V,N); float f=pow(1.-abs(dot(N,-V)),2.2);
@@ -104,7 +120,16 @@ void main(){
   float tz=iB.x+sin(uP*.35+ph)*.07+(1.-lb)*(dl-.5)*1.4+lx*(dl-.5)*3.;
   float ty=uP*.12*(iB.w)+lx*4.; mat3 R=vrot(vec3(0.,1.,0.),ty)*vrot(vec3(0.,0.,1.),tz)*vrot(vec3(1.,0.,0.),sin(uP*.27+ph*2.)*.06);
   p=R*p; n=R*n;
-  vec3 c=iA.xyz; c.y+=sin(uP*.55+ph)*3.5+(1.-vbounce(lb))*(260.)+lx*lx*320.;
+  // colonnade: iA = (lateral multiple of the eye radius, floor-depth ratio, view depth, _). Columns stand on the floor on either
+  // side of the plinth; nearer ones (bigger ratio) sit lower, taller and further out, so the rows converge on the widget.
+  float dd=iA.y; float span=max(vFloorH()-vFloorPl(),.06);
+  float F=clamp(3.1*dd*span,.18,1.0);
+  vec2 uvc=vec2(uHero.x+iA.x*uHero.z*dd, vFloorH()-dd*span+F*.5);
+  float dz=iA.z; float Hu=2.*dz/projectionMatrix[1][1];
+  vec3 c=vRay(uvc)*dz;
+  float cs=F*Hu/4.1;                      // world scale giving a screen height of F
+  p=p/iA.w*cs*vec3(.72,1.,.72);
+  c.y+=sin(uP*.55+ph)*.09*cs+(1.-vbounce(lb))*(28.*cs)+lx*lx*40.*cs;
   vL=lb*(1.-lx); vAl=lb*(1.-smoothstep(.55,1.,lx));
   vec3 w=c+p; vW=w; vN=n; vUv=uv; gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(w,1.);
 }`;
@@ -116,20 +141,25 @@ void main(){
   vec3 base=mix(vec3(.82,.72,.88),vec3(.95,.8,.82),nz)*(.86+.14*fl)-vein*.12;
   float dif=max(dot(N,normalize(vec3(-.5,.6,.6))),0.)*.7+.3;
   float rim=pow(1.-max(dot(N,V),0.),3.);
-  vec3 col=base*dif*.55+uAccent2*rim*.7+uAccent*pow(max(dot(N,normalize(vec3(.8,.1,.3))),0.),3.)*.25;
+  vec3 col=base*dif*.55+mix(uAccent2,uStoryCol,.45)*rim*.7+uAccent*pow(max(dot(N,normalize(vec3(.8,.1,.3))),0.),3.)*.25;
   col+=uAccent*1.2*smoothstep(.0,.15,vL)*(1.-smoothstep(.15,.4,vL))*.5;
-  gl_FragColor=vec4(finish(col),vAl);
+  gl_FragColor=vec4(finish(col),vAl*(.2+.8*eye()));
 }`;
 
 export const QUAD_VS = `attribute vec4 iA; attribute vec4 iB; uniform float uKind,uBuild,uBreak; varying vec2 vUv; varying vec4 vX;
 void main(){
   vec3 p=position; vec2 q=vec2(position.x+.5,position.y); vUv=q; float e=1.; vec3 c=iA.xyz; vec2 sz=vec2(iA.w,iA.w*iB.x);
+  if(uKind<.5){ float dz=-iA.z; sz=vec2(iA.w*2.*dz/projectionMatrix[1][1]); sz.y*=iB.x; }
   float lb=clamp(uBuild*1.6-iB.z*.6,0.,1.), lx=clamp(uBreak*1.6-iB.z*.6,0.,1.);
   vX=vec4(0.);
   if(uKind<.5){
     float per=iB.w, cyc=floor((uP+iB.y*per)/per), u=fract((uP+iB.y*per)/per); vec2 hh=vh2(vec2(iB.y*77.,cyc));
     float o=smoothstep(0.,.1,u)*(1.-smoothstep(.84,.95,u)); e=o*o*(3.-2.*o)*lb*(1.-lx);
-    c.xy+=(hh-.5)*vec2(70.,26.)*vec2(1.,1.)+vec2(sin(uP*.2+iB.y*6.)*10.,sin(uP*.33+iB.y*9.)*3.);
+    // pinned on the eye-wall ellipse (angle iA.x, ring radius iA.y in eye radii), re-rolling a little each cycle; never inside r<1.3
+    float an=iA.x+(hh.x-.5)*.5+uStory.x*.04*sin(uP*.5+iB.y*9.); float rr=max(1.8,iA.y+(hh.y-.5)*.3);
+    vec2 uvw=clamp(uHero.xy+vec2(cos(an),sin(an))*uHero.zw*rr,vec2(.34,.08),vec2(.95,.9));
+    c=vRay(uvw)*(-iA.z);
+    e*=1.-uStory.w*.85*step(.5,fract(uP*7.+iB.y*11.));
     float tile=floor(vh21(vec2(cyc,iB.y*13.))*8.); vX=vec4(tile,e,u,hh.x);
     float wf=mix(.04,1.,smoothstep(0.,1.,e*1.35-(1.-q.y)*.35*(1.-e))); p.x*=sz.x*wf; p.y=q.y*sz.y*e; p.x+=(1.-e)*sz.x*.15*(q.y-.3);
   } else {
@@ -151,8 +181,8 @@ void main(){
     float e=vX.y; float tile=vX.x; vec2 tuv=vec2((mod(tile,4.)+vUv.x)/4.,(floor(tile/4.)+vUv.y/1.)/2.);
     vec4 t=texture2D(uAtlas,tuv); vec2 b=min(vUv,1.-vUv); float bd=smoothstep(.0,.03,min(b.x*.8,b.y));
     float edge=1.-smoothstep(0.,.025,min(vUv.x,1.-vUv.x)*.7); edge=max(edge,1.-smoothstep(0.,.02,abs(vUv.y-1.)));
-    col=t.rgb*.62+uAccent*.05+mix(uAccent,uAccent2,vX.w)*(max(edge,1.-smoothstep(0.,.02,vUv.y))*1.1);
-    a=t.a*.62*smoothstep(0.,.25,e);
+    col=t.rgb*.34+uAccent*.05+mix(uAccent,uAccent2,vX.w)*(max(edge,1.-smoothstep(0.,.02,vUv.y))*1.1);
+    a=t.a*.5*smoothstep(0.,.25,e);
   } else {
     vec2 uv=vUv; float sw=vX.x; float cxp=.5+.05*sin(uv.y*3.)+sw*uv.y*uv.y*.05;
     vec2 cr=vec2(.5+.05*sin(.76*3.)+sw*.76*.76*.05,.76);
@@ -169,19 +199,19 @@ void main(){
 export const POLY_VS = `attribute vec3 aBary; attribute vec4 iO; attribute vec4 iP; uniform vec3 uC,uAccent,uAccent2; uniform float uOrb,uBuild,uBreak; varying vec3 vB; varying vec3 vCol; varying float vAl;
 void main(){
   float lb=clamp(uBuild*1.5-iP.z*.5,0.,1.), lx=clamp(uBreak*1.5-iP.z*.5,0.,1.);
-  float a=uOrb*iO.y+iO.z+lx*5.; float R=iO.x*(1.+(1.-lb)*(1.-lb)*6.+lx*lx*7.);
+  float a=uOrb*iO.y+iO.z+lx*5.; float wr=uHeroW.w; float R=wr*(1.45+(iO.x-30.)*.03)*(1.+(1.-lb)*(1.-lb)*6.+lx*lx*7.);
   vec3 b=vec3(cos(a)*R*.8,0.,sin(a)*R*.6);
   b=vrot(vec3(1.,0.,0.),iO.w)*vrot(vec3(0.,0.,1.),iO.w*.7-.3)*b;
-  float s=iP.x*lb*(1.-lx);
+  float s=iP.x*lb*(1.-lx)*clamp(wr/62.,.2,.8);
   vec3 ax=normalize(vh3(vec3(iP.y*31.,iP.y*7.,3.))-.5+.01);
   vec3 p=vrot(ax,uP*(.4+iP.y*.8)+iP.y*20.)*position*s;
-  vec3 w=uC+b+p; w.y+=sin(uP*.5+iO.z*3.)*3.; vB=aBary; vAl=lb*(1.-lx);
-  float cs=iP.w; vCol=cs<.25?uAccent:(cs<.5?uAccent2:(cs<.75?vec3(.35,1.,.95):vec3(1.,.8,.4)));
+  vec3 w=(viewMatrix*vec4(uHeroW.xyz,1.)).xyz+b+p; w.y+=sin(uP*.5+iO.z*3.)*wr*.1; vB=aBary; vAl=lb*(1.-lx);
+  float cs=iP.w; vCol=cs<.25?mix(uAccent,uStoryCol,.5):(cs<.5?uStoryCol:(cs<.75?vec3(.35,1.,.95):vec3(1.,.8,.4)));
   gl_Position=projectionMatrix*viewMatrix*modelMatrix*vec4(w,1.);
 }`;
 export const POLY_FS = `varying vec3 vB; varying vec3 vCol; varying float vAl;
 void main(){ vec3 dv=fwidth(vB); vec3 e3=smoothstep(vec3(0.),dv*1.5,vB); float edge=1.-min(e3.x,min(e3.y,e3.z));
-  vec3 col=vCol*(edge*.55+.02)*vAl; gl_FragColor=vec4(finish(col),(edge+.1)*vAl); }`;
+  vec3 col=vCol*(edge*.55+.02)*vAl*(.12+.88*eye()); gl_FragColor=vec4(finish(col),(edge+.1)*vAl); }`;
 
 export const STAR_VS = `attribute vec4 aS; uniform vec3 uBox; uniform float uBuild,uBreak,uPunch; varying float vTw; varying float vK; varying vec3 vCol;
 void main(){

@@ -1,11 +1,14 @@
-// auroraFireworks: Midnight Aurora. Seven stacked aurora curtains over a black mirror-water plane with a faint skyline,
-// 64 meteors, and a pool of 12 firework shells (400 points each) that launch from the far left/right edges and are
-// mirrored in the water. Calm, dreamy. All layers are screen-space (uv) so station flights only add gentle parallax.
+// auroraFireworks: Midnight Aurora, recomposed as a sky cathedral over the widget (uHero). Seven aurora curtains arch over it
+// (crown above the widget, sagging away on both sides, story colour in the rim zone), the moon is its halo disc, 64 meteors,
+// and a pool of 12 firework shells (400 points each) that rise from the edges but burst AT the eye-wall around the widget
+// (count and size follow story energy), all mirrored in the black water, which also pools the plinth's glow.
+// heroPulse: 4 shells burst at once around the eye-wall and meteors streak toward the widget. Calm, dreamy. All layers are screen-space (uv) so station flights only add gentle parallax.
 // Draws: backdrop(sky+stars+moon+skyline+water), curtains(instanced), meteors, fireworks, fireworks-mirror = 5.
 import * as THREE from '../../../vendor/three/three.module.js';
 import * as S from './auroraFireworks.glsl.js';
+import { patchHero, heroUniforms, heroSync, HERO_FN } from './heroShimCCA.js';
 
-const NB = 12, NP = 400, NM = 64, NC = 7;
+const NB = 12, NP = 400, NM = 64, NC = 7, H_WATER = 0.27;
 const QB = [4, 8, 12], QC = [3, 5, 7], QM = [32, 48, 64];
 const PAL = [[1, .2, .8], [.1, .9, 1], [1, .7, .2], [.6, .3, 1], [1, .35, .5], [.3, 1, .8]];
 const ease = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
@@ -27,6 +30,7 @@ function fragPrefix(G) {
   let head = '';
   for (const [u, t] of Object.entries(U)) if (!declared(u)) head += `uniform ${t} ${u};\n`;
   s = head + s;
+  s = patchHero(s) + '\n' + HERO_FN;
   if (!defined('guard')) s += 'float guard(){ vec2 q=gl_FragCoord.xy/uRes; vec2 m=smoothstep(uGuardRect.xy-0.08,uGuardRect.xy,q)*(1.-smoothstep(uGuardRect.zw,uGuardRect.zw+0.08,q)); return 1.-uGuardAmt*m.x*m.y; }\n';
   if (!defined('alertMix')) s += 'vec3 alertMix(vec3 c){ float l=dot(c,vec3(.2126,.7152,.0722)); vec3 r=mix(vec3(1.,.07,.03),vec3(1.,.5,.1),clamp(l*.6,0.,1.))*l*1.5; return mix(c,r,uAlert); }\n';
   if (!defined('finish')) s += 'vec3 finish(vec3 c){ return alertMix(c)*guard()*uFade; }\n';
@@ -38,7 +42,8 @@ export function create(ctx) {
   const { stage, rnd } = ctx;
   const track = ctx.track || ((o) => o);
   const FP = fragPrefix(ctx.GLSL || {});
-  const uni = ctx.common();
+  const H = heroUniforms(ctx), hv = H.u.uHero.value, sv = H.u.uStory.value;
+  const uni = { ...H.u, ...ctx.common() };
   const B0 = [], B1 = [], B2 = [];
   for (let i = 0; i < NB; i++) { B0.push(new THREE.Vector4(.5, .6, 99, 0)); B1.push(new THREE.Vector4(1, 1, 1, .2)); B2.push(new THREE.Vector4(1, 1, 1, .5)); }
   const U = {
@@ -96,26 +101,36 @@ export function create(ctx) {
   fw.renderOrder = 4; fwm.renderOrder = 3;
 
   const Sx = {
-    k: 1, nb: NB, next: 0, cd: 2.2, T: 0, spin: 0, enterT: -1, enterD: 1, exitT: -1, exitD: 1, lastRip: -9, ripCount: 0, q: ctx.quality,
+    k: 1, lastPulse: -9, nb: NB, next: 0, cd: 2.2, T: 0, spin: 0, enterT: -1, enterD: 1, exitT: -1, exitD: 1, lastRip: -9, ripCount: 0, q: ctx.quality,
     rc: new THREE.Color(1, .3, .6), hasRc: false,
   };
 
-  // slot = next pool entry; side -1 left / +1 right; delay s; sc = size scale
-  function spawn(side, delay, sc, kind, col) {
+  // slot = next pool entry; side -1 left / +1 right = which edge the rocket rises from; delay s; sc = size scale;
+  // the shell bursts AT the eye-wall (1.5 widget radii, random angle, or `ang` when given), never over the widget
+  function spawn(side, delay, sc, kind, col, ang) {
     const i = Sx.next; Sx.next = (Sx.next + 1) % Sx.nb;
-    const left = side < 0;
-    const cx = left ? .04 + rnd() * .22 : .93 + rnd() * .035, cy = .5 + rnd() * .32;
-    const R = (left ? .2 + rnd() * .08 : .1 + rnd() * .045) * sc;
+    const left = side < 0, en = sv.y;
+    const a = ang != null ? ang : (-0.25 + rnd() * 1.5) * Math.PI;          // mostly the upper arc (the lower arc is water)
+    const rr = 1.5 + (rnd() - 0.5) * 0.25;
+    const cx = Math.min(0.96, Math.max(0.04, hv.x + Math.cos(a) * hv.z * rr)), cy = Math.min(0.97, Math.max(H_WATER + 0.12, hv.y + Math.sin(a) * hv.w * rr));
+    const R = (0.1 + rnd() * 0.05) * sc * (0.75 + 0.6 * en);
     B0[i].set(cx, cy, -.85 - delay, kind >= 0 ? kind : Math.floor(rnd() * 4));
     const c1 = PAL[(rnd() * PAL.length) | 0], c2 = PAL[(rnd() * PAL.length) | 0];
-    const story = rnd() < .3;
-    if (col) { B1[i].set(col.r, col.g, col.b, R); B2[i].set(ctx.accent.value.r, ctx.accent.value.g, ctx.accent.value.b, left ? .03 : .97); }
-    else if (story) { const a1 = ctx.accent.value, a2 = ctx.accent2.value; B1[i].set(a1.r, a1.g, a1.b, R); B2[i].set(a2.r, a2.g, a2.b, left ? .03 : .97); }
-    else { B1[i].set(c1[0], c1[1], c1[2], R); B2[i].set(c2[0], c2[1], c2[2], left ? .03 : .97); }
+    const story = rnd() < .5;
+    const rx = left ? .03 : .97;
+    if (col) { B1[i].set(col.r, col.g, col.b, R); B2[i].set(H.u.uStoryColA.value.r, H.u.uStoryColA.value.g, H.u.uStoryColA.value.b, rx); }
+    else if (story) { const a1 = H.u.uStoryCol.value, a2 = H.u.uStoryColA.value; B1[i].set(a1.r, a1.g, a1.b, R); B2[i].set(a2.r, a2.g, a2.b, rx); }
+    else { B1[i].set(c1[0], c1[1], c1[2], R); B2[i].set(c2[0], c2[1], c2[2], rx); }
   }
   function salvo(n, big, col) {
     let side = rnd() < .5 ? -1 : 1;
-    for (let j = 0; j < n; j++) { spawn(side, j * (.25 + rnd() * .35), big ? 1.25 : 1, big && j === 0 ? 2 : -1, col); side = -side; }
+    const a0 = rnd() * Math.PI * 2;
+    for (let j = 0; j < n; j++) { spawn(side, j * (.25 + rnd() * .35), big ? 1.2 : 1, big && j === 0 ? 2 : -1, col, big ? a0 + j * (Math.PI * 2 / n) : null); side = -side; }
+  }
+  // heroPulse: a ring of shells bursting at the same instant around the eye-wall
+  function ringBurst(str) {
+    const n = Math.min(Sx.nb, str > 0.7 ? 4 : 3), a0 = rnd() * Math.PI * 2;
+    for (let j = 0; j < n; j++) spawn(j & 1 ? -1 : 1, 0, 1, -1, j % 2 ? null : H.u.uStoryCol.value, a0 + j * (Math.PI * 2 / n));
   }
 
   function curtainUV(i, u, v, t, out) { // JS twin of AUR_VS (for morph sampling)
@@ -123,7 +138,8 @@ export function create(ctx) {
     const wy = .03 * Math.sin(u * 4.2 + tt * .5 + ph) + .018 * Math.sin(u * 9.1 - tt * .8 + ph * 1.7) + .008 * Math.sin(u * 21 - tt * 1.3 + ph);
     const hh = ac[i * 4 + 2] * (.75 + .25 * Math.sin(u * 3 + tt * .35 + ph * 2));
     out[0] = -.25 + u * 1.5 + .04 * Math.sin(u * 6 + tt * .4 + ph) + v * .05 * Math.sin(u * 2 + ph);
-    out[1] = ac[i * 4 + 1] + wy + v * hh;
+    const ex = out[0], asp = ctx.res.value.x / ctx.res.value.y, dx = Math.abs(ex - hv.x) * asp / Math.max(hv.z * asp * 1.4, 0.05), tt2 = Math.min(1, Math.max(0, (dx - 0.3) / 1.4));
+    out[1] = ac[i * 4 + 1] + wy - 0.24 * tt2 * tt2 * (3 - 2 * tt2) + v * hh;
   }
 
   const gradeCol = new THREE.Color(.9, .85, 1);
@@ -136,9 +152,7 @@ export function create(ctx) {
     exit(d) { Sx.exitT = 0; Sx.exitD = Math.max(.1, d); Sx.enterT = -1; U.uEnter.value = 1; salvo(Math.min(4, Sx.nb), true); },
     ripple(o) {
       const s = o.strength ?? 1;
-      let sx = .64;
-      if (o.screen) { sx = o.screen.x; if (sx < 0 || sx > 1 || o.screen.y < 0 || o.screen.y > 1) sx = sx * .5 + .5; }
-      U.uRip.value.set(Math.min(.9, Math.max(.1, sx)), .12, 0, s);
+      U.uRip.value.set(Math.min(.9, Math.max(.1, hv.x)), .12, 0, s);   // water rings centre under the widget
       Sx.ripCount++;
       ctx.pulse.value = Math.max(ctx.pulse.value, s);
       U.uSh.value.set(s, 0, Sx.ripCount, 0);
@@ -146,7 +160,14 @@ export function create(ctx) {
       else if (s <= .7 && Sx.T - Sx.lastRip > 1.5 && Sx.k > .3) { Sx.lastRip = Sx.T; spawn(rnd() < .5 ? -1 : 1, 0, 1, -1, null); }
     },
     shockwave(x, z, color) { api.ripple({ x, z, color, strength: 1, screen: null }); },
-    event() {},
+    event(type, p) {
+      if (type !== 'heroPulse' || Sx.exitT >= 0 || Sx.k < .2 || Sx.T - Sx.lastPulse < 0.8) return;
+      Sx.lastPulse = Sx.T;
+      const str = (p && p.strength) || 0.7;
+      ringBurst(str);
+      U.uRip.value.set(Math.min(.9, Math.max(.1, hv.x)), .12, 0, Math.min(1, str));
+      Sx.ripCount++; U.uSh.value.set(Math.min(1, 0.6 + str * 0.4), 0, Sx.ripCount, 0);   // meteors streak toward the widget
+    },
     setQuality(q) {
       Sx.q = q; Sx.nb = QB[q]; aur.geometry.instanceCount = QC[q]; qg.instanceCount = QM[q];
       fg.setDrawRange(0, Sx.nb * NP); Sx.next %= Sx.nb;
@@ -154,6 +175,7 @@ export function create(ctx) {
     },
     update(dt, t, info) {
       dt = dt > 0 ? Math.min(dt, .1) : 0; // guard against negative or huge first-frame dt
+      heroSync(H, ctx, info, dt);
       const al = ctx.alert.value, sp = (1 + .4 * al) * (.6 + .4 * Sx.k);
       Sx.spin += dt * sp; Sx.T += dt;
       U.uT.value = Sx.spin % 3600;
@@ -167,7 +189,7 @@ export function create(ctx) {
       for (let i = 0; i < Sx.nb; i++) { const b = B0[i]; if (b.z < 90) { b.z += dt * sp; if (b.z > 6) b.z = 99; } }
       if (Sx.exitT < 0 && U.uEnter.value > .5 && Sx.k > .2) {
         Sx.cd -= dt * sp;
-        if (Sx.cd <= 0) { Sx.cd = 5 + rnd() * 3; salvo(rnd() < .5 ? 2 : 3, false, null); }
+        if (Sx.cd <= 0) { Sx.cd = (5 + rnd() * 3) * (1.35 - 0.7 * sv.y); salvo(sv.y > .55 ? 3 : (rnd() < .5 ? 2 : 3), false, null); }   // more, bigger salvos on a big move
       }
       const r = U.uRip.value; if (r.z < 90) { r.z += dt; if (r.z > 5) { r.z = 99; r.w = 0; } }
       const sh = U.uSh.value; if (sh.y >= 0) { sh.y += dt; if (sh.y > 3) { sh.y = -1; sh.x = 0; } }

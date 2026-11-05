@@ -1,11 +1,15 @@
-// chromeBlobs: "Liquid Chrome Lounge". Six liquid-chrome metaballs (raymarched in ctx.layer) merging and splitting
-// in a dark void, upper-left; two thin neon tori precess around them; 3k glitter-dust points swirl (1 in 5 a fast comet).
+// chromeBlobs: "Liquid Chrome Lounge", recomposed as the widget's guardians. Six liquid-chrome metaballs (raymarched in
+// ctx.layer) orbit on an ellipse at ~1.5x the widget radius (never inside it), pairing up to merge and splitting again;
+// two neon tori form a gyroscope around the widget in the story colours; 3k glitter-dust points swirl along the flow
+// (spiral in on up, out on down). The virtual camera's principal point is uHero, so the cluster centre sits behind the widget.
 // Everything shares one scripted virtual camera (uRayOrigin/uRayBasis) so tori and dust sit exactly around the chrome,
 // and the layer's alpha carries hit depth so tori/dust pass behind the blobs. 5 draws: layer, backdrop, 2 tori, points.
+import { patchHero, heroUniforms, heroSync, HERO_UNI, HERO_FN } from './heroShimCCA.js';
 import { CAM, FS_VERT, MARCH_FRAG, BACK_FRAG, TORUS_VERT, TORUS_FRAG, DUST_VERT, DUST_FRAG } from './chromeBlobs.glsl.js';
 
-const CENTER_X = 0.40, CENTER_Y = 0.70, FOCAL = 0.95, CAM_D = 10;
+const FOCAL = 0.95, CAM_D = 10;
 const STEPS = [12, 18, 24], NBLOB = [4, 6, 6], NDUST = [1200, 2000, 3000];
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const elastic = (x) => x <= 0 ? 0 : x >= 1 ? 1 : 1 + Math.pow(2, -9 * x) * Math.sin((x * 10 - 0.75) * 2.0944);
 
@@ -16,7 +20,7 @@ function preamble(G) {
   if (!/float\s+guard\s*\(/.test(s)) s += '\n' + pick(G.GUARD || G.guard);
   if (!/alertMix\s*\(/.test(s)) s += '\n' + pick(G.alertMix || G.ALERTMIX);
   if (!/finish\s*\(/.test(s)) s += '\n' + pick(G.finish || G.FINISH);
-  return s + '\n';
+  return patchHero(s) + '\n' + HERO_FN;
 }
 
 export function create(ctx) {
@@ -24,21 +28,23 @@ export function create(ctx) {
   let q = ctx.quality ?? 2;
   const HEAD = preamble(ctx.GLSL) + CAM;
   // vertex stages can't take COMMON (guard() reads gl_FragCoord): declare only what they use
-  const VHEAD = 'uniform vec2 uRes; uniform vec4 uGuardRect; uniform vec3 uAccent, uAccent2;\n' + CAM;
+  const VHEAD = 'uniform vec2 uRes; uniform vec4 uGuardRect; uniform vec3 uAccent, uAccent2;\n' + HERO_UNI + HERO_FN + CAM;
+  const H = heroUniforms(ctx), hv = H.u.uHero.value, sv = H.u.uStory.value;
+  const cm = () => ({ ...H.u, ...ctx.common() });
 
   // ---- shared virtual-camera + scene uniforms (one object per uniform, shared by reference across materials) ----
   const U = {
     uRayOrigin: { value: new THREE.Vector3(0, 0, CAM_D) }, uRayBasis: { value: new THREE.Matrix3() },
-    uPar: { value: new THREE.Vector3() }, uCenter: { value: new THREE.Vector2(CENTER_X, CENTER_Y) },
+    uPar: { value: new THREE.Vector3() }, uCenter: { value: new THREE.Vector2(0.64, 0.6) }, uLay: { value: new THREE.Vector2(0.2, 0.25) }, uHW: { value: new THREE.Vector2(3.5, 2.6) },
     uFocal: { value: FOCAL }, uST: { value: 0 },
   };
   const B = []; for (let i = 0; i < 6; i++) B.push(new THREE.Vector4(0, 0, 0, 0.6));
   const MU = {
     uB: { value: B }, uNB: { value: NBLOB[q] }, uSteps: { value: STEPS[q] }, uWob: { value: 0.05 }, uRim: { value: 0 },
-    uMaskR: { value: 0.4 }, uK: { value: 1.5 }, uBound: { value: new THREE.Vector4(0, 0, 0, 3) },
+    uMaskR: { value: 2.7 }, uK: { value: 1.5 }, uBound: { value: new THREE.Vector4(0, 0, 0, 3) },
   };
   const marchMat = ctx.track(new THREE.ShaderMaterial({
-    uniforms: { ...ctx.common(), ...U, ...MU }, vertexShader: FS_VERT, fragmentShader: HEAD + MARCH_FRAG,
+    uniforms: { ...cm(), ...U, ...MU }, vertexShader: FS_VERT, fragmentShader: HEAD + MARCH_FRAG,
     depthTest: false, depthWrite: false, blending: THREE.NoBlending,
   }));
   const layer = ctx.layer(marchMat, { scale: q >= 2 ? 0.5 : 0.25 });
@@ -47,17 +53,17 @@ export function create(ctx) {
   // ---- backdrop: void + caustics + strip tubes + chrome composite + shockwave + glint ----
   const BU = { uLayer, uRip: { value: new THREE.Vector2(9, 0) }, uGlint: { value: 0 }, uEnter: { value: 0 } };
   ctx.backdrop(ctx.track(new THREE.ShaderMaterial({
-    uniforms: { ...ctx.common(), ...U, ...BU }, vertexShader: FS_VERT, fragmentShader: HEAD + BACK_FRAG,
+    uniforms: { ...cm(), ...U, ...BU }, vertexShader: FS_VERT, fragmentShader: HEAD + BACK_FRAG,
     depthTest: false, depthWrite: false,
   })));
 
   // ---- two neon tori ----
-  const torGeo = ctx.track(new THREE.TorusGeometry(1, 0.012, 6, 220));
+  const torGeo = ctx.track(new THREE.TorusGeometry(1, 0.0055, 6, 220));
   const flare = { value: 0 }, torScale = { value: 0 };
-  const tori = [{ rad: 2.55, tilt: 1.18, prec: 0.23, nut: 0.12, hue: 0 }, { rad: 3.15, tilt: 0.62, prec: -0.16, nut: 0.2, hue: 2.4 }].map((T) => {
-    T.rot = { value: new THREE.Matrix3() };
+  const tori = [{ k: 1.42, tilt: 1.12, prec: 0.23, nut: 0.12, hue: 0 }, { k: 1.72, tilt: 0.55, prec: -0.16, nut: 0.2, hue: 2.4 }].map((T) => {
+    T.rot = { value: new THREE.Matrix3() }; T.radU = { value: 3.5 * T.k };
     const mat = ctx.track(new THREE.ShaderMaterial({
-      uniforms: { ...ctx.common(), ...U, uLayer, uRot: T.rot, uRad: { value: T.rad }, uScale: torScale, uFlare: flare, uHue: { value: T.hue } },
+      uniforms: { ...cm(), ...U, uLayer, uRot: T.rot, uRad: T.radU, uScale: torScale, uFlare: flare, uHue: { value: T.hue } },
       vertexShader: VHEAD + TORUS_VERT, fragmentShader: HEAD + TORUS_FRAG,
       transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
     }));
@@ -80,7 +86,7 @@ export function create(ctx) {
   dustGeo.setDrawRange(0, NDUST[q]);
   const DU = { uSpread: { value: 1 }, uDustA: { value: 0 }, uPunch: { value: 0 }, uSize: { value: 2.8 } };
   const dust = new THREE.Points(dustGeo, ctx.track(new THREE.ShaderMaterial({
-    uniforms: { ...ctx.common(), ...U, ...DU, uLayer }, vertexShader: VHEAD + DUST_VERT, fragmentShader: HEAD + DUST_FRAG,
+    uniforms: { ...cm(), ...U, ...DU, uLayer }, vertexShader: VHEAD + DUST_VERT, fragmentShader: HEAD + DUST_FRAG,
     transparent: true, blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
   })));
   dust.frustumCulled = false; dust.renderOrder = 3; ctx.stage.add(dust);
@@ -107,11 +113,32 @@ export function create(ctx) {
     if (info && info.par) U.uPar.value.set(info.par.x * 0.002, info.par.y * 0.002, 0);
   }
 
+  // virtual-world point -> screen uv (same maths as project() in GLSL)
+  const vS2 = new THREE.Vector3();
+  function scr(P, out) {
+    vS2.copy(P).sub(vRo).sub(U.uPar.value); mT.copy(U.uRayBasis.value).transpose(); vS2.applyMatrix3(mT);
+    const dz = Math.max(-vS2.z, 0.05), asp = ctx.res.value.x / ctx.res.value.y;
+    out.x = U.uCenter.value.x + (vS2.x * FOCAL / dz) / asp; out.y = U.uCenter.value.y + vS2.y * FOCAL / dz; out.z = dz;
+    return out;
+  }
+  const sc3 = new THREE.Vector3(), pb = new THREE.Vector3();
+  let orb = 0, sense = 1;
+
   function update(dt, t, info) {
     const alert = ctx.alert.value;
     sT = (sT + dt * (1 + 0.4 * alert)) % 3600;
     U.uST.value = sT;
+    heroSync(H, ctx, info, dt);
     setCamera(info);
+    // aim the virtual camera so the cluster centre projects onto the widget; lay the guardians out in world units
+    const asp = ctx.res.value.x / ctx.res.value.y, en = sv.y;
+    U.uCenter.value.set(hv.x, hv.y);
+    const lx = clamp(hv.z, 0.12, 0.27), ly = clamp(hv.w, 0.14, 0.32);
+    U.uLay.value.set(lx, ly);
+    const rxW = lx * asp * CAM_D / FOCAL, ryW = ly * CAM_D / FOCAL, Ws = clamp(ryW / 2.6, 0.8, 1.5);
+    U.uHW.value.set(rxW, ryW);
+    sense += ((sv.x < -0.3 ? -1 : 1) - sense) * Math.min(1, dt * 1.5);
+    orb += dt * (0.1 + 0.34 * en) * sense * (1 + 0.4 * alert);
     // phases
     let e = 1, x = 0;
     if (enterDur > 0) { enterT += dt; e = Math.min(1, enterT / enterDur); if (e >= 1) enterDur = 0; }
@@ -134,10 +161,21 @@ export function create(ctx) {
     const spread = merge * Math.max(0.35, 1 + spr * 0.9);
     let bound = 0;
     const nb = MU.uNB.value;
+    MU.uK.value = 1.5 * Ws * 1.15;
+    const tw = Math.PI * 2 / nb, ecx = hv.x, ecy = hv.y;
     for (let i = 0; i < 6; i++) {
       const p = L[i], s = sT * 0.85;
-      const bx = Math.sin(s * p.fx + p.px) * p.ax * spread, by = Math.sin(s * p.fy + p.py) * p.ay * spread + dropY, bz = Math.sin(s * p.fz + p.pz) * p.az * spread;
-      const r = p.r * rS * (0.85 + 0.15 * merge) * (q === 0 ? 1.12 : 1);
+      // pairs drift together (merge) and apart again; the ellipse sits at ~1.5 widget radii
+      const th = orb + i * tw + 0.5 * Math.sin(s * p.fx * 0.8 + p.px), R = 1.38 * (1 + 0.1 * Math.sin(s * p.fy + p.py)) * spread;
+      let bx = Math.cos(th) * R * rxW, by = Math.sin(th) * R * ryW * 0.92 + dropY * Ws, bz = -Math.cos(th + 1.0) * 0.3 * ryW * spread + Math.sin(s * p.fz + p.pz) * 0.2 * Ws;
+      const r = p.r * 0.95 * Ws * rS * (0.85 + 0.15 * merge) * (q === 0 ? 1.12 : 1);
+      // eye test in screen space: a guardian never sits inside the widget's calm core
+      pb.set(bx, by, bz); scr(pb, sc3);
+      const ex = (sc3.x - ecx) / hv.z, ey = (sc3.y - ecy) / hv.w, hr = Math.hypot(ex, ey);
+      const need = 1.08 + (r * FOCAL / Math.max(sc3.z, 1)) / hv.w;
+      if (hr < need) {
+        if (hr > 1e-3) { const f = need / hr; bx *= f; by *= f; } else { by = need * hv.w * CAM_D / FOCAL; }
+      }
       B[i].set(bx, by, bz, r);
       if (i < nb) bound = Math.max(bound, Math.sqrt(bx * bx + by * by + bz * bz) + r);
     }
@@ -149,8 +187,10 @@ export function create(ctx) {
     DU.uSpread.value = dSpread; DU.uDustA.value = dA * (0.6 + 0.4 * k); DU.uPunch.value = Math.max(0, spr) * 0.6 + rim * 0.3;
     // tori precess (+ spin up on exit)
     for (let i = 0; i < 2; i++) {
-      const T = tori[i], sp = 1 + 6 * x * x;
-      e3.set(T.tilt + T.nut * Math.sin(sT * 0.4 + i * 2), sT * T.prec * sp + i * 1.7, 0.3 * Math.sin(sT * 0.21 + i));
+      const T = tori[i], sp = (1 + 6 * x * x) * (0.7 + 0.8 * en) * sense;
+      T.radU.value = rxW * T.k * (1 + 0.1 * spr);
+      T.ph = (T.ph || 0) + dt * T.prec * sp;
+      e3.set(T.tilt + T.nut * Math.sin(sT * 0.4 + i * 2), T.ph + i * 1.7, 0.3 * Math.sin(sT * 0.21 + i));
       m4.makeRotationFromEuler(e3); T.rot.value.setFromMatrix4(m4);
     }
   }
@@ -159,7 +199,7 @@ export function create(ctx) {
   function toWorld(out, o, P) {
     vV.copy(P).sub(vRo).sub(U.uPar.value); mT.copy(U.uRayBasis.value).transpose(); vV.applyMatrix3(mT);
     const dz = Math.max(-vV.z, 0.05), asp = ctx.res.value.x / ctx.res.value.y;
-    const sx = CENTER_X + (vV.x * FOCAL / dz) / asp, sy = CENTER_Y + vV.y * FOCAL / dz;
+    const sx = U.uCenter.value.x + (vV.x * FOCAL / dz) / asp, sy = U.uCenter.value.y + vV.y * FOCAL / dz;
     vP.set(sx * 2 - 1, sy * 2 - 1, 0.5).unproject(ctx.camera).sub(ctx.camera.position).normalize();
     const dist = 260 + (dz - CAM_D) * 25;
     out[o] = ctx.camera.position.x + vP.x * dist; out[o + 1] = ctx.camera.position.y + vP.y * dist; out[o + 2] = ctx.camera.position.z + vP.z * dist;
@@ -176,7 +216,10 @@ export function create(ctx) {
       sprV += 3.6 * s; wob = Math.max(wob, 0.12 + 0.14 * s); rim = Math.max(rim, s); ripAge = 0; ripStr = Math.max(ripStr, 0.4 + 0.6 * s);
     },
     shockwave(x, z, color) { this.ripple({ x, z, color, strength: 1 }); },
-    event(type) { if (type === 'alert') { rim = 1; sprV += 2; } },
+    event(type, p) {
+      if (type === 'alert') { rim = 1; sprV += 2; }
+      else if (type === 'heroPulse') { const s = 0.45 + 0.55 * Math.min(1, (p && p.strength) || 0.7); sprV += 3.2 * s; wob = Math.max(wob, 0.12 + 0.12 * s); rim = Math.max(rim, s); ripAge = 0; ripStr = Math.max(ripStr, 0.4 + 0.6 * s); }   // guardians splash outward, re-merge; tori flare
+    },
     setQuality(nq) {
       q = Math.max(0, Math.min(2, nq | 0));
       MU.uSteps.value = STEPS[q]; MU.uNB.value = NBLOB[q]; dustGeo.setDrawRange(0, NDUST[q]);

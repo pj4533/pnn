@@ -87,7 +87,7 @@ void main(){
       vec2 xz = d.xz * (h / max(d.y, 0.16));         // clamp: near the horizon (all the camera sees) curtains stay broad, not hairline stripes
       vec2 qa = xz * 0.11;
       float band = qa.y + 0.35*sin(qa.x*1.6 + uAurPh) + 0.6*(texture2D(uNoise, qa*0.05 + uAurOff).g - 0.5);
-      float rib = exp(-pow(fract(band*0.9) - 0.5, 2.0) * 60.0);
+      float rib = exp(-pow(abs(fract(band*0.9) - 0.5), 2.0) * 60.0);
       float rays = texture2D(uNoise, vec2(qa.x*0.35 + band*0.02, 0.37) + uAurOff*2.0).r;
       float dens = rib * (0.35 + 0.65*rays*rays) * (1.0 - fi) * (1.0 - fi*0.5);
       vec3 ramp = mix(vec3(0.1,1.0,0.45), vec3(0.1,0.85,1.0), smoothstep(0.1, 0.55, fi));

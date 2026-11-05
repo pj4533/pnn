@@ -1,18 +1,17 @@
-// curlSwarm: a 147k-particle GPGPU galaxy flowing in analytic curl noise around a morphing strange attractor
-// (Lorenz -> Aizawa -> Thomas every 25 s) in the upper-right sky, behind and around the hologram (the left ~47% is an
-// opaque card). Bright ribbons peel off it: one flows left along the top, one runs down the right edge; comets streak
-// left across the top; a dim domain-warped nebula sits behind.
+// curlSwarm: a 147k-particle GPGPU accretion disk orbiting the widget (uHero). Half the swarm is an orbiting ring that
+// piles up at the eye-wall (a soft radial wall keeps everything out of the calm core), the rest flows in a morphing strange
+// attractor (Lorenz -> Aizawa -> Thomas every 25 s) stretched to span that ring. Ribbons peel off the ring and spiral back in
+// (up) or out (down); comets dive inward (up) or erupt outward (down). A dim domain-warped nebula is centred on the widget,
+// dark at the core. The story drives it: uStory.x dir, .y energy (orbit speed), .w pulse (a radial impulse throws the ring out).
 // Draws: 2 sim passes (384² HalfFloat ping-pong) + 1 points + 1 nebula layer + 1 backdrop = 5.
 import * as THREE from '../../../vendor/three/three.module.js';
+import { patchHero, heroUniforms, heroSync, HERO_UNI, HERO_FN } from './heroShimCCA.js';
 import { SIM_N, SIM_COMMON, SEEDS, SIM_VEL, SIM_POS, PTS_VERT, PTS_FRAG, FS_VERT, NEB, NEB_FRAG, BACK_FRAG } from './curlSwarm.glsl.js';
 
 const N = SIM_N;
 const COUNTS = [49152, 98304, N * N];
 const CYCLE = 25, MORPH = 6, ORDER = [0, 1, 2];
-const ANCHOR_NDC = [0.54, 0.44];    // screen (0.77, 0.72): upper right, behind/around the hologram, clear of the opaque left card
-const VIS_L = -0.06, VIS_B = -0.30;  // ribbons fade out past this NDC x (screen 0.47) and y (screen 0.35)
 const DEPTH = 320;
-const HOLO = [0.64, 0.615];         // hologram centre, bottom-up screen
 
 // Build the shared prelude from ctx.GLSL, filling any gaps so the scene compiles against any common.js revision.
 function prelude(G = {}) {
@@ -33,17 +32,19 @@ function prelude(G = {}) {
   if (!/float\s+guard\s*\(/.test(s)) post += `float guard(){ vec2 q=gl_FragCoord.xy/uRes; vec2 m=smoothstep(uGuardRect.xy-0.08,uGuardRect.xy,q)*(1.-smoothstep(uGuardRect.zw,uGuardRect.zw+0.08,q)); return 1.-uGuardAmt*m.x*m.y; }\n`;
   if (!/vec3\s+alertMix\s*\(/.test(s)) post += `vec3 alertMix(vec3 c){ float l=dot(c,vec3(.2126,.7152,.0722)); return mix(c, vec3(l*2.2,l*.5,l*.12), uAlert); }\n`;
   if (!/vec3\s+finish\s*\(/.test(s)) post += `vec3 finish(vec3 c){ return alertMix(c)*guard()*uFade; }\n`;
-  return pre + s + '\n' + post;
+  return patchHero(pre + s + '\n' + post);
 }
 
-const VPRE = 'uniform vec2 uRes; uniform float uPulse; uniform vec3 uAccent; uniform vec3 uAccent2;\n';
+const VPRE = 'uniform vec2 uRes; uniform float uPulse; uniform vec3 uAccent; uniform vec3 uAccent2;\n' + HERO_UNI + HERO_FN;
 const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 
 export function create(ctx) {
   const { renderer, camera, stage } = ctx;
   const track = ctx.track || ((o) => o);
-  const PRE = prelude(ctx.GLSL);
-  const common = () => (ctx.common ? ctx.common() : {});
+  const PRE = prelude(ctx.GLSL) + HERO_FN;
+  const H = heroUniforms(ctx);
+  const common = () => ({ ...H.u, ...(ctx.common ? ctx.common() : {}) });
+  const hv = H.u.uHero.value, sv = H.u.uStory.value;
   let quality = ctx.quality ?? 2;
 
   // ---------- GPGPU sim: own ping-pong (the one RT exception the contract allows) ----------
@@ -57,7 +58,7 @@ export function create(ctx) {
   const simU = {
     tPos: { value: null }, tVel: { value: null }, uDt: { value: 1 / 60 }, uSpd: { value: 1 }, uMorph: { value: 0 },
     uTA: { value: 0 }, uTB: { value: 1 }, uAsm: { value: 0 }, uScat: { value: 0 }, uInit: { value: 1 }, uKick: { value: 1 }, uLT: ctx.localTime || { value: 0 },
-    uRot: { value: new THREE.Matrix3() }, uImp: { value: new THREE.Vector4() }, uEdge: { value: new THREE.Vector4(-1.6, 5.6, -2.8, 1.2) },
+    uHS: { value: new THREE.Vector2(2.4, 1.7) }, uRot: { value: new THREE.Matrix3() }, uImp: { value: new THREE.Vector4() }, uEdge: { value: new THREE.Vector4(-1.6, 5.6, -2.8, 1.2) },
   };
   const simMat = (frag) => track(new THREE.ShaderMaterial({
     uniforms: { ...common(), ...simU, tPos: { value: null }, tVel: { value: null } },
@@ -87,7 +88,7 @@ export function create(ctx) {
   pGeo.setAttribute('position', new THREE.BufferAttribute(ref, 3));
   const ptsU = {
     ...common(), tPos: { value: pos[0].texture }, tVel: { value: vel[0].texture }, uAnchor: { value: new THREE.Vector3(0, 0, -DEPTH) },
-    uScale: { value: 40 }, uSize: { value: 1 }, uAsm: simU.uAsm, uScat: simU.uScat, uEdge: simU.uEdge, uHolo: { value: new THREE.Vector2(HOLO[0], HOLO[1]) }, uVis: { value: new THREE.Vector2(-4, -3) },
+    uScale: { value: 40 }, uSize: { value: 1 }, uAsm: simU.uAsm, uScat: simU.uScat, uEdge: simU.uEdge, uVis: { value: new THREE.Vector2(-99, -99) },
   };
   const ptsMat = track(new THREE.ShaderMaterial({
     uniforms: ptsU, vertexShader: VPRE + SEEDS + PTS_VERT, fragmentShader: PRE + PTS_FRAG,
@@ -105,7 +106,7 @@ export function create(ctx) {
   const ringCol = new THREE.Color(1, 0.3, 0.9);
   const backU = {
     ...nebU, tLayer: { value: layer ? layer.texture : null }, uHasLayer: { value: layer ? 1 : 0 },
-    uRing: { value: new THREE.Vector4(0.77, 0.72, 9, 0) }, uRingCol: { value: ringCol },
+    uRing: { value: new THREE.Vector4(hv.x, hv.y, 9, 0) }, uRingCol: { value: ringCol },
   };
   const backMat = track(new THREE.ShaderMaterial({ uniforms: backU, vertexShader: FS_VERT, fragmentShader: PRE + NEB + BACK_FRAG, depthTest: false, depthWrite: false }));
   if (ctx.backdrop) ctx.backdrop(backMat);
@@ -122,15 +123,18 @@ export function create(ctx) {
     return out.multiplyScalar(-DEPTH / out.z);
   }
   function frame(par) {
-    viewAt(ANCHOR_NDC[0], ANCHOR_NDC[1], _a);
+    const nx = hv.x * 2 - 1, ny = hv.y * 2 - 1;
+    viewAt(nx, ny, _a);
     viewAt(-1, -1, _b); viewAt(1, 1, _c);
     const sc = (_c.y - _b.y) * 0.15 * (1 + 0.04 * Math.sin((ctx.localTime?.value || 0) * 0.37));
     ptsU.uScale.value = sc;
     edge.set((_b.x - _a.x) / sc, (_c.x - _a.x) / sc, (_b.y - _a.y) / sc, (_c.y - _a.y) / sc);
-    ptsU.uVis.value.set((viewAt(VIS_L, 0, _v).x - _a.x) / sc, (viewAt(0, VIS_B, _v).y - _a.y) / sc);
+    const asp0 = (_c.x - _b.x) / (_c.y - _b.y);
+    // widget ellipse in sim units (1 unit = 0.15 screen heights): the eye-wall ring is built from these
+    simU.uHS.value.set(Math.min(5, Math.max(1.3, hv.z * asp0 / 0.15)), Math.min(4, Math.max(1.1, hv.w / 0.15)));
     const px = par ? Math.max(-14, Math.min(14, par.x * 0.025)) : 0, py = par ? Math.max(-6, Math.min(6, par.y * 0.025)) : 0;
     anchor.set(_a.x - px, _a.y - py, _a.z);
-    asp.x = (_c.x - _b.x) / (_c.y - _b.y);
+    asp.x = asp0;
   }
 
   function attractorState(lt) {
@@ -158,14 +162,15 @@ export function create(ctx) {
       if (entering) { enterT += dt; asm = ease(enterT / enterDur); if (enterT >= enterDur) { entering = false; asm = 1; } }
       if (exiting) { exitT += dt; scat = ease(exitT / (exitDur * 0.65)); }
       simU.uAsm.value = asm; simU.uScat.value = scat;
-      simU.uSpd.value = (1 + 0.4 * (ctx.alert ? ctx.alert.value : 0)) * (0.55 + 0.45 * intensity) * (1 + 0.6 * scat);
+      simU.uSpd.value = (1 + 0.4 * (ctx.alert ? ctx.alert.value : 0)) * (0.55 + 0.45 * intensity) * (1 + 0.6 * scat) * (0.8 + 0.55 * sv.y);
       attractorState(lt);
+      heroSync(H, ctx, info, dt);
       frame(info && info.par);
       nebU.uPar.value.set(info && info.par ? info.par.x * 0.002 : 0, info && info.par ? info.par.y * 0.002 : 0);
       // ripple ring + one-step impulse
       ringAge += dt;
       simU.uKick.value = ease(ringAge / 1.4);
-      backU.uRing.value.z = ringAge; backU.uRing.value.w = ringStr;
+      backU.uRing.value.set(hv.x, hv.y, ringAge, ringStr);
       const sdt = Math.min(dt, 1 / 20);
       if (needInit) {
         simU.uInit.value = 1; simStep(sdt); simStep(sdt); simU.uInit.value = 0; needInit = false;
@@ -188,7 +193,10 @@ export function create(ctx) {
       ptsU.tPos.value = pos[pi].texture; ptsU.tVel.value = vel[vi].texture;
     },
     shockwave(x, z, color) { api.ripple({ x, z, color, strength: 1 }); },
-    event(type) { if (type === 'alertClear') ringCol.setRGB(1, 0.3, 0.9); },   // alert ripple arrives via shockwave()
+    event(type, p) {
+      if (type === 'alertClear') ringCol.setRGB(1, 0.3, 0.9);   // alert ripple arrives via shockwave()
+      else if (type === 'heroPulse' && ringAge > 0.35) api.ripple({ strength: 0.55 + 0.45 * Math.min(1, (p && p.strength) || 0.7), color: (p && p.color) || H.u.uStoryCol.value });   // eye-wall ring is thrown outward, falls back in ~1.5 s
+    },
     setQuality(q) {
       quality = Math.max(0, Math.min(2, q | 0));
       pGeo.setDrawRange(0, COUNTS[quality]);
@@ -198,22 +206,14 @@ export function create(ctx) {
     dispose() { simScene.remove(simQuad); },
   };
 
-  // CPU integration of the dominant attractor, mapped exactly as the GPU maps it, then to world space
+  // morph points sample the eye-wall ring (elliptical, same mapping as the GPU: 1 sim unit = uScale in view space)
   function sampleAttractor(out, n) {
-    const ty = simU.uMorph.value > 0.5 ? simU.uTB.value : simU.uTA.value;
-    const R = simU.uRot.value, sc = ptsU.uScale.value;
-    let x = 0.1, y = 0.0, z = ty === 0 ? 20 : 0.1, h = ty === 0 ? 0.004 : ty === 1 ? 0.008 : 0.04;
-    const K = ty === 0 ? 22 : ty === 1 ? 1.3 : 3.3, cz = ty === 0 ? 25 : ty === 1 ? 0.7 : 0;
+    const sc = ptsU.uScale.value, hs = simU.uHS.value;
     camera.updateMatrixWorld();
-    for (let i = -400, j = 0; j < n; i++) {
-      let dx, dy, dz;
-      if (ty === 0) { dx = 10 * (y - x); dy = x * (28 - z) - y; dz = x * y - 2.6667 * z; }
-      else if (ty === 1) { dx = (z - 0.7) * x - 3.5 * y; dy = 3.5 * x + (z - 0.7) * y; dz = 0.6 + 0.95 * z - z * z * z / 3 - (x * x + y * y) * (1 + 0.25 * z) + 0.1 * z * x * x * x; }
-      else { dx = Math.sin(y) - 0.208186 * x; dy = Math.sin(z) - 0.208186 * y; dz = Math.sin(x) - 0.208186 * z; }
-      x += dx * h; y += dy * h; z += dz * h;
-      if (i < 0 || (i & 1)) continue;
-      _v.set(x / K, (z - cz) / K, y / K).applyMatrix3(R).multiplyScalar(sc).add(anchor).applyMatrix4(camera.matrixWorld);
-      out[j * 3] = _v.x; out[j * 3 + 1] = _v.y; out[j * 3 + 2] = _v.z; j++;
+    for (let j = 0; j < n; j++) {
+      const a = Math.random() * 6.2832, r = 1.38 + (Math.random() - 0.5) * 0.35;
+      _v.set(Math.cos(a) * hs.x * r, Math.sin(a) * hs.y * r, (Math.random() - 0.5) * 0.6).multiplyScalar(sc).add(anchor).applyMatrix4(camera.matrixWorld);
+      out[j * 3] = _v.x; out[j * 3 + 1] = _v.y; out[j * 3 + 2] = _v.z;
     }
     return true;
   }

@@ -115,7 +115,7 @@ void main(){
     u += 0.035 * vec3(sin(uSway * ks + ph), 0.5 * sin(uSway * (ks + 1.0) + ph * 2.0), cos(uSway * (ks + 2.0) + ph * 3.0));
     u = fract(u);
     col = mix(vec3(0.7, 1.0, 0.45), uWeatherCol, 0.3);
-    a = pow(0.5 + 0.5 * sin(uSway * (ks + 1.0) * 2.0 + ph * 5.0), 2.0) * 0.75 + 0.05; size = 4.0 + 4.0 * aSeed.w;
+    a = pow(abs(0.5 + 0.5 * sin(uSway * (ks + 1.0) * 2.0 + ph * 5.0)), 2.0) * 0.75 + 0.05; size = 4.0 + 4.0 * aSeed.w;
   } else { // motes
     u.y = fract(position.y + k * uPhMote);
     col = uWeatherCol; a = 0.6; size = 3.0 + 2.0 * aSeed.w;

@@ -6,13 +6,19 @@ const K = `#define GROUND -250.0
 #define ZFAR -2450.0
 `;
 const U = `uniform vec3 uFogA; uniform vec3 uFogB; uniform float uHz; uniform float uBuild; uniform float uSink; uniform float uTravel;
-uniform vec4 uRip; uniform vec3 uRipCol; uniform float uBrake; uniform float uCarPh; uniform float uRainPh; uniform vec2 uPar; uniform float uOct; uniform float uRootX;
+uniform vec4 uRip; uniform vec3 uRipCol; uniform float uBrake; uniform vec2 uWave; uniform float uFlowT; uniform float uSnap; uniform float uOrbT; uniform float uCarPh; uniform float uRainPh; uniform vec2 uPar; uniform float uOct; uniform float uRootX;
 float mh11(float p){ p=fract(p*.1031); p*=p+33.33; p*=p+p; return fract(p); }
 float mh12(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 float mh13(vec3 p3){ p3=fract(p3*.1031); p3+=dot(p3,p3.zyx+31.32); return fract((p3.x+p3.y)*p3.z); }
 `;
+const HERO_V = `uniform vec4 uHero; uniform vec4 uHeroW; uniform vec4 uStory; uniform vec3 uStoryCol; 
+float heroRv(vec2 q){ return length((q - uHero.xy) / max(uHero.zw, vec2(1e-3))); }
+// view-space ray (unit depth) through a bottom-up screen uv, and its world-space direction
+vec3 heroRayV(vec2 uv){ vec2 n = uv * 2. - 1.; return vec3((n.x + projectionMatrix[2][0]) / projectionMatrix[0][0], (n.y + projectionMatrix[2][1]) / projectionMatrix[1][1], -1.); }
+vec3 viewToWorldDir(vec3 v){ return transpose(mat3(viewMatrix)) * v; }
+`;
 export const HEAD_V = K + `uniform float uTime; uniform float uAlert; uniform float uPulse; uniform float uFade; uniform vec3 uAccent; uniform vec3 uAccent2; uniform vec2 uRes;
-` + U;
+` + U + HERO_V;
 export const HEAD_F = K + U + `
 float gmask(){ return clamp((1.0-guard())/max(uGuardAmt,1e-3),0.,1.); }
 float nz(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); vec2 uv=(i.xy+vec2(37.,17.)*i.z+f.xy+.5)/256.; vec2 rg=texture2D(uNoise,uv).yx; return mix(rg.x,rg.y,f.z); }
@@ -35,7 +41,14 @@ void main(){
   float rise = clamp((uBuild * 1.7 - st) / 0.7, 0.0, 1.0); rise = 1.0 - pow(1.0 - rise, 3.0);
   float sink = clamp((uSink * 1.7 - st) / 0.7, 0.0, 1.0);
   float hf = mix(rise * (1.0 - sink * sink), 1.0, ground);
-  float H = aPar.x; float h = H * max(hf, 0.003);
+  float H0 = aPar.x;
+  // clearing: towers whose (full-height) roof projects inside the eye shrink away, those on the eye-wall stay tall and frame it
+  float carve = 0.0;
+  if (ground < 0.5) {
+    vec4 ct = projectionMatrix * viewMatrix * modelMatrix * vec4(aBase.x, GROUND + H0, z, 1.0);
+    if (ct.w > 1.0) carve = 1.0 - smoothstep(0.85, 1.6, heroRv(ct.xy / ct.w * 0.5 + 0.5));
+  }
+  float H = H0 * (1.0 - 0.94 * carve); float h = H * max(hf, 0.003);
   vec3 lp = position;
   vec3 p = vec3(aBase.x + lp.x * aBase.z, GROUND - ground + lp.y * h, z + lp.z * aBase.w);
   vec4 wp = modelMatrix * vec4(p, 1.0);
@@ -55,7 +68,7 @@ void main(){
   float m = gmask();
   // ripple front (world xz)
   float rd = distance(vW.xz, uRip.xy); float front = uRip.z * 380.0;
-  float rip = uRip.w * exp(-uRip.z * 0.55) * (exp(-pow((rd - front) / 42.0, 2.0)) + 0.35 * step(rd, front) * exp(-(front - rd) / 260.0));
+  float rip = uRip.w * exp(-uRip.z * 0.55) * (exp(-pow(abs((rd - front) / 42.0), 2.0)) + 0.35 * step(rd, front) * exp(-(front - rd) / 260.0));
   vec3 col;
   if (seed < -0.5) {
     // ground: sodium streets, light rivers in the canyons, moving traffic dots
@@ -66,10 +79,12 @@ void main(){
     float dots = step(0.82, fract(lz / 11.0 + uTime * 2.2 * sign(fract((lx + 900.0) / 150.0) - 0.5))) * exp(-xs / 2.0);
     col = vec3(1.0, 0.45, 0.12) * (st * 0.18 + dots * 0.7);
     float c1 = abs(lx + 230.0), c2 = abs(lx - 250.0);
-    float dash1 = smoothstep(0.55, 1.0, fract(lz / 16.0 + uTime * 3.0 * sign(lx + 230.0)));
-    float dash2 = smoothstep(0.55, 1.0, fract(lz / 16.0 - uTime * 3.0 * sign(lx - 250.0)));
-    col += mix(vec3(0.2,0.9,1.0), uAccent2, 0.3) * (exp(-c1 / 14.0) * 0.25 + exp(-abs(c1 - 14.0) / 2.5) * dash1 * 1.2);
-    col += mix(vec3(1.0,0.2,0.75), uAccent, 0.3) * (exp(-c2 / 14.0) * 0.25 + exp(-abs(c2 - 14.0) / 2.5) * dash2 * 1.2);
+    // up: both canyons stream toward the horizon (the widget); down: they run back toward the camera; flat: two-way traffic
+    float fa = abs(uStory.x);
+    float dash1 = smoothstep(0.55, 1.0, fract(lz / 16.0 + uFlowT * mix(sign(lx + 230.0), uStory.x, fa)));
+    float dash2 = smoothstep(0.55, 1.0, fract(lz / 16.0 + uFlowT * mix(-sign(lx - 250.0), uStory.x, fa)));
+    col += mix(mix(vec3(0.2,0.9,1.0), uAccent2, 0.3), uStoryCol, 0.45 * fa) * (exp(-c1 / 14.0) * 0.25 + exp(-abs(c1 - 14.0) / 2.5) * dash1 * 1.2);
+    col += mix(mix(vec3(1.0,0.2,0.75), uAccent, 0.3), uStoryCol, 0.45 * fa) * (exp(-c2 / 14.0) * 0.25 + exp(-abs(c2 - 14.0) / 2.5) * dash2 * 1.2);
     col += uRipCol * rip * exp(-abs(rd - front) / 8.0) * 1.5;
     col *= (1.0 - 0.5 * m) * smoothstep(0.0, 0.3, uBuild) * (1.0 - uSink * 0.8);
     col = mix(col + vec3(0.02, 0.005, 0.03), fogCol(fo), fo.x);
@@ -91,13 +106,19 @@ void main(){
   wv *= smoothstep(0.55, 1.0, rise);
   float blow = smoothstep(0.0, 0.12, sink) * (1.0 - smoothstep(0.12, 0.4, sink));
   wv *= (1.0 + 4.0 * blow) * (1.0 - smoothstep(0.25, 0.5, sink));
+  float hrm = rim(); float hwv = heroR(gl_FragCoord.xy / uRes);
   vec3 wc = winCol(mh11(seed * 13.1 + floor(id.y / 7.0) * 0.37) * 0.6 + vP.y * 0.4);
+  wc = mix(wc, uStoryCol * 1.15, hrm * 0.6);
+  // heroPulse: a window-grid wave rolls outward from the plaza (flicker phase offset by distance to the widget)
+  float wave = uWave.y * exp(-pow(abs((hwv - uWave.x * 5.5) / 0.55), 2.0)) * smoothstep(0.7, 1.1, hwv);
   float wr = rip * mix(win, 0.3, aa) * (1.0 - top);
+  wr += wave * mix(win, 0.25, aa) * (1.0 - top) * 1.3;
   col = vec3(0.010, 0.007, 0.022) + uFogA * 0.12 * (vL.y / H) * (1.0 - top);
   col += wc * wv * 0.95 * (1.0 - 0.7 * m) + uRipCol * wr * 2.4 * (1.0 - 0.4 * m);
   // neon roof outline + some corner strips
   float hasNeon = step(0.38, vP.y);
   vec3 nc = mix(mix(vec3(1.0,0.16,0.78), uAccent, 0.45), mix(vec3(0.1,0.9,1.0), uAccent2, 0.45), step(0.69, vP.y));
+  nc = mix(nc, uStoryCol * 1.1, clamp(hrm * 1.1, 0.0, 0.85));
   float fy = fwidth(vL.y) + 0.05;
   float eTop = 1.0 - smoothstep(0.0, 0.45 + fy, H - vL.y);
   float half1 = abs(n.x) > 0.5 ? vS.y * 0.5 : vS.x * 0.5;
@@ -106,7 +127,8 @@ void main(){
   float eRoof = 1.0 - smoothstep(0.0, 0.6 + fwidth(vL.x), min(vS.x * 0.5 - abs(vL.x), vS.y * 0.5 - abs(vL.z)));
   float neon = hasNeon * max(max(eTop * (1.0 - top), eRoof * top), eCorner * 0.6);
   float npulse = 0.75 + 0.25 * sin(uTime * (0.7 + seed * 1.3) + seed * 40.0);
-  col += nc * neon * 1.9 * npulse * (1.0 - 0.55 * m) * smoothstep(0.7, 1.0, rise) * (1.0 - smoothstep(0.0, 0.3, sink)) * (1.0 + rip * 2.0);
+  col += nc * neon * 1.9 * npulse * (1.0 - 0.55 * m) * smoothstep(0.7, 1.0, rise) * (1.0 - smoothstep(0.0, 0.3, sink)) * (1.0 + rip * 2.0 + wave * 1.5 + hrm * 0.6);
+  col += uStoryCol * wave * 0.5 * (1.0 - top);
   // street smog pooling + distance fog
   col = mix(col, uFogB * 1.25, fo.z * 0.55 * (1.0 - fo.x));
   col = mix(col, fogCol(fo), fo.x);
@@ -149,11 +171,14 @@ void main(){
   float bands = step(0.7, fract(y * 60.0 + mh11(id2) * 3.0)) * 0.5 + 0.5;
   col = mix(col, vec3(0.008, 0.004, 0.02) + uFogB * 0.18 * smoothstep(h2, 0.0, y), in2 * 0.95);
   col += ecol * edge * 1.3 * bands * (1.0 - 0.6 * m);
-  float bx = abs(f2 - 0.5) / w2; float beac = exp(-pow((y - h2) * uRes.y / 3.0, 2.0) - bx * bx * 60.0) * step(0.55, fract(uTime * 0.8 + mh11(id2 * 3.3)));
+  float bx = abs(f2 - 0.5) / w2; float beac = exp(-pow(abs((y - h2) * uRes.y / 3.0), 2.0) - bx * bx * 60.0) * step(0.55, fract(uTime * 0.8 + mh11(id2 * 3.3)));
   col += vec3(1.0, 0.1, 0.12) * beac * 1.8 * step(abs(f2 - 0.5), w2);
   // ripple: a travelling ring along the horizon glow
   float rr = abs(abs(uv.x - 0.64) * asp - uRip.z * 0.9) ;
   col += uRipCol * exp(-rr * 30.0) * exp(-abs(y) * 14.0) * uRip.w * exp(-uRip.z * 0.9) * 0.6;
+  // projector-stage glow: a soft halo behind the widget and a bright thin eye-wall ring in the story colour
+  float hr = heroR(uv);
+  col += uStoryCol * (0.05 * exp(-hr * hr * 0.28) + 0.11 * rim() * (0.6 + uStory.y) + 0.35 * uStory.w * rim()) * smoothstep(0.0, 0.5, uBuild);
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
 
@@ -164,28 +189,52 @@ varying vec2 vUv; varying vec3 vC; varying float vA;
 vec3 lane(float li, float x){
   return vec3(x, li * 34.0 + (16.0 + li * 7.0) * sin(x * 0.0021 + li * 2.1), -540.0 - li * 340.0 + (70.0 + li * 40.0) * sin(x * 0.0013 + li * 1.3));
 }
+// lane li bent into a tilted elliptical orbit around the widget, matched to its on-screen ellipse (world space)
+vec3 orbitPt(float li, float th){
+  vec3 C = uHeroW.xyz;
+  vec3 R3 = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+  vec3 U3 = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+  vec3 F3 = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
+  float d = max(1.0, -(viewMatrix * vec4(C, 1.0)).z);
+  float k = 1.5 + 0.3 * li;
+  float A = uHero.z * 2.0 * d / projectionMatrix[0][0] * k;
+  float B = uHero.w * 2.0 * d / projectionMatrix[1][1] * k;
+  float tl = (li - 1.0) * 0.5;
+  return C + R3 * cos(th) * A + U3 * (sin(th) * B + li * 0.0) + F3 * sin(th) * A * tl;
+}
 void main(){
   float li = aCar.y, dir = aCar.z;
+  float orb = step(fract(aCar.x * 13.7), 0.13);
   float s = fract(aCar.x + uCarPh * aCar.w * dir / 3200.0 + dir * uSink * uSink * 0.35);
   float x = mix(-1600.0, 1600.0, s);
   vec3 P = lane(li, x) + vec3(0.0, dir * 2.5, dir * 6.0 + aCar2.w * 10.0);
   vec3 T = normalize(lane(li, x + 3.0) - lane(li, x - 3.0)) * dir;
   vec3 wc = (modelMatrix * vec4(P, 1.0)).xyz;
+  float th = 6.28318 * (aCar.x * 3.0 + uOrbT * (0.05 + 0.012 * li) * dir) + li * 1.7;
+  float fl = uStory.x;
+  vec3 oc = orbitPt(li, th);
+  // up: rings tighten (spiral in), down: they swell outward
+  oc = mix(oc, uHeroW.xyz + (oc - uHeroW.xyz) * (1.0 - 0.12 * fl * sin(th * 2.0 + uOrbT)), abs(fl));
+  vec3 ot = normalize(orbitPt(li, th + 0.03 * dir) - orbitPt(li, th - 0.03 * dir)) ;
+  wc = mix(wc, oc, orb); T = mix(T, ot, orb);
   vec3 V = normalize(cameraPosition - wc);
   vec3 S = normalize(cross(T, V));
   float dist = distance(cameraPosition, wc);
   float w = max(1.1, dist * 0.0019);
-  float len = aCar2.x * (1.0 - 0.45 * uBrake) * (1.0 + uSink * 3.0);
+  float len = aCar2.x * (1.0 - 0.45 * uBrake) * (1.0 + uSink * 3.0) * (1.0 - 0.6 * orb);
+  w *= 1.0 - 0.6 * orb;
   vec3 wp = wc + T * position.x * len + S * position.y * w;
   vUv = position.xy + 0.5;
   vec3 c = dir > 0.0 ? mix(vec3(0.55, 0.95, 1.0), uAccent2, 0.35) : mix(vec3(1.0, 0.18, 0.5), uAccent, 0.35);
-  c = mix(c, vec3(1.0, 0.6, 0.15), step(0.86, aCar2.y));
+  c = mix(c, vec3(1.0, 0.6, 0.15), step(0.86, aCar2.y) * (1.0 - orb));
   float blink = step(0.9, aCar2.z) * step(0.5, fract(uTime * 1.3 + aCar2.z * 7.0));
   c += vec3(1.0, 0.3, 0.9) * blink * 1.5;
+  c = mix(c, uStoryCol * 1.25, orb * 0.7);
   c = mix(c, vec3(1.0, 0.08, 0.06) * 1.6, uBrake);
   vC = c;
   float vis = step(aCar2.y, uBuild * 1.05) * (1.0 - smoothstep(0.4, 1.0, uSink));
   vA = vis * smoothstep(0.0, 0.06, s) * (1.0 - smoothstep(0.94, 1.0, s));
+  vA = mix(vA, vis, orb) * mix(1.0, 0.55 + 0.45 * uStory.y, orb);
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
 }`;
 export const F_CAR = `
@@ -193,39 +242,50 @@ varying vec2 vUv; varying vec3 vC; varying float vA;
 void main(){
   float across = 1.0 - abs(vUv.y - 0.5) * 2.0;
   float a = (pow(vUv.x, 2.5) * 0.8 + smoothstep(0.82, 1.0, vUv.x) * 1.4) * across * across;
-  vec3 col = vC * a * vA * 1.5 * (1.0 - 0.45 * gmask());
+  vec3 col = vC * a * vA * 1.5 * (0.12 + 0.88 * eye());
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
 
 // ---------------- searchlights: instanced open cones ----------------
 export const V_BEAM = `
 attribute vec4 aL; attribute vec4 aL2;
-varying vec3 vW; varying vec3 vN; varying float vY; varying float vK;
+varying vec3 vW; varying vec3 vN; varying float vY; varying float vK; varying float vAim;
 void main(){
   float ang = uTime * 6.2832 / aL2.x * (1.0 + 0.4 * uAlert) + aL2.y;
   float yaw = sin(ang) * 0.85;
   float tilt = aL2.z + 0.16 * sin(ang * 0.71 + 1.3);
   float e = smoothstep(0.0, 1.0, clamp(uBuild * 1.4 - aL.w * 0.4, 0.0, 1.0));
   tilt = mix(1.5, tilt, e) + uSink * uSink * 1.2;
-  vec3 d = normalize(vec3(sin(yaw) * sin(tilt), cos(tilt), -0.4 * sin(tilt)));
+  vec3 dFree = normalize(vec3(sin(yaw) * sin(tilt), cos(tilt), -0.4 * sin(tilt)));
+  // aim: the tip lands on a point orbiting the eye-wall (same view depth as the lamp, so on screen the beam
+  // runs from the skyline to the rim and on past it behind the widget). A hero pulse snaps every lamp onto the widget.
+  vec3 o = (modelMatrix * vec4(aL.xyz, 1.0)).xyz;
+  float a2 = uOrbT * 0.22 * (aL2.x > 9.5 ? -1.0 : 1.0) + aL.w * 6.2832 + aL2.y;
+  float rr = mix(1.4, 0.1, uSnap);
+  vec2 ruv = uHero.xy + vec2(cos(a2), sin(a2)) * uHero.zw * rr;
+  float dz = max(10.0, -(viewMatrix * vec4(o, 1.0)).z);
+  vec3 T = cameraPosition + viewToWorldDir(heroRayV(ruv)) * dz;
+  vec3 dAim = normalize(T - o);
+  float aim = e * (0.9 + 0.1 * uSnap) * (1.0 - clamp(uSink * 1.5, 0.0, 1.0));
+  vec3 d = normalize(mix(dFree, dAim, aim));
   vec3 r = normalize(cross(d, vec3(0.0, 0.0, 1.0))); vec3 f = cross(r, d);
-  float L = aL2.w; float R = L * 0.075;
+  float L = mix(aL2.w, distance(T, o) * 1.28, aim); float R = L * 0.06;
   vec3 lp = position;
-  vec3 p = aL.xyz + d * lp.y * L + (r * lp.x + f * lp.z) * R;
-  vec4 wp = modelMatrix * vec4(p, 1.0);
-  vW = wp.xyz; vN = r * normal.x + d * normal.y + f * normal.z; vY = lp.y;
+  vec3 p = o + d * lp.y * L + (r * lp.x + f * lp.z) * R;
+  vec4 wp = vec4(p, 1.0);
+  vW = wp.xyz; vN = r * normal.x + d * normal.y + f * normal.z; vY = lp.y; vAim = aim;
   vK = e * (1.0 - smoothstep(0.3, 1.0, uSink));
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 export const F_BEAM = `
-varying vec3 vW; varying vec3 vN; varying float vY; varying float vK;
+varying vec3 vW; varying vec3 vN; varying float vY; varying float vK; varying float vAim;
 void main(){
   vec3 V = normalize(cameraPosition - vW);
   float th = pow(abs(dot(normalize(vN), V)), 1.6);
   float a = th * pow(1.0 - vY, 1.7) * smoothstep(0.0, 0.04, vY);
   float smog = 0.45 + 1.1 * nz(vW * 0.007 + vec3(0.0, uTime * 0.06, uTime * 0.03));
-  vec3 bc = mix(vec3(0.7, 0.85, 1.0), uAccent2, 0.35);
-  vec3 col = bc * a * smog * 0.17 * vK * (1.0 - 0.5 * gmask());
+  vec3 bc = mix(mix(vec3(0.7, 0.85, 1.0), uAccent2, 0.35), uStoryCol * 1.2, 0.5 * vAim * (0.5 + 0.5 * rim()));
+  vec3 col = bc * a * smog * (0.17 + 0.1 * uSnap + 0.05 * uStory.y) * vK * (0.1 + 0.9 * eye());
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
 
@@ -250,7 +310,7 @@ void main(){
 export const F_RAIN = `
 varying float vA; varying float vE;
 void main(){
-  vec3 col = mix(vec3(0.55, 0.7, 1.0), uAccent2, 0.25) * vA * (1.0 - vE * 0.8) * (1.0 - 0.7 * gmask());
+  vec3 col = mix(mix(vec3(0.55, 0.7, 1.0), uAccent2, 0.25), uStoryCol, 0.25 * rim()) * vA * (1.0 - vE * 0.8) * eye();
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
 
@@ -263,9 +323,16 @@ void main(){
   float sy = smoothstep(0.0, 0.6, e) * (1.0 - smoothstep(0.0, 0.5, uSink));
   float sx = mix(0.02, 1.0, smoothstep(0.3, 1.0, e)) * (1.0 - smoothstep(0.45, 0.9, uSink));
   sy = max(sy, 0.004 * step(uSink, 0.9) * step(0.01, e));
-  vec3 p = aA.xyz + vec3(position.x * aA2.x * sx, position.y * aA2.y * sy, 0.0);
-  vUv = position.xy + 0.5; vI = vec4(aA.w, aA2.x / aA2.y, aA2.z, e);
-  gl_Position = projectionMatrix * viewMatrix * (modelMatrix * vec4(p, 1.0));
+  // satellite on the eye-wall ellipse (aA.x angle, aA.y ring radius in widget radii, aA.z depth behind the widget)
+  float ang = aA.x + 0.14 * sin(uTime * 0.25 + aA2.z * 9.0) + uStory.x * 0.05 * sin(uTime * 0.6 + aA2.z * 3.0);
+  vec2 uv = uHero.xy + vec2(cos(ang), sin(ang)) * uHero.zw * aA.y;
+  uv = clamp(uv, vec2(0.34, 0.1), vec2(0.93, 0.83));
+  float hd = max(20.0, -(viewMatrix * vec4(uHeroW.xyz, 1.0)).z);
+  float d = hd * aA.z;
+  float hh = aA2.x * 2.0 * d / projectionMatrix[1][1];
+  vec3 pv = heroRayV(uv) * d + vec3(position.x * hh * aA2.y * sx, position.y * hh * sy, 0.0);
+  vUv = position.xy + 0.5; vI = vec4(aA.w, aA2.y, aA2.z, e);
+  gl_Position = projectionMatrix * vec4(pv, 1.0);
 }`;
 export const F_AD = `
 varying vec2 vUv; varying vec4 vI;
@@ -275,11 +342,11 @@ void main(){
   float kk = mod(vI.x + floor(t / 9.0 + seed * 3.0), 3.0);
   float sw = fract(t / 9.0 + seed * 3.0);
   vec2 uv = vUv;
-  float gl = step(0.985, sw) + step(sw, 0.015) + uPulse * 0.6;
+  float gl = step(0.985, sw) + step(sw, 0.015) + uPulse * 0.6 + uStory.w * 0.8;
   uv.x += (mh12(vec2(floor(uv.y * 40.0), floor(t * 20.0))) - 0.5) * 0.12 * min(gl, 1.0);
   vec2 p = (uv - 0.5) * vec2(vI.y, 1.0);
   float r = length(p); float an = atan(p.y, p.x);
-  vec3 cA = mix(vec3(1.0, 0.2, 0.78), uAccent, 0.4), cB = mix(vec3(0.15, 0.9, 1.0), uAccent2, 0.4), cC = vec3(1.0, 0.6, 0.2);
+  vec3 cA = mix(mix(vec3(1.0, 0.2, 0.78), uAccent, 0.4), uStoryCol, 0.45), cB = mix(vec3(0.15, 0.9, 1.0), uAccent2, 0.4), cC = mix(vec3(1.0, 0.6, 0.2), uStoryCol, 0.3);
   // A: iris rings
   float rings = exp(-abs(fract(r * 6.0 - t * 0.25) - 0.5) * 22.0) * step(r, 0.46);
   float ticks = step(0.6, fract(an * 3.8197 + t * 0.15)) * step(0.36, r) * step(r, 0.44);
@@ -303,6 +370,6 @@ void main(){
   col *= 0.72 + 0.28 * step(0.5, fract(gl_FragCoord.y * 0.33));
   col *= 0.88 + 0.12 * step(0.08, mh11(floor(t * 11.0) + seed * 50.0));
   col += uRipCol * uRip.w * exp(-uRip.z * 1.3) * exp(-abs(vUv.y - fract(uRip.z * 0.8)) * 25.0) * 0.8;
-  col *= smoothstep(0.4, 1.0, vI.w) * (1.0 - 0.6 * gmask());
+  col *= smoothstep(0.4, 1.0, vI.w) * (0.35 + 0.65 * eye()) * (1.0 + 0.5 * uStory.w);
   gl_FragColor = vec4(finish(col), 1.0);
 }`;

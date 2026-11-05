@@ -1,4 +1,5 @@
-// Midnight Aurora shaders. Everything is screen-space (uv, bottom-up); the scene is camera independent.
+import { HERO_UNI, HERO_FN } from './heroShimCCA.js';
+// Midnight Aurora shaders: a sky cathedral over the widget (uHero): curtains arch over it, the moon is its halo disc, shells burst at the eye-wall. Everything is screen-space (uv, bottom-up); the scene is camera independent.
 // H = water line (uv y), K = vertical compression of reflections, shared by the backdrop and the mirrored fireworks.
 export const HK = 'const float H=0.27; const float K=0.4;';
 
@@ -7,13 +8,18 @@ float ax_sq(float x){ return x*x; }
 float ax_h(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
 vec2 ax_h2(vec2 p){ vec3 p3=fract(vec3(p.xyx)*vec3(.1031,.1030,.0973)); p3+=dot(p3,p3.yzx+33.33); return fract((p3.xx+p3.yz)*p3.zy); }`;
 
+// vertex-stage helpers: hero uniforms + calm-eye attenuation (replaces the rectangular guard box)
 const ZONE = /* glsl */`
-float zoneAtt(vec2 q){ vec2 m=smoothstep(uGuardRect.xy-.04,uGuardRect.xy+.02,q)*(1.-smoothstep(uGuardRect.zw-.02,uGuardRect.zw+.04,q)); return 1.-.75*m.x*m.y; }`;
+${HERO_UNI}${HERO_FN}
+float zoneAtt(vec2 q){ return 1.-.8*(1.-hEye(q)); }`;
+// the curtain centreline sags away from the widget on both sides: a canopy / arch with its crown over the widget
+const ARCH = /* glsl */`
+float aurArch(float x, float a){ float dx=abs(x-uHero.x)*a/max(uHero.z*a*1.4,.05); return -.24*smoothstep(.3,1.7,dx); }`;
 
 // ---------- backdrop: sky, stars, moon, aurora wash, skyline, water (sky(mirrored)) ----------
 export const BACK_VS = 'void main(){ gl_Position = vec4(position.xy, 1.0, 1.0); }';
 export const BACK_FS = (G) => `${G}
-${HK}${HASH}
+${HK}${HASH}${ARCH}
 uniform float uT, uEnter, uExit, uStars, uAur; uniform vec4 uRip; uniform vec2 uPar;
 vec3 ax_stars(vec2 q, float a){
   vec2 g=vec2(q.x*a,q.y)*190.; vec2 id=floor(g), f=fract(g)-.5;
@@ -33,14 +39,15 @@ vec3 ax_wash(vec2 p, float a){
   float nz=vnoise(vec3(p.x*a*4.,uT*.06,1.7));
   for(int k=0;k<3;k++){
     float i=float(k);
-    float yc=.76+.055*i+.03*sin(p.x*4.5+uT*.25+i*2.1)+.014*sin(p.x*12.-uT*.4+i);
+    float yc=.76+.055*i+aurArch(p.x,a)+.03*sin(p.x*4.5+uT*.25+i*2.1)+.014*sin(p.x*12.-uT*.4+i);
     float n=.5+.5*sin(p.x*a*9.+i*7.3+uT*.3+nz*3.);
     float g=exp(-ax_sq((p.y-yc)/(.075+.02*i)))*(.45+1.1*n);
     vec3 c=i<.5?vec3(.1,.85,.95):(i<1.5?vec3(.45,.25,1.):vec3(1.,.3,.75));
     c=mix(c,i<1.5?uAccent2:uAccent,.3);
+    c=mix(c,uStoryCol,.18+.25*exp(-ax_sq((hR(p)-1.35)*1.6)));
     acc+=c*g;
   }
-  return acc*.1*uAur;
+  return acc*.1*uAur*(.8+.3*uStory.y)*mix(.4,1.,smoothstep(.8,1.2,hR(p)));
 }
 vec3 ax_sky(vec2 p, float a){
   float y=p.y;
@@ -48,13 +55,13 @@ vec3 ax_sky(vec2 p, float a){
   float hg=exp(-(y-H)*13.);
   c+=vec3(.30,.05,.24)*.42*hg*(.65+.35*cos((p.x-.15)*5.));
   c+=ax_stars(p,a)*smoothstep(H+.01,H+.14,y)*uStars;
-  // moon (dim, haloed)
-  vec2 md=(p-vec2(.15,.43))*vec2(a,1.); float mr=length(md);
-  if(mr<.4){
-  float disc=(1.-smoothstep(.03,.052,mr));
-  float cr=.5+.5*sin(md.x*90.)*sin(md.y*70.+1.);
-  c+=vec3(.55,.5,.85)*disc*(.2+.14*cr)*uStars;
-  c+=vec3(.35,.2,.7)*exp(-mr*mr*260.)*.08*uStars+vec3(.25,.15,.5)*exp(-mr*9.)*.05*uStars;
+  // moon = the widget's halo disc: faint disc behind it, a thin limb at the eye-wall, soft halo outside
+  float mh=hR(p);
+  if(mh<2.4){
+  float cr=.5+.5*sin(p.x*a*90.)*sin(p.y*70.+1.);
+  c+=vec3(.55,.5,.85)*(1.-smoothstep(.96,1.08,mh))*(.05+.05*cr)*uStars;
+  c+=uStoryCol*exp(-ax_sq((mh-1.12)*16.))*(.2+.2*uStory.y+.35*uStory.w)*uStars;
+  c+=mix(vec3(.35,.2,.7),uStoryColA,.4)*exp(-max(mh-1.,0.)*2.6)*.07*uStars;
   }
   c+=ax_wash(p,a);
   // distant skyline
@@ -95,6 +102,9 @@ void main(){
   vec3 wcol=col*fres*(1.+2.2*pow(max(sh+.5,0.),5.)*smoothstep(.0,.1,col.b+col.r));
   wcol+=vec3(.004,.006,.02)+vec3(.35,.08,.4)*exp(-dep*60.)*.1;
   wcol+=mix(uAccent2,uAccent,.5)*rr*.7;
+  // the plinth's glow pools in the water under the widget (the post reflection mirrors the widget itself)
+  float pool=exp(-ax_sq((q.x-uHero.x)/(uHero.z*1.15)))*exp(-dep*16.)*(.7+.3*sin(q.y*180.+uT*1.6+sh*8.));
+  wcol+=uStoryCol*pool*(.14+.12*uStory.y+.2*uStory.w);
   col=mix(col,wcol,w);
   // horizon sheen + mist
   col+=vec3(.5,.15,.55)*exp(-abs(q.y-H)*520.)*.22;
@@ -106,7 +116,8 @@ void main(){
 // ---------- aurora curtains: 128x16 strip, instanced x7 ----------
 export const AUR_VS = /* glsl */`
 attribute vec4 aC;                      // index, base y, height, seed
-uniform float uT, uEnter, uExit; uniform vec2 uPar;
+uniform float uT, uEnter, uExit; uniform vec2 uPar, uRes;
+${HERO_UNI}${HERO_FN}${ARCH}
 varying vec4 vA; varying vec3 vB;
 void main(){
   float u=position.x+.5, v=position.y+.5;
@@ -116,12 +127,12 @@ void main(){
   float wy=.03*sin(u*4.2+t*.5+ph)+.018*sin(u*9.1-t*.8+ph*1.7)+.008*sin(u*21.-t*1.3+ph);
   float sl=.03*4.2*cos(u*4.2+t*.5+ph)+.018*9.1*cos(u*9.1-t*.8+ph*1.7)+.008*21.*cos(u*21.-t*1.3+ph);
   float hh=hg*(.75+.25*sin(u*3.+t*.35+ph*2.))*grow;
-  float y=base+wy+v*hh+uExit*uExit*.14*v;
   float x=-.25+u*1.5+.04*sin(u*6.+t*.4+ph)+v*.05*sin(u*2.+ph)+uPar.x*(.25+.05*i);
+  float y=base+wy+aurArch(x,uRes.x/uRes.y)+v*hh+uExit*uExit*.14*v;
   gl_Position=vec4(vec2(x,y)*2.-1.,0.,1.);
   vA=vec4(u,v,grow,i); vB=vec3(sd,abs(sl),hh);
 }`;
-export const AUR_FS = (G) => `${G}${HASH}
+export const AUR_FS = (G) => `${G}${HASH}${ARCH}
 uniform float uT, uExit; uniform vec4 uRip;
 varying vec4 vA; varying vec3 vB;
 void main(){
@@ -145,8 +156,12 @@ void main(){
   float sx=gl_FragCoord.x/uRes.x;
   float front=exp(-ax_sq((abs(sx-uRip.x)-uRip.z*.9)/.1))*uRip.w*exp(-uRip.z*1.2);
   br*=1.+2.5*front;
+  br*=1.+.45*uStory.w;
+  br*=mix(1.,.72+.28*sin(v*14.-uT*(1.2+2.*uStory.y)*uStory.x*2.+sd*20.),abs(uStory.x));   // bands climb on up, fall on down
   float dim=mix(1.,.55,i/6.);
-  vec3 col=c*br*.42*dim*grow*sweep*dis;
+  vec2 suv=gl_FragCoord.xy/uRes; float hrr=hR(suv); float rimB=exp(-ax_sq((hrr-1.35)*2.));
+  c=mix(c,uStoryCol*.9,clamp(.1+.3*rimB+.1*uStory.y,0.,.5));   // the story colour owns the rim zone
+  vec3 col=c*br*.36*dim*grow*sweep*dis*(1.+.25*rimB*(.5+uStory.y))*mix(.35,1.,smoothstep(.8,1.2,hrr));
   gl_FragColor=vec4(finish(col),1.);
 }`;
 
@@ -154,7 +169,7 @@ void main(){
 export const FW_VS = /* glsl */`
 attribute vec4 aD; attribute vec3 aI;   // dir.xyz + rnd ; burst, rocket rank (-1 = spark), spare
 uniform vec4 uB0[12]; uniform vec4 uB1[12]; uniform vec4 uB2[12];
-uniform float uT, uMirror; uniform vec2 uRes, uPar; uniform vec4 uGuardRect;
+uniform float uT, uMirror; uniform vec2 uRes, uPar;
 varying vec4 vC;
 ${HK}${ZONE}
 const float L=.85;
@@ -214,7 +229,7 @@ void main(){
 // ---------- meteors: 64 instanced streak quads ----------
 export const MET_VS = /* glsl */`
 attribute vec4 aM;                      // seed, phase offset, r2, r3
-uniform float uT; uniform vec4 uSh; uniform vec2 uRes, uPar; uniform vec4 uGuardRect; uniform vec3 uAccent2;
+uniform float uT; uniform vec4 uSh; uniform vec2 uRes, uPar; uniform vec3 uAccent2;
 varying vec4 vC; varying vec2 vUv;
 ${ZONE}
 void main(){
@@ -235,6 +250,7 @@ void main(){
   float y0=.74+r2*.3;
   float ang=.35+r3*.35; float sg=mix(-1.,1.,left);
   vec2 dir=vec2(sg*cos(ang)/a,-sin(ang));
+  if(shw>.5){ vec2 d=(uHero.xy-vec2(x0,y0))*vec2(a,1.); d=d/max(length(d),1e-3); dir=vec2(d.x/a,d.y); }   // shower: streaks aim at the widget
   float e=1.-pow(max(1.-pr,0.),1.6);
   vec2 head=vec2(x0+uPar.x*.15,y0)+dir*.45*e;
   float len=.17*smoothstep(0.,.2,pr);

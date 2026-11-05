@@ -1,12 +1,13 @@
 export const SIM_N = 384;
 // curlSwarm shaders: GPGPU sim (velocity + position), point draw, nebula layer, backdrop composite.
-// Sim space: 1 unit = 0.15 screen height, origin = attractor centre (screen 0.77, 0.72, upper right, clear of the left card and framing the hologram). uEdge = (xL, xR, yBot, yTop).
+// Sim space: 1 unit = 0.15 screen height, origin = the widget centre (uHero). uEdge = (xL, xR, yBot, yTop).
 
 export const SIM_COMMON = /* glsl */`
 uniform sampler2D tPos, tVel;
 uniform float uDt, uSpd, uMorph, uTA, uTB, uAsm, uScat, uInit, uLT, uKick;
 uniform mat3 uRot;
 uniform vec4 uImp, uEdge;
+uniform vec2 uHS;   // widget ellipse half extents in sim units (1.0 = widget edge)
 const float SIMN = ${SIM_N}.0;
 float csH(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 `;
@@ -60,51 +61,56 @@ void main(){
   vec3 p = P.xyz;
   float t = uLT * uSpd;
   vec3 cn = curlFlow(p * 0.9, t);
-  vec3 fa = attr(uTA, p);
-  if (uMorph > 0.001) fa = mix(fa, attr(uTB, p), uMorph);
-  float r = length(p);
-  vec3 tether = -p * max(r - 1.7, 0.0) * 1.5;
+  float dr = uStory.x, en = uStory.y, upk = clamp(dr * 0.5 + 0.5, 0.0, 1.0);
+  // elliptical hero coordinates: hr = 1 at the widget edge; hdir/tang are unit-ish vectors in sim units
+  vec2 hd = p.xy / uHS;
+  float hr = length(hd);
+  vec2 hdir = hd / max(hr, 1e-3);
+  vec2 hpx = normalize(hdir * uHS);                       // outward, in isotropic sim units
+  vec2 tang = vec2(-hpx.y, hpx.x);
+  // soft radial wall: nothing crosses into the calm core
+  vec3 wall = vec3(hdir * uHS * max(1.12 - hr, 0.0) * 5.0, 0.0);
+  vec2 drift = vec2(0.0, 0.55 * dr * (0.3 + en));        // up rises, down sinks
+  float vt = (0.7 + 1.5 * en) * (0.8 + 0.4 * sd.w);       // orbit speed grows with energy
   float aw = smoothstep(0.0, 1.0, uAsm);
-  float halo = sd.z < 0.45 ? 0.75 + sd.w * 0.9 : 0.12;   // part of the core is a loose turbulent halo
-  vec3 core = mix(cn * 0.6 - p * 0.35, fa + tether + cn * halo, aw);
+  // (a) accretion ring: orbit + spring to a band around the eye-wall; up spirals in, down spreads out
+  float rt = 1.38 + (sd.w - 0.5) * (0.22 + 0.5 * en) - 0.1 * dr - 0.06 * en;
+  vec3 disk = vec3(tang * vt + hdir * uHS * (rt - hr) * 2.2 + drift, -p.z * 0.8) + cn * (0.2 + 0.35 * en) * vec3(1.0, 1.0, 0.4);
+  disk.xy += hdir * uHS * (-0.16 * max(dr, 0.0) + 0.14 * max(-dr, 0.0)) * (0.5 + en);
+  // (b) the strange attractor, stretched to span the ring (fa is evaluated in its native space)
+  vec3 S = vec3(uHS, 0.5 * (uHS.x + uHS.y)) * (1.35 / 1.7);
+  vec3 fa = attr(uTA, p / S);
+  if (uMorph > 0.001) fa = mix(fa, attr(uTB, p / S), uMorph);
+  vec3 tether = -p * max(length(p / S) - 1.7, 0.0) * 1.2;
+  vec3 att = fa * S * 0.7 + tether + cn * 0.14 + vec3(tang * vt * 0.35, 0.0) + wall;
+  float halo = sd.z < 0.45 ? 1.0 : 0.0;
+  vec3 core = mix(cn * 0.6 - p * 0.35 + wall, mix(att, disk + wall, halo), aw);
   vec3 tgt = core;
-  float resp = sd.z < 0.45 ? 8.0 : 28.0;
+  float resp = halo > 0.5 ? 6.0 : 24.0;
   if (sd.x >= 0.66) {
-    float life = lifeOf(sd), age = P.w;
-    // vortices peel off along the top band and travel right
-    vec3 sw = vec3(0.0);
-    for (int i = 0; i < 3; i++) {
-      float fi = float(i);
-      float ph = fract(uLT * 0.04 * uSpd + fi / 3.0);
-      vec2 c = vec2(mix(0.4, -4.0, ph), mix(uEdge.w - 0.62, uEdge.w - 0.3, fract(fi * 0.618)) + 0.1 * sin(uLT * 0.5 + fi * 2.0));
-      vec2 d = p.xy - c;
-      float w = sin(ph * 3.14159) * (mod(fi, 2.0) < 0.5 ? 4.0 : -4.0);
-      sw.xy += vec2(-d.y, d.x) * w * exp(-dot(d, d) / 0.09);
-    }
+    float life = lifeOf(sd), age = P.w, f = clamp(age / life, 0.0, 1.0);
     if (sd.x < 0.985) {
-      float lane = step(0.5, sd.z);   // lane 0: ribbon along the top flowing left; lane 1: ribbon down the right edge
-      float wob = sin(p.x * 1.6 + p.y * 1.2 + uLT * 0.6 + lane * 2.4), jit = (fract(sd.z * 7.0) - 0.5) * 0.34;
-      vec3 wind;
-      if (lane < 0.5) wind = vec3(-(1.1 + 1.2 * sd.w), (uEdge.w - 0.8 - 0.22 * wob + jit - p.y) * 1.8, -p.z * 0.5);
-      else wind = vec3((uEdge.y - 0.55 - 0.2 * wob + jit - p.x) * 1.8, -(0.9 + 1.0 * sd.w), -p.z * 0.5);
-      wind += cn * 0.55 + sw;
-      tgt = mix(core, wind, smoothstep(0.12, 0.4, age / life) * aw);
+      // ribbons peel off the ring: up arcs out then spirals back in, down keeps spreading out
+      float rtr = mix(1.45 + 1.7 * f, 1.45 + 1.1 * sin(3.14159 * f), upk);
+      vec3 str = vec3(tang * (1.1 + 1.4 * en + 0.6 * sd.w) * (0.9 + 0.3 * f) + hdir * uHS * (rtr - hr) * 1.6 + drift * 0.5, -p.z * 0.5) + cn * 0.5 + wall;
+      tgt = mix(core, str, smoothstep(0.12, 0.4, f) * aw);
       resp = 3.2;
     } else {
-      float band = mix(uEdge.w - 1.0, uEdge.w - 0.3, sd.z);
-      vec3 jet = vec3(-(3.0 + 2.6 * sd.w), (band - p.y) * 2.0, -p.z * 0.3) + cn * 0.4 + sw * 0.3;
+      // comets: dive toward the widget (up), erupt away from it (down), with a little swirl
+      float io = mix(1.0, -1.0, upk);
+      vec3 jet = vec3(hpx * io * (3.0 + 2.6 * sd.w) + tang * 1.0 * (0.4 + en), -p.z * 0.3) + cn * 0.4;
       tgt = mix(cn * 0.4, jet, aw);
       resp = 3.4;
     }
   }
   // exit: release toward a radial scatter with turbulence
-  vec3 outward = (p / max(r, 0.05)) * (1.0 + 2.2 * sd.w) + cn * 1.6 + vec3(0.6, 0.0, 0.0);
+  vec3 outward = (p / max(length(p), 0.05)) * (1.0 + 2.2 * sd.w) + cn * 1.6 + vec3(0.6, 0.0, 0.0);
   tgt = mix(tgt, outward, uScat);
   vec3 v = (P.w < uDt * 1.5) ? tgt : mix(V.xyz, tgt, 1.0 - exp(-uDt * uSpd * mix(2.2, resp, uKick)));
-  // ripple: a one-step radial kick -> hollow shell that relaxes back into the curl flow
+  // pulse: a one-step radial kick from the widget -> the ring is thrown out and relaxes back (the spring + wall return it)
   if (uImp.w > 0.0) {
     vec3 d = p - uImp.xyz; float L = length(d);
-    v += (d / max(L, 0.05)) * uImp.w * (2.2 + 1.0 * sd.z) * smoothstep(5.0, 0.0, L);
+    v += (d / max(L, 0.05)) * uImp.w * (2.2 + 1.0 * sd.z) * smoothstep(9.0, 0.0, L);
   }
   gl_FragColor = vec4(v, sd.x);
 }`;
@@ -116,21 +122,30 @@ void main(){
   vec4 sd = seeds(id);
   float h1 = csH(id + uLT), h2 = csH(id * 1.31 + uLT * 1.7), h3 = csH(id * 0.73 - uLT * 2.3);
   if (uInit > 0.5) {   // fine dust over the whole frame
-    gl_FragColor = vec4(mix(uEdge.x, uEdge.y, sd.y), mix(uEdge.z, uEdge.w, sd.z), (sd.w - 0.5) * 4.0, sd.z * lifeOf(sd) * 0.9);
+    vec3 q0 = vec3(mix(uEdge.x, uEdge.y, sd.y), mix(uEdge.z, uEdge.w, sd.z), (sd.w - 0.5) * 4.0);
+    if (sd.x < 0.66 && sd.z < 0.45 && sd.y < 0.5) {   // half the ring is born in place so the eye-wall is lit from the first frame
+      float a0 = sd.w * 6.28318 * 7.0;
+      q0 = vec3(vec2(cos(a0), sin(a0)) * uHS * (1.38 + (sd.y - 0.25) * 0.5), 0.0);
+    }
+    gl_FragColor = vec4(q0, sd.z * lifeOf(sd) * 0.9);
     return;
   }
   vec3 p = P.xyz + V.xyz * uDt * uSpd;
   float age = P.w + uDt * uSpd;
   if (uScat < 0.001) {
-    bool gone = sd.x >= 0.66 && (age > lifeOf(sd) || p.x > uEdge.y + 2.0 || p.x < uEdge.x - 0.4 || p.y < uEdge.z - 0.4);
-    gone = gone || length(p) > 12.0;
+    vec2 hd = p.xy / uHS; float hr = length(hd);
+    bool comet = sd.x >= 0.985;
+    float io = uStory.x < -0.3 ? -1.0 : 1.0;   // comets dive in unless the story is falling
+    bool gone = sd.x >= 0.66 && (age > lifeOf(sd) || (comet && (io > 0.0 ? hr < 1.22 : hr > 4.2)));
+    gone = gone || length(p) > 14.0;
     if (gone) {
-      if (sd.x < 0.985) {   // reborn on the attractor by stealing a random particle's position
-        vec2 o = floor(vec2(h1, h2) * SIMN) + 0.5;
-        p = texture2D(tPos, o / SIMN).xyz + (vec3(h1, h2, h3) - 0.5) * 0.06;
-        if (length(p) > 2.0) p = (vec3(h1, h2, h3) - 0.5) * 1.2;
-      } else {             // comets enter from the right edge in the top band and streak left
-        p = vec3(uEdge.y + 0.3 + h1 * 1.5, mix(uEdge.w - 1.0, uEdge.w - 0.25, h2), (h3 - 0.5) * 1.5);
+      float a = h1 * 6.28318;
+      if (sd.x < 0.985) {   // ribbons are reborn on the ring
+        p = vec3(vec2(cos(a), sin(a)) * uHS * (1.36 + (h2 - 0.5) * 0.18), (h3 - 0.5) * 0.5);
+      } else if (io > 0.0) { // comets enter from outside and streak toward the widget
+        p = vec3(vec2(cos(a), sin(a)) * uHS * (3.0 + h2 * 1.3), (h3 - 0.5) * 1.5);
+      } else {               // ...or erupt from the eye-wall
+        p = vec3(vec2(cos(a), sin(a)) * uHS * (1.3 + h2 * 0.2), (h3 - 0.5) * 1.0);
       }
       age = 0.0;
     }
@@ -140,7 +155,7 @@ void main(){
 
 export const PTS_VERT = /* glsl */`
 uniform sampler2D tPos, tVel;
-uniform vec3 uAnchor; uniform float uScale, uSize, uAsm, uScat; uniform vec4 uEdge; uniform vec2 uHolo, uVis;
+uniform vec3 uAnchor; uniform float uScale, uSize, uAsm, uScat; uniform vec4 uEdge; uniform vec2 uVis;
 varying vec3 vCol; varying float vA; varying vec2 vDir; varying float vStr;
 void main(){
   vec4 P = texture2D(tPos, position.xy), V = texture2D(tVel, position.xy);
@@ -161,7 +176,7 @@ void main(){
   vec3 amb = vec3(1.0, 0.62, 0.18);
   vec3 col = mix(mag, cya, smoothstep(0.08, 0.45, spn));
   col = mix(col, amb, smoothstep(0.55, 1.0, spn));
-  float a = (0.26 + 0.4 * spn) * (sd.z < 0.45 ? 1.0 : 0.7);
+  float a = (0.2 + 0.36 * spn) * (sd.z < 0.45 ? 0.85 : 0.7);
   bool comet = sd.x >= 0.985, streamer = sd.x >= 0.66 && !comet;
   float core = 0.0;   // white-hot ribbon core
   if (sd.x >= 0.66) {
@@ -170,16 +185,20 @@ void main(){
     // ribbons leave the visible right half: lane 0 fades past the left bound, lane 1 below the bottom bound
     a *= sd.z < 0.5 || comet ? smoothstep(uVis.x - 1.8, uVis.x, P.x) : smoothstep(uVis.y - 1.4, uVis.y, P.y);
   }
-  if (comet) { col = mix(cya, vec3(0.8, 0.95, 1.0), 0.5); a = 0.9 * a + 0.4; core = 0.6; }
-  if (streamer) { a *= 1.15; col = mix(sd.z < 0.5 ? cya : mag, amb, 0.25 * spn); core = 0.1 + 0.2 * sd.y; }
-  // thin the flow over the hologram
+  if (comet) { col = mix(cya, vec3(0.8, 0.95, 1.0), 0.5); a = 0.6 * a + 0.25; core = 0.35; }
+  if (streamer) { a *= 0.8; col = mix(sd.z < 0.5 ? cya : mag, amb, 0.25 * spn); core = 0.05 + 0.12 * sd.y; }
+  // calm eye over the widget, luminous band at the eye-wall in the story colour
   vec2 sc = s0 * 0.5 + 0.5;
-  vec2 hd = (sc - uHolo) / vec2(0.34, 0.31);
-  float hf = 1.0 - 0.72 * smoothstep(1.05, 0.35, length(hd));
+  float hrr = hR(sc);
+  float hf = mix(0.1, 1.0, smoothstep(0.8, 1.2, hrr));
+  float rimB = exp(-pow(abs((hrr - 1.35) * 3.0), 2.0));
+  hf *= 1.0 + 0.3 * rimB * (0.5 + uStory.y);
+  col = mix(col, uStoryCol * (0.9 + 0.9 * spn) + 0.15, (0.22 + 0.3 * rimB) * (0.6 + 0.4 * uStory.y));
+  col = mix(col, mix(col, uStoryColA * 1.4, 0.5), step(0.5, sd.y) * 0.25);
   float dust = mix(0.45, 1.0, uAsm);
   float sz = mix(1.4, 2.6, sd.y * sd.y) * (comet ? 3.4 : streamer ? 1.35 : 1.45) * dust * hf * (1.0 - 0.4 * uScat);
   gl_PointSize = clamp(uSize * sz * uRes.y / 1080.0, 1.0, 48.0);
-  vA = a * hf * dust * (1.0 + 0.5 * uPulse);
+  vA = a * hf * dust * (1.0 + 0.5 * uPulse + 0.6 * uStory.w * rimB);
   vCol = mix(col, vec3(1.0, 0.97, 1.0), core * smoothstep(0.1, 0.6, spn + 0.25)) * (0.85 + 0.7 * spn);
 }`;
 
@@ -208,10 +227,14 @@ vec3 nebula(vec2 uv){
   vec3 col = 0.5 + 0.5 * cos(6.28318 * (vec3(0.0, 0.33, 0.67) * 0.6 + n * 0.9 + q.x * 0.5 + vec3(0.62, 0.78, 0.92)));
   col = mix(col, uAccent, 0.18) * vec3(0.9, 0.55, 1.0);
   float dens = smoothstep(0.32, 0.85, n) * (0.5 + q.y);
-  // lives around the attractor and along the top band; the hologram area stays near black
-  vec2 d = (uv - vec2(0.77, 0.72)) * vec2(uAsp.x, 1.0);
-  float mask = 0.2 + 1.3 * exp(-dot(d, d) * 3.4) + 0.5 * smoothstep(0.62, 1.0, uv.y) + 0.4 * smoothstep(0.7, 1.0, uv.x) * smoothstep(0.3, 0.7, uv.y);
-  return col * dens * mask * 0.1;
+  // lives around the widget's eye-wall; the core stays near black
+  vec2 d = (uv - uHero.xy) * vec2(uAsp.x, 1.0);
+  float hrr = hR(uv);
+  float band = exp(-pow(abs((hrr - 1.4) * 2.0), 2.0));
+  float mask = 0.2 + 1.3 * exp(-dot(d, d) * 3.4) + 0.9 * band;
+  mask *= 0.12 + 0.88 * smoothstep(0.75, 1.25, hrr);          // dark at the core
+  col = mix(col, uStoryCol * 1.3, 0.4 * band);
+  return col * dens * mask * 0.1 + uStoryCol * band * (0.02 + 0.03 * uStory.y);
 }`;
 
 export const NEB_FRAG = /* glsl */`varying vec2 vUv; void main(){ gl_FragColor = vec4(nebula(vUv), 1.0); }`;
@@ -227,7 +250,7 @@ void main(){
   float asp = uRes.x / uRes.y;
   float d = length((uv - uRing.xy) * vec2(asp, 1.0));
   float rr = uRing.z * 0.75;
-  float ring = exp(-pow((d - rr) * 110.0, 2.0)) + 0.25 * exp(-pow((d - rr * 0.9) * 40.0, 2.0));
+  float ring = exp(-pow(abs((d - rr) * 110.0), 2.0)) + 0.25 * exp(-pow(abs((d - rr * 0.9) * 40.0), 2.0));
   col += uRingCol * ring * uRing.w * (1.0 - smoothstep(0.3, 1.5, uRing.z)) * 0.9;
   gl_FragColor = vec4(finish(col), 1.0);
 }`;
