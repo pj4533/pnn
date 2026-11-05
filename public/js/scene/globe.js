@@ -222,8 +222,12 @@ export function createGlobe(scene, station) {
     let y = HTOP;
     const regionL = addText(hudG, region.name.toUpperCase(), { fam: 'Orbitron', fu: 1.45, wU: 13, wt: 700 }, HX, 0, 0.8); regionL.l.sprite.position.y = y - regionL.T / 2; y -= regionL.T;
     const subjL = addText(hudG, s1 || ' ', { fu: 1.35, fu2: 1.35, wU: 14, color: pal.hexA, sub: s2 || null, color2: pal.hexA }, HX, 0, 0.95); subjL.l.sprite.position.y = y - subjL.T / 2; y -= subjL.T;
-    const pctL = addText(hudG, pctText(prev), { fam: 'Orbitron', wt: 900, fu: 2.7, fu2: 1.15, wU: 13, sub: ptsText(d).toUpperCase(), color2: dirHex }, HX, 0, 1.9); pctL.l.sprite.position.y = y - pctL.T / 2; y -= pctL.T;
-    ov.hud = { regionL, pctL, leaderY: HTOP - regionL.T / 2 };
+    const pctL = addText(hudG, pctText(prev), { fam: 'Orbitron', wt: 900, fu: 2.7, wU: 13 }, HX, 0, 1.9); pctL.l.sprite.position.y = y - pctL.T / 2;
+    // change chip: its own label so it can step aside when the beacon tip drifts over it (home: under the %, alternate: right of the %)
+    const chipL = addText(hudG, ptsText(d).toUpperCase(), { fu: 1.15, wU: 9, color: dirHex }, HX, 0, 1.9);
+    const chipA = { x: HX, y: y - pctL.T - chipL.T * 0.5 + 0.15 }, chipB = { x: HX + 7.8, y: y - pctL.T / 2 };
+    chipL.l.sprite.position.set(chipA.x, chipA.y, 0); y -= pctL.T + chipL.T;
+    ov.hud = { regionL, pctL, chipL, chipA, chipB, chipAlt: false, leaderY: HTOP - regionL.T / 2 };
     const PY = y - 0.5;   // board top
 
     // C. board: a leaderboard when the story has 2+ outcomes, otherwise one labelled gauge (yesterday -> now) on a 0-100% track
@@ -343,6 +347,13 @@ export function createGlobe(scene, station) {
         const lp = ov.leader.geometry.attributes.position;
         lp.setXYZ(0, _bp.x, _bp.y, _bp.z); lp.setXYZ(1, HX - 0.8, ov.hud.leaderY, 0); lp.setXYZ(2, HX - 0.8, ov.hud.leaderY, 0); lp.needsUpdate = true;
         ov.leader.material.opacity = 0.55 * fade * clamp01((tShow - 1.9) * 2.5);
+        {   // keep the change chip clear of the beacon tip: hop to the right of the % while the tip is near the home spot
+          const h = ov.hud, cp = h.chipL.l.sprite.position;
+          const dA = Math.hypot(_bp.x - (h.chipA.x + 3.8), (_bp.y - h.chipA.y) * 1.6), dB = Math.hypot(_bp.x - (h.chipB.x + 3.8), (_bp.y - h.chipB.y) * 1.6);
+          if (!h.chipAlt && dA < 4.6 && dB > dA) h.chipAlt = true; else if (h.chipAlt && (dA > 6.2 || dB < 3.2)) h.chipAlt = false;
+          const tgt = h.chipAlt ? h.chipB : h.chipA;
+          cp.x = damp(cp.x, tgt.x, 9, dt); cp.y = damp(cp.y, tgt.y, 9, dt);
+        }
         // counters follow the column
         const nowPct = Math.round(pNow * 100);
         if (nowPct !== ov.lastNow) { ov.lastNow = nowPct; ov.hud.pctL.l.set(`${nowPct}%`); }

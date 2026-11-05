@@ -213,7 +213,7 @@ export function createDial(ctx, story, opts = {}) {
   let dLbl = null, dScale = null;
   if (hasDelta && !(sw && swBadge)) {   // swings: the badge carries the +N PTS (two labels inside the arc collided)
     const mid = (prev + value) / 2;
-    dLbl = holo.label(`${up ? '+' : '-'}${nPts} PTS`, { w: 480, h: 190, height: 2.2, font: '900 104px Orbitron', color: '#ffffff', glow: up ? '#3dff8a' : '#ff2e55', sub: isAlert ? `IN ${Math.max(1, minutes)} MIN` : null, subColor: '#ffffff', subFont: '700 62px Rajdhani', mainY: isAlert ? 0.32 : 0.5, subY: 0.8 });
+    dLbl = holo.label(`${up ? '+' : '-'}${nPts} PTS`, { w: 640, h: 190, height: 2.7, crisp: true, plateAlpha: 0.7, font: '900 104px Orbitron', color: '#ffffff', glow: up ? '#3dff8a' : '#ff2e55', sub: isAlert ? `IN ${Math.max(1, minutes)} MIN` : null, subColor: '#ffffff', subFont: '700 62px Rajdhani', mainY: isAlert ? 0.32 : 0.5, subY: 0.8 });
     let [x, y] = at(mid, R - 4.3);
     if (sw && Math.abs(x) < 3.6 && y - CY < 4.5) y = CY + 4.5;   // swings: keep the +N PTS above the badge, under the arc
     dLbl.sprite.position.set(x, y, 0.5); dLbl.yFrac = 0.1; dLbl.bright = 0;
@@ -380,7 +380,7 @@ function createAlertDial(ctx, story, opts) {
   // delta label outside the bracket at the midpoint (own tier, beyond the scale labels)
   const aMid = angOf((prev + value) / 2), dN = Math.round(Math.abs(delta) * 100);
   const [dx, dy] = atRim(aMid, R + 2.9, 1, 1.9, 0.6, 0.1);
-  const dlab = mk(`${delta >= 0 ? '▲' : '▼'} ${dN} PTS`, { w: 512, h: 160, height: 1.7, font: '800 118px Rajdhani', color: '#ffffff', glow: REDTXT, bright: 0.5 }, dx, dy);
+  const dlab = mk(`${delta >= 0 ? '▲' : '▼'} ${dN} PTS`, { w: 512, h: 160, height: 1.7, crisp: true, font: '800 118px Rajdhani', color: '#ffffff', glow: REDTXT, bright: 0.5 }, dx, dy);
   // readout under the hub: FROM  ->  TO, then the time window
   const RY = -4.5;
   const fromL = mk(pct(prev), { w: 512, h: 256, height: 2.3, font: '900 150px Orbitron', color: '#ffc4be', glow: '#000000', bright: 0.46 }, -5.0, RY);

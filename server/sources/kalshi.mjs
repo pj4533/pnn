@@ -82,7 +82,7 @@ export function parseKalshiMarkets(json, seriesByTicker = {}, now = new Date()) 
     const s = seriesInfo(seriesByTicker, seriesTicker);
     seriesOfTicker.set(m.ticker, seriesTicker);
     const tags = new Set();
-    for (const t of [ev?.category, s?.category, ...(s?.tags || [])]) if (t) tags.add(lc(t));
+    for (const t of [ev?.category, s?.category, ...(s?.tags || []), ev?._tag]) if (t) tags.add(lc(t));   // _tag: sportsSeries hint ('video games')
     // Structural tags the filter reads: series recurrence, and cumulative strike ladders ("Above 20",
     // "Above 30", ...) whose outcomes are not mutually exclusive and so can't be read as a race.
     if (s?.frequency) tags.add(`freq:${lc(s.frequency)}`);
@@ -162,7 +162,7 @@ const MKT_KEYS = ['ticker', 'event_ticker', 'series_ticker', 'status', 'title', 
 function slim(e, at) {
   return {
     event_ticker: e.event_ticker, series_ticker: e.series_ticker, title: e.title, sub_title: e.sub_title, category: e.category,
-    mutually_exclusive: e.mutually_exclusive, _fetchedAt: at,
+    mutually_exclusive: e.mutually_exclusive, _fetchedAt: at, ...(e._tag ? { _tag: e._tag } : {}),
     markets: (e.markets || []).map((m) => { const o = {}; for (const k of MKT_KEYS) if (m[k] != null) o[k] = m[k]; return o; }),
   };
 }
@@ -225,11 +225,54 @@ async function refreshHot() {
   if (!ok && cache.hot.length) throw new Error('kalshi: hot refresh failed');
 }
 
+// Sports futures / awards / release dates (config.sources.kalshi.sportsSeries). The generic sweep skips Kalshi's
+// 'Sports' category (4,000 mostly per-game series), so a fixed list of futures series is fetched by series_ticker on its
+// own slow cadence (sportsSec) and merged into every poll. A series that returns nothing (or 429) keeps its last events.
+let sgCache = { at: 0, events: new Map(), per: {}, running: null };
+export const kalshiSportsCache = () => ({ at: sgCache.at, events: sgCache.events.size, per: sgCache.per });
+async function refreshSports() {
+  const K = config.sources?.kalshi || {};
+  const list = (K.sportsSeries || []).map((x) => (Array.isArray(x) ? { ticker: x[0], tag: x[1] } : { ticker: x, tag: null }));
+  if (!list.length) return;
+  const dropRe = config.sportsGaming?.dropTickers;
+  const events = new Map(), per = {};
+  let ok = 0;
+  for (const { ticker, tag } of list) {
+    try {
+      const j = await getJSON(`${BASE}/events?series_ticker=${encodeURIComponent(ticker)}&status=open&with_nested_markets=true&limit=50`, { timeoutMs: 20_000 });
+      const at = new Date().toISOString();
+      let n = 0;
+      for (const e of j?.events || []) {
+        if (!(evVol(e) > 0) || (dropRe && dropRe.test(`KS:${e.event_ticker}`.toUpperCase()))) continue;
+        events.set(e.event_ticker, slim(tag ? { ...e, _tag: tag } : e, at));
+        n++;
+      }
+      per[ticker] = n;
+      ok++;
+    } catch (e) {
+      per[ticker] = `err ${e?.status ?? ''}`.trim();
+      if (e?.status === 429 || e?.status >= 500) break;   // http.mjs backs the host off; finish with what we have
+    }
+    await sleep(K.sportsPaceMs ?? 450);
+  }
+  if (!ok) throw new Error('kalshi: sports series fetch failed');
+  // series the pass did not reach keep their previous events
+  for (const [k, v] of sgCache.events) if (!events.has(k) && typeof per[String(v.series_ticker || k.split('-')[0])] !== 'number') events.set(k, v);
+  sgCache = { ...sgCache, at: Date.now(), events, per };
+}
+
 export async function fetchKalshi() {
   const series = await loadSeries();
   if (!cache.events.size || Date.now() - cache.at > SWEEP_MS) await sweep(series);
   else await refreshHot();
-  return parseKalshiMarkets([...cache.events.values()], series, new Date());
+  const K = config.sources?.kalshi || {};
+  if (K.sportsSeries?.length && Date.now() - sgCache.at > (K.sportsSec ?? 600) * 1000 * 0.85) {
+    if (!sgCache.running) sgCache.running = refreshSports().catch(() => { sgCache.at = Date.now() - ((K.sportsSec ?? 600) * 1000) * 0.5; }).finally(() => { sgCache.running = null; });
+    if (!sgCache.events.size) await sgCache.running;   // first poll waits so sports futures are there from the start
+  }
+  const merged = new Map(cache.events);
+  for (const [k, v] of sgCache.events) merged.set(k, v);
+  return parseKalshiMarkets([...merged.values()], series, new Date());
 }
 
 /** The slimmed raw events held by the sweep (for offline replay/tests). */

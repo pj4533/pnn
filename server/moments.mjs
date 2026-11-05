@@ -159,7 +159,18 @@ export function createMoments(store, config, { sim = false } = {}) {
     lastCountdownAt = nowMs;
     let list = [];
     try {
-      list = buildCountdown(airable, { now: nowMs, storyIdFor, days: C.countdownDays, max: C.countdownMax });
+      // News drives the markets: a countdown entry airs only with its story's news item.
+      list = buildCountdown(airable, { now: nowMs, storyIdFor, days: C.countdownDays, max: C.countdownMax * 4 })
+        .map((c) => {
+          let news = c.news?.length ? c.news : index.stories.get(c.storyId)?.news;
+          if (!news?.length && newsForMarket) {
+            const m = (latestAirable || []).find((x) => x.id === c.marketId);
+            try { news = m ? newsForMarket(m) : null; } catch { news = null; }
+          }
+          return news?.length ? { ...c, news } : null;
+        })
+        .filter(Boolean)
+        .slice(0, C.countdownMax);
     } catch (e) {
       log('warn', 'countdown failed', { error: errMsg(e) });
       return;
@@ -171,7 +182,9 @@ export function createMoments(store, config, { sim = false } = {}) {
     store.setState({ countdown: list });
   }
 
-  function onRebuild({ stories = [], desks = [], closing = [], airable = [], aliases = {} } = {}) {
+  let newsForMarket = null;   // (market) -> News[]: the newsdesk's strict match for a countdown market with no story on air
+  function onRebuild({ stories = [], desks = [], closing = [], airable = [], aliases = {}, newsFor = null } = {}) {
+    if (newsFor) newsForMarket = newsFor;
     const nowMs = Date.now();
     latestAirable = airable;
     reindex({ stories, desks, closing, aliases });

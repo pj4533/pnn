@@ -97,6 +97,7 @@ export function health(store, config) {
     // watchability: corner pops (store counters + detector state), Story of the Day, Next Big Decision
     moments: (() => { try { return { ...(store.momentStats?.() || {}), ...(store.momentsHealth?.() || {}) }; } catch { return null; } })(),
     build: (() => { try { return store.buildHealth?.() || null; } catch { return null; } })(),
+    newsCoverage: (() => { try { return store.newsCoverage?.() || null; } catch { return null; } })(),
     moves: s.moves?.length ?? 0,
     listed: s.listed?.length ?? 0,
     money: s.money?.length ?? 0,

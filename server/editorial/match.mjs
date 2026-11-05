@@ -70,6 +70,10 @@ export const TOPICS = [
   T('leaves-office', /\b(steps? down|stepping down|resign\w*|ousted|ouster|out as|leaves? office|impeach\w*|removed from office|no-confidence|confidence vote)\b/i,
     /\b(out as|out by|resign\w*|leaves? office|step down|removed|impeach\w*|no-confidence|ousted)\b/i, ['out', 'resign', 'resignation', 'step', 'leave', 'office', 'ousted', 'impeach', 'impeachment', 'removed'], null, 4),
   T('ai', /\b(AI|artificial intelligence)\b/, /\b(ai|artificial intelligence)\b/i, ['ai'], null, 3),
+  // Video games (news-gated 'games' category, 2026-11-05).
+  T('gta', /\b(GTA ?(6|VI)|Grand Theft Auto)\b/i, /\b(gta|grand theft auto)\b/i, ['gta', 'grand', 'theft', 'auto', 'vi', '6'], 'gta 6', 7),
+  T('game-awards', /\b(The Game Awards|Game of the Year|GOTY|Golden Joysticks?)\b/i, /\b(game awards|game of the year|golden joystick)\b/i, ['game', 'award', 'goty', 'golden', 'joystick'], 'game of the year', 7),
+  T('ps6', /\b(PS6|PlayStation 6)\b/i, /\b(ps6|playstation 6)\b/i, ['ps6', 'playstation'], 'playstation 6', 7),
   // country -> leader (low weight: a country name alone is never enough)
   T('uk-leader', /\b(UK|U\.K\.|Britain|British|Starmer|Downing Street|Burnham)\b/, /\b(uk|britain|british|starmer|burnham|prime minister of the united kingdom)\b/i, ['uk', 'starmer', 'burnham', 'downingstreet'], null, 3),
   T('france-leader', /\b(France|French|Macron|Élysée|Elysee)\b/, /\b(france|french|macron)\b/i, ['france', 'french', 'macron'], null, 3),
@@ -373,4 +377,212 @@ export async function matchMarkets(cluster, marketIndex = [], opts = {}) {
   return out;
 }
 
-export default { matchMarkets, analyzeCluster, searchQueries, searchPolymarket, searchKalshi, kalshiSearchToV2, TOPICS };
+// ---------- story -> news (the reverse direction) ----------
+// Every story that airs carries a headline (user directive 2026-11-05: "the news feeds drive the market content").
+// buildHeadlineIndex(items) indexes headlines once (cached per array); matchStoryNews(story, hIndex, marketIndex)
+// scores each candidate headline against the story's markets with the SAME scorer as the flash matcher (scoreMarket:
+// >= 2 independent signals, a topic or rare word, IDF over the market index), so relevance stays strict.
+// Sports / games stories may also match by entity: a sports or gaming feed headline that names one of the story's
+// outcomes (team, player, game) or the event's distinctive subject ("GTA", "Ballon d'Or").
+const hIndexCache = new WeakMap();
+const SPORTY = new Set(['sports', 'sport', 'gaming', 'games', 'esports']);
+export function buildHeadlineIndex(items) {
+  if (hIndexCache.has(items)) return hIndexCache.get(items);
+  const list = [];
+  const byTok = new Map();
+  const byTopic = new Map();
+  for (const it of items || []) {
+    if (!it?.title) continue;
+    const news = analyzeCluster({ title: it.title });
+    const i = list.length;
+    list.push({ it, news, lower: ` ${String(it.title).toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ')} ` });
+    for (const t of news.tw.keys()) { let a = byTok.get(t); if (!a) byTok.set(t, (a = [])); a.push(i); }
+    for (const t of news.topics) { let a = byTopic.get(t.key); if (!a) byTopic.set(t.key, (a = [])); a.push(i); }
+  }
+  const h = { list, byTok, byTopic };
+  hIndexCache.set(items, h);
+  return h;
+}
+
+const ENTITY_GENERIC = new Set(['city', 'united', 'real', 'state', 'athletic', 'club', 'team', 'sporting', 'inter', 'saint', 'st',
+  'new', 'los', 'san', 'the', 'other', 'field', 'none', 'yes', 'no', 'draw', 'tie', 'any', 'world', 'game', 'games', 'award', 'awards',
+  'champion', 'winner', 'season', 'league', 'cup', 'open', 'north', 'south', 'east', 'west', 'american', 'national', 'young', 'jr', 'ii', 'iii',
+  'brand', 'day', 'part', 'movie', 'film', 'show', 'album', 'song', 'party', 'democrat', 'republican', 'democratic', 'independent']);
+// Frame words that never make a story match on their own (beyond match.mjs WEAK).
+const STORY_WEAK = new Set(['ai', 'general', 'election', 'elect', 'winner', 'announce', 'release', 'released', 'company', 'largest', 'biggest',
+  'best', 'top', 'highest', 'lowest', 'most', 'place', 'season', 'show', 'week', 'month', 'price', 'prices', 'end', 'rate', 'rates',
+  'congress', 'midterm', 'midterms', 'democratic', 'federal', 'global', 'world', 'chart', 'love', 'margin', 'victory', 'vote', 'percent']);
+// Capitalized but not a subject ("Finals", "Group", "Inc", "Prize"): never a P word.
+const STORY_WEAK_P = new Set(['final', 'finals', 'pro', 'group', 'inc', 'corp', 'prize', 'problem', 'air', 'oil', 'crude', 'margin', 'district',
+  'vote', 'percent', 'turnout', 'victory', 'cost', 'house', 'senate']);
+// Service pieces on sports / gaming feeds never carry a story (fantasy lineups, betting picks, listicles, how-to-watch).
+const SPORTS_FLUFF = /\b(DFS|DraftKings|FanDuel|fantasy|best bets?|prop bets?|picks?|parlay|lineups?|how to (watch|follow|stream)|live stream|every player|ranked|ranking|quiz|deals? of the day|best deals?|on sale|discount|price drop|\d+% off)\b/i;
+const lowerWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ').trim();
+const isTitleCase = (t) => { const w = String(t || '').split(/\s+/).filter((x) => /^[A-Za-z]/.test(x) && x.length > 3); return w.length >= 3 && w.filter((x) => /^[A-Z]/.test(x)).length / w.length >= 0.7; };
+// Proper-noun tokens of a question: capitalized words after the first ("Will Samuel Alito announce..." -> samuel, alito).
+// Questions are sentence case, so this separates the subject from frame words ("largest", "retirement", "place").
+// properRuns(text) -> [Set] one set per run of adjacent capitalized words ("Pete Hegseth" is one run, one subject).
+function properRuns(text) {
+  const runs = [];
+  if (!text || isTitleCase(text)) return runs;
+  const words = String(text).split(/\s+/);
+  let cur = null;
+  const flush = () => { if (cur?.length) { const ts = tokens(cur.join(' ')).filter((t) => !WEAK.has(t) && !CONTEXT.test(t) && !/^\d+$/.test(t)); if (ts.length) runs.push(new Set(ts)); } cur = null; };
+  // the first word is a subject unless it is a question / function word ("Elon Musk meets with Putin..." vs "Will ...")
+  const start = /^(will|who|what|which|how|when|where|is|are|does|do|did|can|could|should|would|has|have|the|a|an|in|on|at|by|for|of|after|before|between|top|best|largest|biggest|highest|lowest|most|next|new|number|#\d+|\d+(st|nd|rd|th)?)$/i.test(words[0] || '') ? 1 : 0;
+  for (let i = start; i < words.length; i++) {
+    const w = words[i];
+    if (!/^[“"'(]?[A-Z0-9]/.test(w) || (i > 0 && /[?.!]$/.test(words[i - 1] || ''))) { flush(); continue; }
+    (cur ||= []).push(w);   // tokenized as one phrase: "South Africa's" -> southafrica, not south + africa
+  }
+  flush();
+  return runs;
+}
+const properTokens = (text) => new Set(properRuns(text).flatMap((r) => [...r]));
+// An outcome is hit when its distinctive last word is in the headline (a surname, a team nickname) and, for long
+// names (a film or album title), most of its distinctive words are.
+function outcomeTerm(outcome, idf) {
+  const toks = tokens(outcome).filter((t) => !ENTITY_GENERIC.has(t) && !WEAK.has(t) && !/^\d+$/.test(t) && !CONTEXT.test(t) && idf(t) >= 1.8);
+  if (!toks.length) return null;
+  const raw = lowerWords(outcome).split(' ').filter((w) => w.length >= 3).pop() || null;
+  return { last: toks[toks.length - 1], toks, need: toks.length >= 3 ? Math.ceil(toks.length * 0.6) : 1, raw };
+}
+// `lower` (the headline's raw lowercase words) guards the stemmer: "Caleb Williams" must not hit "William Contreras"
+const outcomeHit = (o, H, lower = null) => !!o && H.has(o.last) && o.toks.filter((t) => H.has(t)).length >= o.need && (!lower || !o.raw || lower.includes(` ${o.raw}`));
+
+/** Entity terms of a story (cached on the story object): see matchStoryNews. */
+function storyTerms(story, idx) {
+  const ms = [];
+  const seenM = new Set();
+  for (const m of [story.lead, ...(story.markets || [])]) if (m?.id && !seenM.has(m.id)) { seenM.add(m.id); ms.push(m); }
+  const numeric = (o) => /^[\s$<>≥≤~+–-]*\d|^(above|below|over|under|at least|more than|less than|between)\b/i.test(String(o || ''));
+  const withOutcome = ms.filter((m) => m.outcome && !numeric(m.outcome));
+  const multi = !story.ladder && withOutcome.length >= 2;
+  const distinct = (t) => idx.idf(t) >= 1.8 && !WEAK.has(t) && !STORY_WEAK.has(t) && !ENTITY_GENERIC.has(t) && !CONTEXT.test(t) && !/^\d+$/.test(t);
+  const E = new Set();
+  const lead = story.lead || ms[0] || {};
+  const evTitle = story.eventTitle || lead.eventTitle || '';
+  for (const t of tokens(`${evTitle} ${lead.title || ''} ${multi ? '' : lead.outcome || ''}`)) if (distinct(t)) E.add(t);
+  const outcomes = multi ? withOutcome.map((m) => outcomeTerm(m.outcome, idx.idf)).filter(Boolean) : [];
+  for (const o of outcomes) for (const t of o.toks) E.add(t);
+  // P: the question's own proper nouns. Multi-outcome: only the frame shared by every outcome's question
+  // ("Will X win the Mississippi Senate race?" -> mississippi, senate), never one outcome's name.
+  let P;
+  if (multi) {
+    const sets = withOutcome.slice(0, 6).map((m) => properTokens(m.title));
+    const oTok = new Set(outcomes.flatMap((o) => o.toks));
+    P = new Set([...(sets[0] || [])].filter((t) => sets.every((x) => x.has(t)) && !oTok.has(t)));
+    for (const t of properTokens(evTitle)) if (!oTok.has(t)) P.add(t);
+  } else {
+    P = new Set([...properTokens(lead.title), ...properTokens(evTitle)]);
+    for (const t of tokens(lead.outcome || '')) if (distinct(t)) E.add(t);
+  }
+  // a subject word is one in < ~5% of events: "Mississippi", "Hegseth"; not "Senate"
+  for (const t of [...P]) if (!distinct(t) || idx.idf(t) < 3 || ENTITY_GENERIC.has(t) || STORY_WEAK_P.has(t)) P.delete(t);
+  const oTok = new Set(outcomes.flatMap((o) => o.toks));
+  // one subject per run of capitalized words; runs that share a word ("Crude Oil" in the title and "Oil" in the event) merge
+  const runs = [];
+  for (const r0 of [...properRuns(lead.title), ...properRuns(evTitle)]) {
+    const r = new Set([...r0].filter((t) => P.has(t)));
+    if (!r.size) continue;
+    const same = runs.find((x) => [...r].some((t) => x.has(t)));
+    if (same) for (const t of r) same.add(t); else runs.push(r);
+  }
+  // frame words of the event title, weak ones included ("largest", "company"): a headline naming two outcomes must also
+  // be about the event ("Nvidia overtakes Apple as the largest company"), not a list of names ("layoffs at Amazon, Microsoft")
+  const F = new Set(tokens(evTitle).filter((t) => !oTok.has(t) && !CONTEXT.test(t) && !/^\d+$/.test(t) && !WEAK.has(t)));
+  const text = `${evTitle} ${lead.title || ''}`;
+  const topics = TOPICS.filter((t) => t.w >= 5 && t.market.test(text));
+  // sports / games entity path: every named outcome counts, even on a one-market story
+  // ... but only the leaders (top 3 by price): "Every player from Arkansas to play for the Celtics" is not title-race news
+  const entOutcomes = [...withOutcome].sort((a, b) => (b.yesPrice || 0) - (a.yesPrice || 0)).slice(0, 3).map((m) => outcomeTerm(m.outcome, idx.idf)).filter(Boolean);
+  // the lead outcome (the story's headline subject): a headline that names it is preferred over one about a rival
+  const leadOut = multi && lead.outcome && !numeric(lead.outcome) ? outcomeTerm(lead.outcome, idx.idf) : null;
+  // every named subject of a single question, common ones included ("Canada" is in many events, so it is not in P)
+  const rawP = multi ? new Set() : new Set([...properTokens(lead.title), ...properTokens(evTitle)].filter((t) => !WEAK.has(t) && !STORY_WEAK.has(t) && !STORY_WEAK_P.has(t) && !ENTITY_GENERIC.has(t) && !CONTEXT.test(t) && t.length >= 3));
+  return { multi, E, P, F, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP };
+}
+
+/** Entity phrases for sports/games matching (kept for callers/tests): outcome names and their last word. */
+export function storyEntities(story) {
+  const out = new Set();
+  for (const m of [story?.lead, ...(story?.markets || [])].filter(Boolean)) {
+    const o = lowerWords(m.outcome);
+    if (!o || o.length < 3 || ENTITY_GENERIC.has(o)) continue;
+    out.add(o);
+    const last = o.split(' ').pop();
+    if (last.length >= 4 && !ENTITY_GENERIC.has(last) && !/^\d+$/.test(last)) out.add(last);
+  }
+  return [...out];
+}
+
+// Story <-> headline relevance (strict). E = the story's distinctive words (IDF >= 1.8 over the market index);
+// P = the question's proper nouns; outcome = a named outcome of a multi-outcome event.
+//   single question: (a P hit or a shared strong topic) and >= 2 E hits         ("Pete Hegseth out..." <- "impeach Pete Hegseth")
+//   multi-outcome:   (an outcome hit and >= 2 E hits) or (>= 2 frame-P hits and >= 2 E hits)
+//                    ("Mississippi Senate winner? / Colom" <- "Mississippi Senate race is toss-up")
+//   sports / games (opts.entity): also a sports or gaming feed headline naming one of the outcomes or a rare subject word.
+// So "Alito retirement" never takes "Ronaldo announces retirement" and "Largest company / Apple" never takes
+// "World's largest olive oil company".
+export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now(), max = 3, maxAgeMs = 48 * 3_600_000, entity = false } = {}) {
+  if (!story || !hIndex?.list?.length) return [];
+  const idx = buildIndex(marketIndex);
+  const T = storyTerms(story, idx);
+  const cands = new Set();
+  for (const t of T.E) for (const i of hIndex.byTok.get(t) || []) cands.add(i);
+  for (const t of T.topics) for (const i of hIndex.byTopic.get(t.key) || []) cands.add(i);
+  const fresh = (it) => { const t = Date.parse(it.publishedAt); return Number.isFinite(t) && now - t <= maxAgeMs && t - now < 15 * 60_000; };
+  const out = [];
+  for (const i of cands) {
+    const h = hIndex.list[i];
+    if (!fresh(h.it)) continue;
+    // sports / gaming desk headlines only ever go with sports / games stories ("clean sweep" is not an election sweep)
+    if (!entity && SPORTY.has(String(h.it.category || '').toLowerCase())) continue;
+    const H = h.news.tw;
+    let e = 0, p = 0, eOut = 0, eNonP = 0;
+    for (const t of T.E) if (H.has(t)) { e++; if (T.oTok.has(t)) eOut++; if (!T.P.has(t)) eNonP++; }
+    const pRuns = T.runs.filter((r) => [...r].some((t) => H.has(t))).length;
+    for (const t of T.P) if (H.has(t)) p++;
+    const topic = T.topics.some((t) => h.news.topics.includes(t));
+    const oHits = T.outcomes.filter((o) => outcomeHit(o, H, h.lower)).length;
+    let ok;
+    // multi-outcome: the outcome named AND the event's own frame (a frame proper noun, or 2 frame words), so a headline
+    // that merely names a candidate ("Elon Musk's very bad night") never lands on "#1 searched person on Google"
+    // (two named outcomes in one headline is a story about the race: "Nvidia overtakes Apple as the largest company")
+    const fHits = [...T.F].filter((t) => H.has(t)).length;
+    // sports / games races: a frame-only hit needs a rare subject ("IEM Beijing"), not a common award word ("MVP" took a
+    // World Series MVP piece for the NFL MVP race)
+    const pRare = [...T.P].some((t) => H.has(t) && idx.idf(t) >= idx.rareIdf);
+    if (T.multi) ok = (oHits >= 2 && fHits >= 1) || (oHits >= 1 && ((entity ? pRare : p >= 1) || e - eOut >= 2)) || ((entity ? pRare : p >= 1) && e - eOut >= 2);
+    // single question: two different subjects, or a subject plus a non-subject story word, or three story words
+    // ... and a question with a named subject needs that subject: "Canada's GDP ... MoM in September" never takes
+    // "Czech retail sales rise 0.1% MoM in September" on three shared frame words
+    else ok = pRuns >= 2 || (pRuns >= 1 && eNonP >= 1) || ((pRuns >= 1 || (!T.runs.length && (!T.rawP.size || [...T.rawP].some((t) => H.has(t))))) && (e >= 3 || (topic && e >= 2 && eNonP >= 1)));
+    let why = 'story';
+    if (!ok && entity && SPORTY.has(String(h.it.category || '').toLowerCase()) && !SPORTS_FLUFF.test(h.it.title)) {
+      // a rare subject named in full: "LIV Golf" needs "LIV", not just "golf" ("Good Good Golf executive...")
+      const rareP = T.runs.some((r) => [...r].every((t) => H.has(t)) && [...r].some((t) => idx.idf(t) >= idx.rareIdf && !ENTITY_GENERIC.has(t)));
+      // a one-word outcome ("Philadelphia") also needs a story word ("NBA", "Finals"): Eagles news is not 76ers news
+      // ... and every outcome hit needs the event's frame too: "Jeremiah Smith ... NFL draft prospect" is not Heisman news
+      ok = T.entOutcomes.some((o) => outcomeHit(o, H, h.lower) && (e - eOut >= 1 || fHits >= 1)) || (!T.multi && rareP);
+      why = 'entity';
+    }
+    if (!ok) continue;
+    if (process.env.PNN_MATCH_DEBUG) why += ` e=${[...T.E].filter((t) => H.has(t))} p=${[...T.P].filter((t) => H.has(t))} o=${oHits} topic=${topic} multi=${T.multi}`;
+    out.push({ item: h.it, score: e + 2 * p + 3 * oHits + (topic ? 3 : 0) + (T.leadOut && outcomeHit(T.leadOut, H, h.lower) ? 4 : 0), why });
+  }
+  // Freshest strong match first: recency matters more than a slightly higher score.
+  const ts = (x) => Date.parse(x.item.publishedAt) || 0;
+  out.sort((a, b) => (ts(b) - ts(a)) / 3_600_000 + (b.score - a.score) * 0.5);
+  const seenT = new Set();
+  return out.filter((x) => { const k = lowerWords(x.item.title); if (seenT.has(k)) return false; seenT.add(k); return true; }).slice(0, max);
+}
+
+/** Score arbitrary headlines (e.g. a Google News search) against one story; strict, same scorer. */
+export function filterHeadlinesForStory(story, items, marketIndex = [], opts = {}) {
+  const arr = (items || []).filter((x) => x?.title);
+  if (!arr.length) return [];
+  return matchStoryNews(story, buildHeadlineIndex(arr), marketIndex, { max: 3, ...opts });
+}
+
+export default { matchMarkets, analyzeCluster, searchQueries, searchPolymarket, searchKalshi, kalshiSearchToV2, TOPICS, buildHeadlineIndex, matchStoryNews, filterHeadlinesForStory, storyEntities };

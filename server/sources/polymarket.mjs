@@ -28,6 +28,18 @@ function eventTags(ev) {
   return [...out];
 }
 
+// Per-game / per-match / prop events are never held (config.sportsGaming.preDrop, dropTags): one NBA or NFL game event
+// carries 230-300 markets (spread, total, player props), so parsing them would add thousands of throwaway markets per sweep.
+// Futures (champion, MVP, awards, coach out, release dates) are different titles and pass.
+function sportsNoiseEvent(ev, tags) {
+  const sg = config.sportsGaming;
+  if (!sg) return false;
+  const title = String(ev.title || '');
+  if ((sg.preDrop || []).some((r) => r.test(title))) return true;
+  const dropTags = sg.dropTags || [];
+  return tags.some((t) => dropTags.includes(t)) && !tags.some((t) => (sg.keepTags || []).includes(t));
+}
+
 // Pure: Gamma /events JSON (array) -> Market[]
 export function parsePolymarketEvents(json, now = new Date()) {
   const events = Array.isArray(json) ? json : (json?.events || []);
@@ -39,6 +51,7 @@ export function parsePolymarketEvents(json, now = new Date()) {
     if (!mkts.length) continue;
     const multi = (ev.markets || []).length > 1;
     const tags = eventTags(ev);
+    if (sportsNoiseEvent(ev, tags)) continue;
     for (const m of mkts) {
       const prices = jarr(m.outcomePrices).map(Number);
       let yes = prices.length ? prices[0] : NaN;
@@ -106,9 +119,12 @@ export async function sweepPolymarketTags({ tags = [], limit = 50, paceMs = 350 
     const byEvent = new Map();
     const perTag = {};
     let ok = 0, lastErr = null;
-    for (const slug of tags) {
+    for (const entry of tags) {
+      // an entry is a slug or {slug, limit}: per-game-heavy slugs (nba, epl...) only need their top few futures events
+      const slug = typeof entry === 'string' ? entry : entry.slug;
+      const lim = (typeof entry === 'object' && entry.limit) || limit;
       try {
-        const url = `${GAMMA}/events?tag_slug=${encodeURIComponent(slug)}&active=true&closed=false&order=volume24hr&ascending=false&limit=${limit}`;
+        const url = `${GAMMA}/events?tag_slug=${encodeURIComponent(slug)}&active=true&closed=false&order=volume24hr&ascending=false&limit=${lim}`;
         const page = await getJSON(url, { timeoutMs: 30_000 });
         const list = Array.isArray(page) ? page : [];
         perTag[slug] = list.length;

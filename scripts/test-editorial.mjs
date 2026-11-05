@@ -329,6 +329,89 @@ eq(a1.length, 1, 'breaking fires'); eq(a2.length, 0, 'breaking cooldown'); eq(a3
   eq(marketLabel(mk({ eventTitle: 'Who will win the Nobel Peace Prize?', title: 'Foo Bar', outcome: 'Foo Bar' })), 'Foo Bar to win the Nobel Peace Prize', 'who label');
 }
 
+// ---------- news gate: every aired story carries a matching headline (2026-11-05 news-driven PNN) ----------
+{
+  const { createNewsdesk } = await import('../server/newsdesk.mjs');
+  const { matchStoryNews, buildHeadlineIndex } = await import('../server/editorial/match.mjs');
+  const H = 3_600_000;
+  const at = (h) => new Date(NOW - h * H).toISOString();
+  const mk = (o) => ({ source: 'kalshi', tags: [], change1w: null, closesAt: new Date(NOW + 40 * 24 * H).toISOString(), volumeTotal: 1e7, liquidity: 1e6,
+    outcome: null, updatedAt: new Date(NOW).toISOString(), ...o, eventId: o.eventId || o.id, eventTitle: o.eventTitle || o.title });
+  const mkts = [
+    mk({ id: 'ks:FEDDEC', title: 'Will the Fed hike rates at the December FOMC meeting?', yesPrice: 0.62, change1d: 0.08, volume24h: 2e6 }),
+    mk({ id: 'ks:OPENAIIPO', title: 'Will OpenAI announce an IPO before 2027?', yesPrice: 0.31, change1d: 0.06, volume24h: 4e5 }),
+    mk({ id: 'ks:NONEWS', title: 'Will Zorblaxian tariffs on widgets exceed 40% in 2026?', yesPrice: 0.45, change1d: 0.09, volume24h: 9e5 }),
+  ];
+  const archive = [
+    { title: 'Fed signals December rate hike as Powell warns on inflation', outlet: 'Reuters', publishedAt: at(1), category: 'economy', url: 'https://x/1' },
+    { title: 'Powell: Fed ready to raise rates in December if inflation persists', outlet: 'CNBC', publishedAt: at(3), category: 'economy', url: 'https://x/2' },
+    { title: 'OpenAI weighs IPO as Altman eyes trillion-dollar valuation', outlet: 'Bloomberg', publishedAt: at(5), category: 'tech', url: 'https://x/3' },
+    { title: 'Taylor Swift announces new stadium dates', outlet: 'Variety', publishedAt: at(2), category: 'culture', url: 'https://x/4' },
+    { title: 'Thunder rout Lakers as Gilgeous-Alexander scores 41', outlet: 'ESPN', publishedAt: at(2), category: 'sports', url: 'https://x/5' },
+    { title: 'Thunder storms expected across the Plains', outlet: 'NWS', publishedAt: at(2), category: 'weather', url: 'https://x/6' },
+  ];
+  const nd = createNewsdesk({ getArchive: () => archive, getMarkets: () => mkts });
+  const out = buildStories(mkts, config, { now: NOW, enrich: { newsLookup: (s) => nd.lookup(s, NOW) } });
+  const aired = new Set([...out.stories, ...out.desks.flatMap((d) => d.stories), ...out.closing].map((s) => s.id));
+  eq(aired.has('ks:FEDDEC'), true, 'news gate: Fed story with Fed headlines airs');
+  eq(aired.has('ks:NONEWS'), false, 'news gate: story without a headline does not air');
+  eq(out.pending.some((s) => s.id === 'ks:NONEWS'), true, 'news gate: newsless story waits in pending');
+  const fed = out.stories.find((s) => s.id === 'ks:FEDDEC');
+  eq(/Fed/.test(fed?.news?.[0]?.title || ''), true, `news gate: Fed news[0] is a Fed headline ("${fed?.news?.[0]?.title}")`);
+  eq(fed?.news?.[0]?.via, 'wire', 'news gate: wire headline preferred');
+  eq(fed?.news?.some((n) => /Swift|Thunder/.test(n.title)), false, 'news gate: no unrelated headline attached');
+  for (const s of [...out.stories, ...out.closing]) if (!s.news?.length) { console.log(`  FAIL news gate: ${s.id} aired without news`); process.exitCode = 1; }
+  for (const m of out.movers) if (!m.news?.length) { console.log(`  FAIL news gate: mover ${m.id} without news`); process.exitCode = 1; }
+  eq(fed.newsScore > 1, true, `news gate: fresh multi-outlet coverage boosts (factor ${fed.newsScore})`);
+  const ungated = buildStories(mkts, config, { now: NOW });
+  eq(ungated.stories.some((s) => s.id === 'ks:NONEWS'), true, 'news gate: off without enrich.newsLookup');
+  // sports entity matching: a sports-feed headline naming an outcome matches; a weather "thunder" headline never does
+  const nba = { id: 'ks:KXNBA-27', category: 'sports', eventTitle: '2027 Pro Basketball Champion',
+    lead: mk({ id: 'ks:NBA-OKC', eventId: 'ks:KXNBA-27', eventTitle: '2027 Pro Basketball Champion', title: 'Will Oklahoma City win the 2027 Pro Basketball Finals?', outcome: 'Oklahoma City Thunder', yesPrice: 0.3, change1d: 0.02, volume24h: 3e5 }),
+    markets: [] };
+  nba.markets = [nba.lead];
+  const hits = matchStoryNews(nba, buildHeadlineIndex(archive), mkts, { now: NOW, entity: true });
+  eq(hits.length, 1, `sports entity match: one headline (${hits.map((h) => h.item.title).join(' | ')})`);
+  eq(hits[0]?.item?.outlet, 'ESPN', 'sports entity match: the ESPN headline, not the weather one');
+  // strictness: a shared frame word never matches; the subject has to be in the headline
+  const strictArch = [
+    { title: 'Cristiano Ronaldo announces international retirement', outlet: 'Sky Sports', publishedAt: at(1), category: 'sports', url: 'https://y/1' },
+    { title: "World's largest olive oil company plummets 18% after rivals agree to takeover deal", outlet: 'CNBC', publishedAt: at(1), category: 'economy', url: 'https://y/2' },
+    { title: 'Samuel Alito weighs retirement as conservatives urge him to step down', outlet: 'Politico', publishedAt: at(2), category: 'politics', url: 'https://y/3' },
+    { title: 'Nvidia overtakes Apple as the largest company in the world', outlet: 'Reuters', publishedAt: at(3), category: 'economy', url: 'https://y/4' },
+  ];
+  const alito = { id: 'pm:alito', category: 'courts', eventTitle: 'Will Samuel Alito announce his retirement by...?',
+    lead: mk({ id: 'pm:alito1', eventId: 'pm:alito', eventTitle: 'Will Samuel Alito announce his retirement by...?', title: 'Will Samuel Alito announce his retirement by December 31?', outcome: 'December 31', yesPrice: 0.2, change1d: 0.05, volume24h: 2e5 }), markets: [] };
+  alito.markets = [alito.lead];
+  const big = { id: 'pm:big', category: 'economy', eventTitle: 'Largest Company end of December 2026?', markets: ['Apple', 'NVIDIA', 'Microsoft'].map((o, i) =>
+    mk({ id: `pm:big${i}`, eventId: 'pm:big', eventTitle: 'Largest Company end of December 2026?', title: `Will ${o} be the largest company in the world by market cap on December 31?`, outcome: o, yesPrice: 0.5 - i * 0.2, change1d: 0.03, volume24h: 3e5 })) };
+  big.lead = big.markets[0];
+  const sIdx = buildHeadlineIndex(strictArch);
+  const idxM = [...mkts, alito.lead, ...big.markets];
+  const aHits = matchStoryNews(alito, sIdx, idxM, { now: NOW }).map((h) => h.item.outlet);
+  eq(aHits.join(','), 'Politico', `strict: Alito story takes the Alito headline only (${aHits})`);
+  const bHits = matchStoryNews(big, sIdx, idxM, { now: NOW }).map((h) => h.item.outlet);
+  eq(bHits.join(','), 'Reuters', `strict: largest-company story ignores "largest olive oil company" (${bHits})`);
+  const stale = createNewsdesk({ getArchive: () => archive.map((a) => ({ ...a, publishedAt: at(30) })), getMarkets: () => mkts }).lookup(nba, NOW);
+  eq(stale.wire24, false, 'sports gate: a 30h-old headline is not enough to air');
+  // board cap: <= 3 sports + games stories, SPORTS & GAMES desk <= 6 (only when filter.mjs files these as sports)
+  const teams = ['Celtics', 'Knicks', 'Nuggets', 'Bucks', 'Warriors', 'Spurs', 'Rockets', 'Pacers'];
+  const sm = teams.map((t, i) => mk({ id: `pm:sp${i}`, source: 'polymarket', eventId: `pm:spev${i}`, eventTitle: `NBA: 2027 Champion (${t})`, outcome: t, title: `Will the ${t} win the 2027 NBA Finals?`,
+    tags: ['sports', 'nba', 'nba-finals'], yesPrice: 0.2 + i * 0.02, change1d: 0.06, volume24h: 5e5 }));
+  const sArch = [...archive, ...teams.map((t, i) => ({ title: `${t} win again as playoff race tightens in NBA`, outlet: 'ESPN', publishedAt: at(1 + i * 0.1), category: 'sports', url: `https://s/${i}` }))];
+  const all = [...mkts, ...sm];
+  const nd2 = createNewsdesk({ getArchive: () => sArch, getMarkets: () => all });
+  const o2 = buildStories(all, config, { now: NOW, enrich: { newsLookup: (s) => nd2.lookup(s, NOW) } });
+  const sg = (l) => l.filter((s) => ['sports', 'games', 'esports'].includes(s.category)).length;
+  const desk = o2.desks.find((d) => d.id === 'sports');
+  if (o2.stats.kept > mkts.length) {
+    eq(sg(o2.stories) <= 3, true, `sports cap: ${sg(o2.stories)} sports/games stories on the board`);
+    eq(['sports', 'games', 'esports'].includes(o2.stories[0]?.category), false, 'sports never lead the board');
+    eq(!!desk && desk.stories.length <= 6 && desk.title === 'SPORTS & GAMES', true, `SPORTS & GAMES desk (${desk?.stories?.length})`);
+  } else console.log('  (sports cap test skipped: filter.mjs does not keep NBA futures yet)');
+  console.log(`  news gate: board ${out.stories.map((s) => s.id).join(', ')} | pending ${out.pending.map((s) => s.id).join(', ')} | sports board ${sg(o2.stories)}, desk ${desk?.stories?.length ?? 0}`);
+}
+
 // ---------- local fallback normalizer (mirrors the contract Market shape) ----------
 function localNormalize(evs) {
   const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));

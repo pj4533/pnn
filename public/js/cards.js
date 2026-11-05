@@ -7,7 +7,7 @@
 //   - story.exchanges (both exchanges price it): "KALSHI 92% · POLYMARKET 93% · both exchanges agree" badge.
 // Also: sotdCard (Story of the Day board) and countdownCard (COUNTDOWN DESK, next 3 decisions).
 import { countText } from './countdown.js';
-import { esc, pct, pctNum, ptsOf, moveCls, money, exchangeName, ago, until, etShort, marketLabel, categoryName, OUTCOME_COLORS, storyVolume } from './util.js';
+import { esc, pct, pctNum, ptsOf, moveCls, money, exchangeName, ago, until, etShort, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsMeta } from './util.js';
 
 /** "up 45 points today" / "down 1 point this week" / "" (plain English, whole points). */
 export function pointsText(d, when = 'today') {
@@ -60,10 +60,7 @@ function meta(s, seg, now) {
   const ex = (s.sources?.length ? s.sources : [m.source]).map(exchangeName).join(' + ');
   return `<div class="meta bc-meta"><span class="fit meta-t"><b>${esc(ex)}</b> · updated ${esc(ago(m.updatedAt, now))} · <b>${esc(seg.id === 'movers' ? money(m.volume24h) : storyVolume(s))}</b> traded in 24 hrs</span>${s.thin ? '<span class="thin">THIN MARKET</span>' : ''}</div>`;
 }
-const newsLine = (s, now) => {
-  const news = (s.news || [])[0];
-  return news ? `<div class="bc-newsline" data-drop="4"><span class="bc-nl-h">IN THE NEWS</span><span class="bc-nl-t fit" data-fit-h>${esc(news.title)}</span><span class="bc-nl-s fit">${esc(news.source || 'News')}${news.publishedAt ? ` · ${esc(ago(news.publishedAt, now))}` : ''}</span></div>` : '';
-};
+const newsLine = (s, now) => newsLineHtml(newsOf(s), now);
 const electionNote = (s) => (isElection(s) ? '<div class="bc-note fit" data-drop="5">Market prices, not official results</div>' : '');
 
 /** THEN vs NOW: "YESTERDAY 14%" dimmed -> "NOW 92%" counting up over ~2s, a huge glowing +78, FLIPPED when it crossed 50%. */
@@ -80,6 +77,7 @@ function swingCard(seg, now) {
     <div class="bc-h"><span class="bc-seg fit">${esc(title)}</span>${s.settling ? '<span class="bc-tag">SETTLING</span>' : ''}</div>
     <div class="bc-kick fit">${esc(categoryName(s.category).toUpperCase())} · ${esc(s.eventTitle || '')}</div>
     <h1 class="bc-head fit" data-fit-h>${esc(s.short || s.headline)}</h1>
+    ${newsLine(s, now)}
     ${lbl ? `<div class="sw-who fit">${esc(lbl)}</div>` : ''}
     <div class="sw">
       <div class="sw-then"><span class="sw-l">YESTERDAY</span><span class="sw-tv">${esc(a)}<small>%</small></span></div>
@@ -89,7 +87,6 @@ function swingCard(seg, now) {
       ${sw.flipped ? '<div class="sw-flip">FLIPPED</div>' : ''}
     </div>
     ${exchangesBadge(s)}
-    ${newsLine(s, now)}
     ${electionNote(s)}
     ${meta(s, seg, now)}
   </section>`;
@@ -113,6 +110,7 @@ export function segmentCard(seg, now = Date.now()) {
     <div class="bc-h"><span class="bc-seg fit">${esc(title)} · #${i + 1} OF ${n}</span></div>
     <div class="bc-kick fit">${s.flash ? '<b class="bc-news">IN THE NEWS</b> · ' : ''}${esc(categoryName(s.category).toUpperCase())} · ${esc(s.eventTitle || '')}</div>
     <h1 class="bc-head fit" data-fit-h>${esc(s.short || s.headline)}</h1>
+    ${newsLine(s, now)}
     <div class="bc-num">
       <div class="bc-n"><span class="bc-v">${esc(pctNum(m.yesPrice))}</span><span class="bc-p">%</span></div>
       <div class="bc-side">
@@ -124,7 +122,6 @@ export function segmentCard(seg, now = Date.now()) {
     </div>
     ${exchangesBadge(s)}
     ${bars(s)}
-    ${newsLine(s, now)}
     ${electionNote(s)}
     ${meta(s, seg, now)}
   </section>`;
@@ -141,9 +138,9 @@ export function sotdCard(sotd, state, now = Date.now()) {
   const elect = rows.some((x) => /\b(win|wins|race|mayor|senate|governor|house|election|nominee)\b/i.test(x.label || ''));
   return `<section class="card bigc bc-sotd" ${sotd.leadStoryId ? `data-story="${esc(sotd.leadStoryId)}"` : ''}>
     <div class="bc-h"><span class="bc-seg fit">STORY OF THE DAY</span></div>
-    <div class="bc-kick fit"><b class="bc-news">IN THE NEWS</b> · ${esc(sotd.credit || 'The wires')}</div>
+    <div class="bc-kick fit">WHAT THE WIRES ARE REPORTING · MARKETS THE STORY IS ABOUT</div>
     <h1 class="bc-head sotd-t fit" data-fit-h>${esc(sotd.title)}<span class="sotd-n"> · ${n} ${n === 1 ? 'market' : 'markets'} moved</span></h1>
-    ${sotd.headline ? `<div class="sotd-h fit" data-fit-h>${esc(sotd.headline)}</div>` : ''}
+    ${newsLineHtml(sotd.headline ? { title: sotd.headline, source: sotd.credit || 'The wires', publishedAt: sotd.newsAt || sotd.publishedAt } : null, now, '')}
     <div class="sotd-board">${rows.slice(0, 7).map((x, i) => `<div class="sotd-r ${x === top ? 'hi' : ''}" ${x.storyId ? `data-story="${esc(x.storyId)}"` : ''} ${i >= 5 ? `data-drop="${7 - i}"` : ''}>
         <span class="sotd-l fit">${esc(x.label)}</span><span class="sotd-v">${esc(pct(x.yesPrice))}</span><span class="sotd-m ${moveCls(x.change1d)}">${x.pts ? esc(signed(x.pts)) : '0'}</span></div>`).join('')}</div>
     <div class="sotd-key fit" data-drop="3">Today's move in points · markets the story is about, not a cause and effect</div>
@@ -153,7 +150,7 @@ export function sotdCard(sotd, state, now = Date.now()) {
 }
 
 /** COUNTDOWN DESK: the next 3 scheduled decisions on a timeline, each with its market's live odds. */
-export function countdownCard(items, now = Date.now()) {
+export function countdownCard(items, now = Date.now(), newsFor = null) {
   const list = (items || []).filter((c) => c?.at && Date.parse(c.at) > now).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).slice(0, 3);
   if (!list.length) return '';
   return `<section class="card bigc bc-countdown" ${list[0].storyId ? `data-story="${esc(list[0].storyId)}"` : ''}>
@@ -161,10 +158,12 @@ export function countdownCard(items, now = Date.now()) {
     <div class="bc-kick fit">${list.length === 1 ? 'THE NEXT SCHEDULED DECISION' : `THE NEXT ${list.length} SCHEDULED DECISIONS`} · LIVE MARKET ODDS</div>
     <div class="cd-tl">${list.map((c, i) => {
       const d = ptsOf(c.change1d);
+      const nw = newsOf(c) || (newsFor && c.storyId ? newsOf({ news: newsFor(c.storyId) }) : null);
       return `<div class="cd-i ${i === 0 ? 'first' : ''}" ${c.storyId ? `data-story="${esc(c.storyId)}"` : ''}>
         <div class="cd-when"><span class="cd-n" data-count-at="${esc(c.at)}">IN ${esc(countText(c.at, now))}</span><span class="cd-at fit">${esc(etShort(c.at))} ET</span></div>
         <div class="cd-b"><div class="cd-t fit" data-fit-h>${esc(c.title)}</div>
           ${c.label ? `<div class="cd-o"><span class="cd-ol fit">${esc(c.eventTitle && c.eventTitle !== c.title ? `${c.eventTitle}: ${c.label}` : c.label)}</span><b class="cd-v">${esc(pct(c.yesPrice))}</b>${d ? `<span class="cd-m ${d > 0 ? 'up' : 'down'}">${esc(signed(d))} today</span>` : ''}</div>` : ''}
+          ${nw ? `<div class="cd-nw" ${i ? 'data-drop="2"' : ''}><b>IN THE NEWS</b><span class="cd-nt fit" data-fit-h>${esc(nw.title)}</span><span class="cd-ns fit">${esc(newsMeta(nw, now))}</span></div>` : ''}
         </div></div>`;
     }).join('')}</div>
     <div class="meta bc-meta"><span class="fit meta-t"><b>${esc([...new Set(list.map((c) => c.source).filter(Boolean))].map(exchangeName).join(' + ') || 'Prediction markets')}</b> · odds are market prices, not forecasts of record</span></div>

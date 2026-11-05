@@ -7,14 +7,14 @@ import { Holo, COL, clamp01, ease, boxAt } from '../holo.js';
 import { lineSeg } from './parts.js';
 
 const PER_SIDE = 5;
-const WC = 19.5, GAP = 2.2;          // column width, gap between the two blocks
-const NAME_W = 7.6, BX = 8.1, LB = 5.0; // name zone, bar baseline x within a column, bar length at full scale
-const P = 2.7, YB = 3.6;               // row pitch, bottom of the rows area
+const WC = 19.8, GAP = 2.2;          // column width, gap between the two blocks
+const NAME_W = 9.2, BX = 10.4, LB = 3.2; // name zone, bar baseline x within a column, bar length at full scale
+const P = 3.4, YB = 3.8;               // row pitch, bottom of the rows area
 
 // split a long name over two lines at the most balanced word break (never truncated); same rule as the story-of-the-day board
 function nameLines(raw) {
   const name = String(raw || '').toUpperCase().trim();
-  if (name.length <= 13) return [name, null];
+  if (name.length <= 12) return [name, null];
   const words = name.split(/\s+/);
   if (words.length < 2) return [name, null];
   let best = 1, bestDiff = Infinity;
@@ -42,7 +42,7 @@ export function createMovers(ctx, markets) {
   const R = Math.max(1, ...cols.map((c) => c.list.length));
   const yT = YB + R * P;
   const W = cols.length ? cols.length * WC + (cols.length - 1) * GAP : 24;
-  const Hh = yT + 5.4;
+  const Hh = yT + 5.6;
   const sc = niceScale(Math.max(1, ...cols.flatMap((c) => c.list.map((m) => Math.min(100, Math.abs(m.change1d) * 100)))));
 
   const holo = new Holo(ctx, { height: Hh });
@@ -68,8 +68,8 @@ export function createMovers(ctx, markets) {
   };
 
   // ---- title ----
-  lbl('BIGGEST MOVES TODAY', { w: 1280, h: 160, height: 2.1, font: '900 112px Orbitron', color: '#ffffff', glow: pal.hexA }, 0, yT + 4.2);
-  root.add(lineSeg(new Float32Array([-W / 2, yT + 2.85, 0, W / 2, yT + 2.85, 0]), holo.line(pal.a, { alpha: 0.55, glow: 1.5 })));
+  lbl('BIGGEST MOVES TODAY', { w: 1280, h: 160, height: 2.1, font: '900 112px Orbitron', color: '#ffffff', glow: pal.hexA }, 0, yT + 4.3);
+  root.add(lineSeg(new Float32Array([-W / 2, yT + 3.0, 0, W / 2, yT + 3.0, 0]), holo.line(pal.a, { alpha: 0.55, glow: 1.5 })));
   if (!cols.length) lbl('NO MARKET MOVED A FULL POINT TODAY', { w: 1536, h: 128, height: 1.6, font: '700 90px Rajdhani', color: '#dfe8ff', glow: pal.hexB }, 0, YB + 3);
 
   // ---- columns ----
@@ -78,13 +78,13 @@ export function createMovers(ctx, markets) {
   cols.forEach((col, ci) => {
     const cx = -W / 2 + ci * (WC + GAP), bx = cx + BX, hex = col.up ? HEXUP : HEXDN, colr = col.up ? COL.up : COL.down;
     // block header + underline
-    lbl(col.up ? '▲ RISING' : '▼ FALLING', { w: 768, h: 128, height: 1.5, font: '900 100px Orbitron', color: '#ffffff', glow: hex }, cx + 0.4, yT + 1.35, 'left');
+    lbl(col.up ? '▲ RISING' : '▼ FALLING', { w: 768, h: 128, height: 1.8, font: '900 100px Orbitron', color: '#ffffff', glow: hex }, cx + 0.4, yT + 1.5, 'left');
     root.add(lineSeg(new Float32Array([cx, yT + 0.45, 0, cx + WC, yT + 0.45, 0]), holo.line(colr, { alpha: 0.7, glow: 1.6 })));
     // axis: zero baseline, gridlines, labels, scale legend
     base.push(bx, YB - 0.35, 0, bx, yT + 0.1, 0);
     for (let v = sc.step; v <= sc.max + 1e-9; v += sc.step) { const gx = bx + (v / sc.max) * LB; grid.push(gx, YB - 0.35, 0, gx, yT, 0); }
-    for (let v = 0; v <= sc.max + 1e-9; v += sc.step) lbl(String(v), { w: 256, h: 96, height: 1.05, font: '700 70px Rajdhani', color: '#dfe8ff', glow: pal.hexB }, bx + (v / sc.max) * LB, YB - 1.15);
-    lbl(`SCALE 0-${sc.max} PTS`, { w: 640, h: 96, height: 1.05, font: '700 66px Rajdhani', color: '#ffe27a', glow: '#ffd23f' }, cx + 0.4, YB - 1.15, 'left');
+    for (const v of [0, sc.max]) lbl(String(v), { w: 256, h: 96, height: 1.3, font: '700 70px Rajdhani', color: '#dfe8ff', glow: pal.hexB }, bx + (v / sc.max) * LB, YB - 1.3);
+    lbl(`SCALE 0-${sc.max} PTS`, { w: 640, h: 96, height: 1.3, font: '700 66px Rajdhani', color: '#ffe27a', glow: '#ffd23f' }, cx + 0.4, YB - 1.3, 'left');
     col.list.forEach((m, i) => {
       const y = yT - (i + 0.5) * P;
       const c = m.change1d, ptsRaw = Math.abs(c) * 100, pts = Math.round(ptsRaw);
@@ -98,13 +98,13 @@ export function createMovers(ctx, markets) {
       // name (two lines max) with the event as a small line when the name is short
       const [l1, l2] = nameLines(nameOf(m)); const cxt = ctxOf(m);
       const sub = l2 || (cxt && cxt !== l1 && cxt.length <= 26 ? cxt : null);
-      const nameL = holo.label(l1, { w: 704, h: 192, height: 2.0, font: `700 ${l2 ? 90 : 96}px Rajdhani`, color: i === 0 ? '#ffffff' : '#e6ecff', glow: hex, align: 'left', sub, subColor: l2 ? (i === 0 ? '#ffffff' : '#e6ecff') : '#a9b6ee', subFont: l2 ? `700 90px Rajdhani` : '600 58px Rajdhani', mainY: l2 ? 0.27 : 0.36, subY: l2 ? 0.74 : 0.8 });
+      const nameL = holo.label(l1, { w: 704, h: 192, height: 2.8, font: `700 ${l2 ? 90 : 96}px Rajdhani`, color: i === 0 ? '#ffffff' : '#e6ecff', glow: hex, align: 'left', sub, subColor: l2 ? (i === 0 ? '#ffffff' : '#e6ecff') : '#a9b6ee', subFont: l2 ? `700 90px Rajdhani` : '600 58px Rajdhani', mainY: l2 ? 0.27 : 0.36, subY: l2 ? 0.74 : 0.8 });
       nameL.sprite.position.set(cx + 0.7, y, 0.5); nameL.yFrac = clamp01(y / Hh); nameL.bright = 0;
       // bar + tip
       const bar = new THREE.Mesh(barGeo, i === 0 ? (col.up ? mats.up0 : mats.down0) : (col.up ? mats.up : mats.down)); bar.position.set(bx, y, 0); bar.scale.x = 0.001; root.add(bar);
       const tip = new THREE.Mesh(tipGeo, mats.tip); tip.position.set(bx, y, 0.05); root.add(tip);
       // change chip: arrow + points (counts up), NOW % (sweeps yesterday -> now)
-      const chip = holo.label(`${col.up ? '▲' : '▼'} 0 PTS`, { w: 600, h: 200, height: 1.95, font: '900 84px Orbitron', color: col.up ? '#c4ffdc' : '#ffc6d2', glow: hex, align: 'left', sub: now == null ? null : `NOW ${Math.round(prev * 100)}%`, subColor: '#dfe8ff', subFont: '700 82px Rajdhani', mainY: 0.32, subY: 0.79 });
+      const chip = holo.label(`${col.up ? '▲' : '▼'} 0 PTS`, { w: 600, h: 200, height: 2.7, font: '900 84px Orbitron', color: col.up ? '#c4ffdc' : '#ffc6d2', glow: hex, align: 'left', sub: now == null ? null : `NOW ${Math.round(prev * 100)}%`, subColor: '#dfe8ff', subFont: '700 82px Rajdhani', mainY: 0.32, subY: 0.79 });
       chip.sprite.position.set(bx + 0.6, y, 0.5); chip.yFrac = clamp01(y / Hh); chip.bright = 0;
       const row = { up: col.up, i, y, bx, len, pts, now, prev, bar, tip, chip, nameL, t0: 0.85 + i * 0.22, ring: null, last: '' };
       if (i === 0) {
@@ -119,7 +119,7 @@ export function createMovers(ctx, markets) {
   if (rowLines.length) root.add(lineSeg(new Float32Array(rowLines), holo.line(pal.b, { alpha: 0.2 })));
   if (tracks.length) root.add(lineSeg(new Float32Array(tracks), holo.line(COL.white, { alpha: 0.12 })));
   root.add(lineSeg(new Float32Array([-W / 2, 1.75, 0, W / 2, 1.75, 0]), holo.line(pal.a, { alpha: 0.4 })));
-  lbl('BAR = CHANGE IN CHANCE TODAY, IN POINTS', { w: 2048, h: 96, height: 1.15, font: '700 60px Rajdhani', color: '#dfe8ff', glow: pal.hexB }, 0, 0.85);
+  lbl('BAR = CHANGE IN CHANCE TODAY, IN POINTS', { w: 2048, h: 96, height: 1.4, font: '700 60px Rajdhani', color: '#dfe8ff', glow: pal.hexB }, 0, 0.8);
 
   let emitAcc = 0, emitFlip = 0;
   holo.tick = function (dt, t) {

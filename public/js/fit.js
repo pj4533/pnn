@@ -22,6 +22,18 @@ function overflows(e, checkH) {
   return e.scrollHeight > cap + slack;
 }
 
+/** One-line "OUTLET · headline" text: the optional headline part ([data-opt]) is hidden whole when it doesn't fit (never truncated). */
+export function fitOptional(e) {
+  if (!e || !e.isConnected || !e.clientWidth) return;
+  const opt = e.querySelector('[data-opt]');
+  if (opt) opt.hidden = false;
+  e.style.fontSize = '';
+  if (opt && e.scrollWidth > e.clientWidth + 1) opt.hidden = true;
+  let size = parseFloat(getComputedStyle(e).fontSize), g = 0;
+  const floor = minPx();
+  while (e.scrollWidth > e.clientWidth + 1 && size > floor && g++ < 30) { size = Math.max(floor, size * 0.93); e.style.fontSize = `${size}px`; }
+}
+
 export function fitText(e) {
   if (!e || !e.isConnected) return;
   e.style.fontSize = '';
@@ -75,6 +87,7 @@ export function fitStack(box) {
 /** Fit everything under root: texts first, then stacks (stack zoom keeps text proportions). */
 export function fitAll(root = document) {
   root.querySelectorAll('.fit').forEach(fitText);
+  root.querySelectorAll('[data-opt-parent]').forEach(fitOptional);
   root.querySelectorAll('.fit-stack').forEach(fitStack);
 }
 

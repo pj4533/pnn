@@ -14,6 +14,7 @@ body.flashing[data-segment="desk"] .frame, body.flashing[data-segment="movers"] 
 .bigc.desk-world { --ac: #a78bff; --ag: rgba(167,139,255,.55); }
 .bigc.desk-culture { --ac: #ff7ae0; --ag: rgba(255,122,224,.55); }
 .bigc.desk-politics { --ac: #ffb13b; --ag: rgba(255,177,59,.55); }
+.bigc.desk-sports { --ac: #c6ff3d; --ag: rgba(198,255,61,.5); }
 
 .bc-h { display: flex; align-items: center; gap: 1vw; padding-bottom: 1vh; border-bottom: 1px solid var(--ag); min-width: 0; }
 .bc-seg { flex: 1 1 auto; min-width: 0; font: 900 max(var(--min), min(1.4vw, 3vh)) var(--font-display); letter-spacing: .16em; color: var(--ac); text-shadow: 0 0 .8vw var(--ag); white-space: nowrap; overflow: hidden; }
@@ -47,9 +48,9 @@ body.flashing[data-segment="desk"] .frame, body.flashing[data-segment="movers"] 
 .bc-track { height: max(.7vh, 5px); background: rgba(255,255,255,.12); overflow: hidden; }
 .bc-track u { display: block; height: 100%; background: var(--c); box-shadow: 0 0 .7vw var(--c); animation: grow 1.2s cubic-bezier(.2,.8,.2,1) both; transform-origin: left; }
 
-.bc-newsline { display: flex; flex-direction: column; gap: .4vh; border-left: .25vw solid var(--magenta); padding-left: .9vw; }
-.bc-nl-h { font: 700 max(var(--min), .85vw) var(--font-display); letter-spacing: .2em; color: var(--magenta); }
-.bc-nl-t { max-height: 6.4vh; overflow: hidden; font: 600 max(var(--min), min(1.15vw, 2.5vh))/1.2 var(--font-ui); color: #fff; overflow-wrap: break-word; }
+.bc-newsline { display: flex; flex-direction: column; gap: .4vh; border-left: .3vw solid var(--magenta); padding: .6vh .9vw .6vh .9vw; background: linear-gradient(90deg, rgba(255,43,214,.16), rgba(255,43,214,.02) 90%); }
+.bc-nl-h { font: 900 max(var(--min), .85vw) var(--font-display); letter-spacing: .22em; color: var(--magenta); text-shadow: 0 0 .6vw rgba(255,43,214,.6); }
+.bc-nl-t { max-height: 6.4vh; overflow: hidden; font: 700 max(var(--min), min(1.3vw, 2.8vh))/1.2 var(--font-ui); color: #fff; overflow-wrap: break-word; }
 .bc-nl-s { font: max(var(--min), .85vw) var(--font-mono); color: var(--pink); white-space: nowrap; overflow: hidden; }
 
 .bc-meta { margin-top: auto; }
@@ -137,6 +138,12 @@ body[data-segment="sotd"] .frame, body[data-segment="countdown"] .frame { left: 
 .cd-v { flex: 0 0 auto; font: 400 max(var(--min), min(1.7vw, 3.6vh)) var(--font-mono); color: var(--cyan); }
 .cd-m { flex: 0 0 auto; font: max(var(--min), .9vw) var(--font-mono); white-space: nowrap; }
 .cd-m.up { color: var(--up); } .cd-m.down { color: var(--down); }
+
+/* COUNTDOWN DESK: each decision's accompanying news item */
+.cd-nw { display: flex; align-items: baseline; gap: .6vw; min-width: 0; border-left: .2vw solid var(--magenta); padding-left: .6vw; }
+.cd-nw b { flex: 0 0 auto; font: 900 max(var(--min), .75vw) var(--font-display); letter-spacing: .16em; color: var(--magenta); }
+.cd-nt { flex: 1 1 auto; min-width: 0; max-height: 5vh; overflow: hidden; font: 600 max(var(--min), min(1vw, 2.2vh))/1.2 var(--font-ui); color: #fff; overflow-wrap: break-word; }
+.cd-ns { flex: 0 0 auto; max-width: 30%; font: max(var(--min), .75vw) var(--font-mono); color: var(--pink); white-space: nowrap; overflow: hidden; }
 
 /* top-bar "NEXT: … · then …" tease */
 .nx { flex: 0 1 auto; max-width: 100%; min-width: 0; font: 600 max(var(--min), min(.95vw, 2vh)) var(--font-ui); letter-spacing: .06em; color: #fff; white-space: nowrap; overflow: hidden; }

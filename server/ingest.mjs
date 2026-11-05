@@ -12,7 +12,9 @@ import { detectBreaking } from './editorial/breaking.mjs';
 import { buildStories } from './editorial/rank.mjs';
 import { newsQuery } from './editorial/copy.mjs';
 import { classify } from './editorial/filter.mjs';
+import { filterHeadlinesForStory } from './editorial/match.mjs';
 import { startNewsroom } from './newsroom.mjs';
+import { createNewsdesk } from './newsdesk.mjs';
 import { createMoments } from './moments.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -21,7 +23,15 @@ const errMsg = (e) => String(e?.message || e).slice(0, 300);
 export function startIngest(store, config, { sim = false } = {}) {
   const P = config.poll;
   const latest = { polymarket: [], kalshi: [], airable: [] };
-  const newsCache = new Map();      // storyId -> [{title, source, url, publishedAt}]
+  // News gate (DECISIONS 2026-11-05 news-driven PNN): every story that airs carries a matching headline. The newsdesk
+  // matches stories to the wire archive and to per-story Google News searches; stories with none wait in `pending`.
+  const newsdesk = createNewsdesk({ getArchive: () => newsroom?.archive?.() || [], getMarkets: () => latest.airable });
+  const gateNews = !sim;
+  const SEARCH_FILE = path.resolve(ROOT, 'data', 'news-search.json');
+  if (!sim) { try { newsdesk.load(JSON.parse(fs.readFileSync(SEARCH_FILE, 'utf8'))); } catch { /* first run */ } }
+  const saveSearch = () => { if (sim) return; try { fs.mkdirSync(path.dirname(SEARCH_FILE), { recursive: true }); fs.writeFileSync(SEARCH_FILE, JSON.stringify(newsdesk.dump())); } catch (e) { log('warn', 'news search save failed', { error: errMsg(e) }); } };
+  let pending = [];
+  let coverage = { onAir: 0, withNews: 0, pct: null, pending: 0 };
   const historyCache = new Map();   // marketId -> {points, at}
   const timers = [];
   let built = false;
@@ -34,6 +44,8 @@ export function startIngest(store, config, { sim = false } = {}) {
   const moments = createMoments(store, config, { sim });
   store.momentsHealth = () => moments.stats();
   store.buildHealth = () => lastBuild;
+  store.newsCoverage = () => coverage;
+  store.newsdeskStats = () => newsdesk.stats();
 
   function feedOk(name, count) {
     Object.assign(store.feeds[name], { ok: true, lastOk: new Date().toISOString(), lastError: null, count });
@@ -86,7 +98,8 @@ export function startIngest(store, config, { sim = false } = {}) {
 
   function attach(list) {
     return (list || []).map((s) => {
-      const news = newsCache.get(s.id) || s.news || [];
+      let news = s.news || [];
+      try { const n = newsdesk.newsFor(s); if (n.length) news = n; } catch { /* keep */ }
       let newsMarks = s.newsMarks || [];
       try { if (newsroom?.marksFor) newsMarks = newsroom.marksFor(s) || newsMarks; } catch { /* keep */ }
       return { ...s, news: newsroom ? newsroom.newsFor(s, news) : news, history: historyFor(s), newsMarks };
@@ -122,12 +135,15 @@ export function startIngest(store, config, { sim = false } = {}) {
     let out;
     try {
       const enrich = {
-        hasNews: (id) => (newsCache.get(id) || []).length > 0,
+        ...(gateNews ? { newsLookup: (s) => newsdesk.lookup(s, now.getTime()) } : {}),
+        hasNews: (id) => (newsdesk.searched(id)?.items?.length || 0) > 0,
         historyLen: (leadId) => Math.max(historyCache.get(leadId)?.points?.length || 0, store.history(leadId).length),
       };
       out = buildStories(markets, config, { now, enrich });
       const dead = Object.fromEntries(Object.entries(out?.stats?.dropped || {}).filter(([k]) => k.startsWith('dead:')));
-      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead };
+      const ns = out?.stats?.news || {};
+      lastBuild = { motionMs, buildMs: Date.now() - tb, airable: airable.length, dead, newsMs: ns.ms ?? null, newsDropped: { none: out?.stats?.dropped?.['news:none'] || 0, sportsGames: ns.sgDropped || 0 } };
+      pending = out?.pending || [];
     } catch (e) {
       log('error', 'buildStories failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) });
     }
@@ -160,10 +176,12 @@ export function startIngest(store, config, { sim = false } = {}) {
     const closing = attach(out?.closing);
     const desks = attachDesks(out?.desks);
     store.setState({ stories, movers: out?.movers || [], closing, desks });
+    coverage = newsCoverage({ stories, closing, desks, movers: out?.movers || [] });
+    lastBuild.newsCoverage = coverage;
     if (!built) log('info', 'first build', { markets: markets.length, stories: stories.length });
     built = true;
     maybeBackfill({ stories, desks });
-    try { moments.onRebuild({ stories, desks, closing, airable, aliases: lastAliases }); } catch (e) { log('error', 'moments failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) }); }
+    try { moments.onRebuild({ stories, desks, closing, airable, aliases: lastAliases, newsFor: (m) => newsdesk.newsFor({ id: `cd:${m.id}`, lead: m, markets: [m], eventTitle: m.eventTitle, category: m.category }) }); } catch (e) { log('error', 'moments failed', { error: errMsg(e), stack: String(e?.stack || '').slice(0, 800) }); }
     log('debug', 'rebuild', { reason, markets: markets.length, stories: stories.length, ms: Date.now() - t0, ...lastBuild });
   }
 
@@ -180,7 +198,7 @@ export function startIngest(store, config, { sim = false } = {}) {
   function maybeBackfill(state) {
     if (sim) return;
     const newsN = P.newsTopN ?? 10, histN = P.historyTopN ?? 8;
-    const missNews = enrichTargets(state, newsN).filter((s) => !newsCache.has(s.id)).length;
+    const missNews = newsdesk.searchTargets(pending, enrichTargets(state, newsN), { max: 3 }).length;
     const missHist = enrichTargets(state, histN).filter((s) => s.lead && !historyCache.has(s.lead.id)).length;
     if (missNews >= 3) kick('news', refreshNews);
     if (missHist >= 3) kick('history', refreshHistory);
@@ -191,27 +209,67 @@ export function startIngest(store, config, { sim = false } = {}) {
     store.setState({ stories: attach(s.stories), closing: attach(s.closing), desks: attachDesks(s.desks) });
   }
 
+  const SG = new Set(['sports', 'games', 'esports']);
+  function newsCoverage(st) {
+    const seen = new Map();
+    for (const s of [...(st.stories || []), ...(st.closing || []), ...(st.desks || []).flatMap((d) => d.stories || [])]) if (s?.id && !seen.has(s.id)) seen.set(s.id, s);
+    const on = [...seen.values()];
+    const withNews = on.filter((s) => s.news?.length).length;
+    const movers = st.movers || [];
+    const ageH = (s) => { const t = Date.parse(s.news?.[0]?.publishedAt); return Number.isFinite(t) ? (Date.now() - t) / 3_600_000 : null; };
+    const ages = on.map(ageH).filter((x) => x != null).sort((a, b) => a - b);
+    return {
+      onAir: on.length, withNews, pct: on.length ? Math.round((withNews / on.length) * 1000) / 10 : null, pending: pending.length,
+      movers: movers.length, moversWithNews: movers.filter((m) => m.news?.length).length,
+      viaWire: on.filter((s) => s.news?.[0]?.via === 'wire' || s.news?.[0]?.flash).length,
+      viaSearch: on.filter((s) => s.news?.[0]?.via === 'search').length,
+      medianNewsAgeH: ages.length ? Math.round(ages[Math.floor(ages.length / 2)] * 10) / 10 : null,
+      sportsGames: { board: (st.stories || []).filter((s) => SG.has(s.category)).length,
+        desk: (st.desks || []).find((d) => d.id === 'sports')?.stories?.length || 0 },
+      gated: gateNews,
+      archive: (newsroom?.archive?.() || []).length,
+    };
+  }
+
   // --- news + history ------------------------------------------------------
+  // Per-story Google News search for stories the wire did not cover: pending (held off air) first, best rank first,
+  // then aired stories whose only headline is an hour-old search hit. A request budget per cycle, 1.5s apart; a 429 /
+  // 5xx stops the cycle and the scheduler backs off (http.mjs also backs the host off). Results are kept only when
+  // they pass the same strict story scorer as the wire (match.mjs), so an unrelated search hit never airs.
+  let searching = false;
   async function refreshNews() {
-    const stories = enrichTargets(store.getState(), P.newsTopN ?? 10);
-    if (!stories.length) return;
-    let ok = 0, lastErr = null;
-    for (const s of stories) {
+    if (searching) return;
+    searching = true;
+    try { await searchCycle(); } finally { searching = false; }
+  }
+  async function searchCycle() {
+    const st = store.getState();
+    const aired = [...(st.stories || []), ...(st.desks || []).flatMap((d) => d.stories || [])];
+    // a short board (just after a restart, or a quiet news day) searches a little harder
+    const short = (st.stories || []).length < (config.limits?.stories ?? 30);
+    const targets = newsdesk.searchTargets(pending, aired, { max: short ? (P.newsBudgetShort ?? 8) : (P.newsBudget ?? 6) });
+    if (!targets.length) return;
+    let ok = 0, found = 0, lastErr = null;
+    for (const s of targets) {
+      const q = newsQuery(s);
+      if (!q) { newsdesk.setSearch(s.id, [], { found: false }); continue; }
       try {
-        const q = newsQuery(s);
-        if (!q) continue;
-        const items = await fetchHeadlines(q, { max: P.newsMax ?? 2 });
-        newsCache.set(s.id, Array.isArray(items) ? items : []);
+        const raw = await fetchHeadlines(q, { max: 10, throwOnError: true, ttlMs: 15 * 60_000 });
+        const items = (Array.isArray(raw) ? raw : []).map((it) => ({ ...it, outlet: it.source, category: 'search' }));
+        const hits = filterHeadlinesForStory(s, items, latest.airable, { maxAgeMs: 7 * 24 * 3_600_000 });
+        newsdesk.setSearch(s.id, hits);
         ok++;
+        if (hits.length) found++;
       } catch (e) {
         lastErr = e;
+        if (e?.status === 429 || e?.status >= 500) break;
       }
-      await new Promise((r) => setTimeout(r, 750));
+      await new Promise((r) => setTimeout(r, 1500));
     }
-    if (newsCache.size > 200) for (const k of [...newsCache.keys()].slice(0, newsCache.size - 200)) newsCache.delete(k);
-    if (ok) feedOk('news', [...newsCache.values()].filter((v) => v.length).length);
+    log('info', 'news search', { targets: targets.length, ok, found, pending: pending.length, error: lastErr ? errMsg(lastErr) : undefined });
+    if (ok) feedOk('news', newsdesk.stats().searchFound);
     else if (lastErr) feedErr('news', lastErr);
-    reattach();
+    if (found) { rebuild('news'); saveSearch(); } else reattach();
     if (!ok && lastErr) throw lastErr;
   }
 
@@ -297,7 +355,7 @@ export function startIngest(store, config, { sim = false } = {}) {
     // MONEY MOVING: big Polymarket trades on the top board/desk stories (one data-api request per 20 markets).
     schedule('money', config.moments?.moneyPollSec ?? 120, () => moments.pollMoney(), { initialDelayMs: 60_000 });
   }
-  schedule('news', P.newsSec, refreshNews, { initialDelayMs: sim ? 5000 : 25_000 });
+  schedule('news', P.newsSearchSec ?? 90, refreshNews, { initialDelayMs: sim ? 5000 : 25_000 });
 
   // --- SIM -----------------------------------------------------------------
   function loadSimMarkets() {
@@ -402,7 +460,7 @@ export function startIngest(store, config, { sim = false } = {}) {
     rebuild,
     newsroom: () => newsroom,
     moments: () => moments,
-    stop() { newsroom?.stop(); moments.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
+    stop() { saveSearch(); newsroom?.stop(); moments.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
   };
 }
 

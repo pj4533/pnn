@@ -97,9 +97,23 @@ export function storyVolume(story) {
 
 export const CATEGORY = {
   politics: 'Politics', geopolitics: 'World', economy: 'Economy', courts: 'Courts', tech: 'Tech', science: 'Science',
-  health: 'Health', culture: 'Culture', weather: 'Weather', world: 'World',
+  health: 'Health', culture: 'Culture', weather: 'Weather', world: 'World', sports: 'Sports', games: 'Games',
 };
 export const categoryName = (c) => CATEGORY[c] || (c ? c[0].toUpperCase() + c.slice(1) : 'Markets');
+
+/** The accompanying news item of a story (the first with a headline), or null. The server should always attach one. */
+export function newsOf(story) {
+  const n = Array.isArray(story?.news) ? story.news : story?.news ? [story.news] : [];
+  return n.find((x) => x && String(x.title || '').trim()) || null;
+}
+export const newsOutlet = (n) => String(n?.source || n?.outlet || 'News');
+/** "Reuters · 12m ago" (outlet + age; age omitted when the item has no time). */
+export const newsMeta = (n, now = Date.now()) => `${newsOutlet(n)}${n?.publishedAt ? ` · ${ago(n.publishedAt, now)}` : ''}`;
+/** The standard IN THE NEWS block, same markup on every card kind. '' when the item has no headline (the block hides). */
+export function newsLineHtml(n, now = Date.now(), attrs = 'data-drop="6"') {
+  if (!n || !String(n.title || '').trim()) return '';
+  return `<div class="bc-newsline" ${attrs}><span class="bc-nl-h">IN THE NEWS</span><span class="bc-nl-t fit" data-fit-h>${esc(n.title)}</span><span class="bc-nl-s fit">${esc(newsMeta(n, now))}</span></div>`;
+}
 
 /** Distinct neon colors for outcome bars. */
 export const OUTCOME_COLORS = ['#00f0ff', '#ff2bd6', '#ffb13b', '#a78bff', '#3dffb0'];

@@ -10,6 +10,9 @@
 //   nr.applyBoosts(stories, markets) -> stories   boosted stories moved to the front, with story.flash + story.tags 'news'
 //   nr.newsFor(story, list) -> list               prepends the flash headline to story.news when the story is boosted
 //   nr.stop()
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { log } from './log.mjs';
 import wireConfig from './wire-config.mjs';
 import { createWire } from './sources/wire.mjs';
@@ -17,8 +20,12 @@ import { matchMarkets, analyzeCluster } from './editorial/match.mjs';
 import { tokenSet, jaccard } from './editorial/text.mjs';
 import { isMarginBracket } from './editorial/rank.mjs';
 import { buildFlash, marketDataLine } from './editorial/flash.mjs';
+import { classify } from './editorial/filter.mjs';
 
 const errMsg = (e) => String(e?.message || e).slice(0, 300);
+const SG = new Set(['sports', 'games', 'esports']);
+const ARCHIVE_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'news-archive.json');
+const ARCHIVE_HOURS = 48, ARCHIVE_MAX = 8000;
 const THEME = { elections: 'politics', politics: 'politics', geopolitics: 'world', world: 'world', economy: 'economy', courts: 'courts',
   tech: 'tech', science: 'science', health: 'health', culture: 'culture', weather: 'weather' };
 
@@ -37,6 +44,53 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
   const timers = [];
   let queue = Promise.resolve();
   let wire = null;
+
+  // ---- news archive: 48h of wire headlines (the wire ring keeps 6h), the pool every story's headline comes from
+  // (newsdesk.mjs). A new array only when something changed, at most once a minute, so per-story matches can cache on
+  // its identity. Saved to data/news-archive.json so a restart does not air a newsless board while the wire refills.
+  const archiveMap = new Map();   // key -> {title, outlet, url, publishedAt, category, source}
+  let archiveArr = [];
+  let archiveAt = 0, archiveDirty = false;
+  const aKey = (it) => `${String(it.url || '').replace(/[?#].*$/, '')}|${String(it.title).toLowerCase()}`;
+  function archiveAdd(items) {
+    const cut = Date.now() - ARCHIVE_HOURS * 3_600_000;
+    let added = 0;
+    for (const it of items || []) {
+      if (!it?.title || !(Date.parse(it.publishedAt) >= cut)) continue;
+      const k = aKey(it);
+      if (archiveMap.has(k)) continue;
+      archiveMap.set(k, { title: it.title, outlet: String(it.outlet || '').replace(/ via .*$/, ''), url: it.url || null, publishedAt: it.publishedAt,
+        category: it.category || 'general', source: it.source || null });
+      added++;
+    }
+    if (added) archiveDirty = true;
+    return added;
+  }
+  function archivePublish(force = false) {
+    if (!archiveDirty && !force) return;
+    if (!force && Date.now() - archiveAt < 60_000) return;
+    const cut = Date.now() - ARCHIVE_HOURS * 3_600_000;
+    for (const [k, v] of archiveMap) if (!(Date.parse(v.publishedAt) >= cut)) archiveMap.delete(k);
+    let list = [...archiveMap.values()].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+    if (list.length > ARCHIVE_MAX) { for (const v of list.slice(ARCHIVE_MAX)) archiveMap.delete(aKey(v)); list = list.slice(0, ARCHIVE_MAX); }
+    archiveArr = list;
+    archiveAt = Date.now();
+    archiveDirty = false;
+  }
+  function archiveSave() {
+    if (sim || !archiveArr.length) return;
+    try { fs.mkdirSync(path.dirname(ARCHIVE_FILE), { recursive: true }); fs.writeFileSync(ARCHIVE_FILE, JSON.stringify(archiveArr)); }
+    catch (e) { log('warn', 'news archive save failed', { error: errMsg(e) }); }
+  }
+  if (!sim) {
+    try { const n = archiveAdd(JSON.parse(fs.readFileSync(ARCHIVE_FILE, 'utf8'))); archivePublish(true); log('info', 'news archive loaded', { items: n }); }
+    catch { /* first run */ }
+  }
+  function absorbWire() {
+    if (!wire) return;
+    archiveAdd(wire.items({ limit: 5000 }));
+    archivePublish();
+  }
 
   store.feeds.wire = { ok: false, lastOk: null, lastError: null, count: 0 };
   Object.assign(store.feeds.wire, { feedsOk: 0, feedsTotal: 0, lastPoll: null, items: 0, ...statsView() });
@@ -98,6 +152,10 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
       log('warn', 'flash match failed', { cluster: cluster.id, title: cluster.title, error: errMsg(e) });
       return;
     }
+    // Sports / gaming headlines only go with sports / games markets and the rest never land on them
+    // ("NCAA golf awards: Best team" is not Oscars news).
+    const sgC = SG.has(String(cluster.category || '').toLowerCase());
+    matches = (matches || []).filter((r) => SG.has(String(r.market?.category || '').toLowerCase()) === sgC);
     const ms = Date.now() - t0;
     if (!matches?.length) { log('info', 'wire no market', { title: cluster.title, outlets: cluster.outlets, ms }); return; }
     // On-air bar: a weak best match is noise; rows from other events must be nearly as strong as the lead; a market
@@ -254,6 +312,8 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
       const cands = [...(simClusters || []), ...live, ...fired].filter((c) => c?.id && !seen.has(c.id) && seen.add(c.id));
       let best = null;
       for (const c of cands) {
+        // Story of the Day is the day's news story, never a sports / gaming cluster (a small slice, never the lead)
+        if (SG.has(String(c.category || '').toLowerCase())) continue;
         let rows = [];
         try { rows = await matchMarkets(c, poolMarkets, { config, search: false, limit: 20, perEvent: 1, now }); } catch { rows = []; }
         if (!rows.length || rows[0].score < F.minScore) rows = [];
@@ -261,13 +321,13 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
         for (const r of rows) {
           if (r.score < F.sotdMinScore) continue;
           const hit = byMarket.get(r.market.id);
-          if (!hit) continue;
+          if (!hit || SG.has(hit.st.category)) continue;
           addMark(hit.st.id, c);
           if (!stories.has(hit.st.id)) stories.set(hit.st.id, { st: hit.st, m: hit.m });
         }
         // The flash matcher is strict (one best market); a Story of the Day is a topic: also take every aired story
         // that shares >= 2 of the cluster's (expanded) key words.
-        for (const st of looseStories(c, pool)) if (!stories.has(st.id)) { addMark(st.id, c); stories.set(st.id, { st, m: st.lead }); }
+        for (const st of looseStories(c, pool)) if (!stories.has(st.id) && !SG.has(st.category)) { addMark(st.id, c); stories.set(st.id, { st, m: st.lead }); }
         for (const [id, x] of stories) if (deadRow(x.m)) stories.delete(id);
         if (stories.size < F.sotdMinStories) continue;
         const outlets = c.outlets?.length || c.independentOutlets || 1;
@@ -326,8 +386,10 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     const siblings = allMarkets.filter((m) => m.eventId === lead.eventId).sort((a, c) => c.yesPrice - a.yesPrice).slice(0, 5);
     const markets = siblings.length ? siblings : [lead];
     if (!markets.includes(lead)) markets[markets.length - 1] = lead;
+    let category = lead.category;
+    try { category = classify(lead, config).category || category; } catch { /* keep */ }
     return {
-      id: b.storyId || lead.eventId, eventTitle: lead.eventTitle || lead.title, category: lead.category,
+      id: b.storyId || lead.eventId, eventTitle: lead.eventTitle || lead.title, category,
       sources: [...new Set(markets.map((m) => m.source))], lead, markets, score: 0, kind: 'news',
       headline: marketDataLine(lead), dek: `In the news: ${b.flash.credit || 'the wire'} reported it`,
       thin: !!lead0.thin, history: null, news: [],
@@ -351,6 +413,8 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
         if (!st) { byId ||= new Map(allMarkets.map((m) => [m.id, m])); st = adhocStory(b, byId, allMarkets); }
       }
       if (!st) continue;
+      // sports / games flashes still pop up, but never jump the board (its <= 3 sports/games cap and no sports lead)
+      if (SG.has(st.category)) { if (i >= 0) rest.splice(i, 0, st); continue; }
       const f = b.flash;
       front.push({ ...st, tags: [...new Set([...(st.tags || []), 'news'])], flash: { id: f.id, headline: f.headline, credit: f.credit, newsAt: f.newsAt, url: f.url } });
     }
@@ -415,13 +479,16 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     let pend = 0;
     wire.on('items', () => {
       if (pend) return;
-      pend = setTimeout(() => { pend = 0; try { publishWire(wire.items({ limit: 120 })); refreshHealth(); } catch (e) { log('warn', 'wire state failed', { error: errMsg(e) }); } }, 3000);
+      pend = setTimeout(() => { pend = 0; try { publishWire(wire.items({ limit: 120 })); refreshHealth(); absorbWire(); } catch (e) { log('warn', 'wire state failed', { error: errMsg(e) }); } }, 3000);
       pend.unref?.();
     });
     wire.start();
-    const iv = setInterval(() => { try { refreshHealth(); publishWire(wire.items({ limit: 120 })); } catch (e) { log('warn', 'wire health failed', { error: errMsg(e) }); } }, 30_000);
+    const iv = setInterval(() => { try { refreshHealth(); publishWire(wire.items({ limit: 120 })); absorbWire(); } catch (e) { log('warn', 'wire health failed', { error: errMsg(e) }); } }, 30_000);
     iv.unref?.();
     timers.push(iv);
+    const sv = setInterval(archiveSave, 10 * 60_000);
+    sv.unref?.();
+    timers.push(sv);
   }
 
   // ---- SIM: canned wire, no network
@@ -439,6 +506,7 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     ];
     const items = () => canned.map(([outlet, title, category, min]) => ({ title, outlet, category, publishedAt: ago(min), url: 'https://example.invalid/sim' }));
     store.setState({ wire: crawlItems(items()) });
+    archiveAdd(items()); archivePublish(true);
     Object.assign(store.feeds.wire, { ok: true, lastOk: new Date().toISOString(), lastPoll: new Date().toISOString(), lastError: 'SIM: canned wire', feedsOk: 1, feedsTotal: 1, items: canned.length, count: 1 });
     const clusters = [
       { title: 'Fed officials signal a December rate hike remains on the table', outlets: ['Reuters', 'CNBC'], category: 'economy' },
@@ -479,6 +547,7 @@ export function startNewsroom(store, config, { sim = false, getMarkets, getAlias
     refreshSotd: (clusters) => refreshSotd(clusters ?? (sim ? simSotdClusters : null)),
     stats: () => ({ ...stats, boosts: activeBoosts().length }),
     wire: () => wire,
-    stop() { wire?.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
+    archive: () => archiveArr,
+    stop() { archiveSave(); wire?.stop(); timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); },
   };
 }

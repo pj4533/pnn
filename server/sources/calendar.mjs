@@ -61,6 +61,7 @@ export function buildCountdown(markets, { now = Date.now(), storyIdFor = () => n
       title: e.kind.title,
       at: new Date(e.at).toISOString(),
       storyId,
+      marketId: lead.id,
       label: labelOf(lead),
       yesPrice: lead.yesPrice,
       change1d: lead.change1d ?? null,

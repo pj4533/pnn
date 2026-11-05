@@ -33,6 +33,17 @@ for (const s of status) {
 }
 console.log(`${ok}/${status.length} feeds returned fresh items; ring holds ${wire.items({ limit: 5000 }).length} items`);
 
+// Sports and gaming feeds (2026-11-05): they bypass the blanket 'sports' filter, so show what they contributed.
+{
+  const cats = {};
+  for (const i of wire.items({ limit: 5000 })) cats[i.category] = (cats[i.category] || 0) + 1;
+  console.log(`items by category: ${Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join(' ')}`);
+  for (const c of ['sports', 'games']) {
+    const feedsOk = status.filter((x) => x.ok && x.items > 0 && wire.items({ limit: 5000, category: c }).some((i) => i.source === x.id)).length;
+    console.log(` ${c}: ${wire.items({ limit: 5000, category: c }).length} headlines from ${feedsOk} feeds, e.g. ${wire.items({ limit: 2, category: c }).map((i) => `"${i.title.slice(0, 60)}"`).join(', ')}`);
+  }
+}
+
 const fired = wire.detect();
 console.log(`\n=== BREAKING (fired now: ${fired.length})`);
 for (const c of fired) console.log(` * [${c.reason}] ${c.title}  (${c.outlets.join(', ')})`);

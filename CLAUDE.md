@@ -21,12 +21,13 @@ The MVP is built: live Polymarket and Kalshi feeds, editorial filter and ranking
 
 ## Editorial rules (non-negotiable)
 
+- **News drives the markets:** every on-air market carries an accompanying news item; markets without matching news don't air. What people are reporting on is what we use the markets to predict (user directive, 2026-11-05). Sports and video games air only off a fresh sports/gaming wire headline, as a small slice (SPORTS & GAMES desk, max 3 on the board, never the lead).
 - **Odds are not facts.** Lead with the data and how it changed, and don't repeat "Bettors" (the user asked for this on 2026-11-04). Write "Fed December hike odds rise to 80%, up 7 points today" or "Ossoff climbs to 29% for the 2028 Democratic nomination". Every line must still read as a probability, with a %, "odds" or "chance" tied to the subject. Never write "X will…" or "X is expected to…". Attribution comes from the frame: the source line on each story and the standing "Odds are not facts" disclaimer.
 - **Always show the source, time and size:** which exchange, when it was updated, and the 24h volume. Flag thin markets.
 - **Never present a market as a call.** Use official sources for what actually happened.
 - **Plain English.** Prices become percentages and moves become "up 12 points today". No jargon (¢, YES/NO tokens, bps) on screen.
 - **Stay independent.** No affiliate links, referral codes or sponsored embeds.
-- **Filter the noise:** sports, esports, crypto price brackets, promo markets and novelty markets like tweet counts are off by default. Keep categories in config.
+- **Filter the noise:** per-game sports and esports bets (matchups, spreads, props), crypto price brackets, promo markets and novelty markets like tweet counts are off. Sports/games futures (champions, awards, coaches, transfers, game releases) are allowed but news-gated. Keep categories in config.
 - **Sensitive markets** (war, death, assassination) need an explicit policy. Ask the user before showing them.
 
 ## Data rules

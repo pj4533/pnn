@@ -29,8 +29,8 @@ const SCHED = { top: [6, 8], sotd: [9, 11], countdown: [11, 13] }; // after a ra
 const SCHED_ORDER = ['top', 'sotd', 'countdown'];
 const RECENT_MS = 5 * 60000; // no story twice within 5 minutes, under any banner
 // category groups for "no two similar stories in a row"
-const GROUP = { elections: 'politics', courts: 'politics', geopolitics: 'world', science: 'tech', health: 'tech', weather: 'culture' };
-const DESK_IDS = new Set(['economy', 'tech', 'world', 'culture', 'politics']);
+const GROUP = { elections: 'politics', courts: 'politics', geopolitics: 'world', science: 'tech', health: 'tech', weather: 'culture', games: 'sports' };
+const DESK_IDS = new Set(['economy', 'tech', 'world', 'culture', 'politics', 'sports']);
 const groupOf = (s) => (s?.category ? GROUP[s.category] || s.category : DESK_IDS.has(s?.id) ? s.id : null); // stories by category; desks by id
 const SPEED = Number(new URLSearchParams(location.search).get('fast')) > 0 ? 10 : 1; // ?fast=1: 10x clock for tests
 const T0 = Date.now();
@@ -38,8 +38,8 @@ const clock = () => T0 + (Date.now() - T0) * SPEED; // scaled "now" for freshnes
 const ms$ = (ms) => ms / SPEED;
 const MINI_POOL = 12;         // TOP STORIES minis draw from board ranks 2..12
 const KEYS = ['top', 'focus', 'movers', 'week', 'desk', 'sotd', 'countdown'];
-const DESK_TAG = { economy: 'ECONOMY', tech: 'TECH', world: 'WORLD', culture: 'CULTURE', politics: 'POLITICS' };
-const DESK_ORDER = ['economy', 'tech', 'world', 'culture', 'politics'];
+const DESK_TAG = { economy: 'ECONOMY', tech: 'TECH', world: 'WORLD', culture: 'CULTURE', politics: 'POLITICS', sports: 'SPORTS & GAMES' };
+const DESK_ORDER = ['economy', 'tech', 'world', 'culture', 'politics', 'sports'];
 const rand = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const futureCountdown = (s) => (Array.isArray(s?.countdown) ? s.countdown : []).filter((c) => c?.at && Date.parse(c.at) > Date.now());
 
@@ -136,7 +136,7 @@ export function createDirector({ overlay, chyron, scene }) {
     if (!m) return null;
     return {
       id, eventTitle: m.eventTitle || m.title, category: m.category, sources: [m.source], lead: m, markets: [m], kind: 'mover',
-      headline: moverHeadline(m), dek: '', thin: !!m.thin, history: null, news: [], swing: null, exchanges: null,
+      headline: moverHeadline(m), dek: '', thin: !!m.thin, history: null, news: Array.isArray(m.news) ? m.news : m.news ? [m.news] : [], swing: null, exchanges: null,
       visual: { type: 'dial', region: null, theme: m.category },
     };
   }

@@ -467,6 +467,7 @@ function diversify(stories) {
     }
     adj.push({ s, v: s.score * (k <= 2 ? 1 : 0.6 ** (k - 2)) * (isMarginBracket(s) ? 0.2 : 1) });
   }
+  for (const x of adj) Object.defineProperty(x.s, '_v', { value: x.v, writable: true, configurable: true, enumerable: false });
   return adj.sort((a, b) => b.v - a.v).map((x) => x.s);
 }
 
@@ -499,29 +500,40 @@ function qualifies(s, now) {
   return true;
 }
 
+// Sports, video games and esports share one small board allowance (user, 2026-11-05: "don't overdo it").
+export const SPORTS_GAMES = new Set(['sports', 'games', 'esports']);
+const SG_BOARD_MAX = 3;
+const isSG = (s) => SPORTS_GAMES.has(s?.category);
 function selectBoard(ranked, limit, now, enrich) {
   const quota = (c) => QUOTA[c] ?? QUOTA_DEFAULT;
   const picked = new Set();
   const counts = {};
-  const take = (s) => { picked.add(s); counts[boardCat(s)] = (counts[boardCat(s)] || 0) + 1; };
+  let sg = 0;
+  const perHead = new Map();   // one headline carries at most 2 board stories (no board of five "Anthropic IPO" questions)
+  const head = (s) => s.news?.[0]?.title || null;
+  const take = (s) => { picked.add(s); counts[boardCat(s)] = (counts[boardCat(s)] || 0) + 1; if (isSG(s)) sg++; if (head(s)) perHead.set(head(s), (perHead.get(head(s)) || 0) + 1); };
+  const sgFull = (s) => (isSG(s) && sg >= SG_BOARD_MAX) || (head(s) && (perHead.get(head(s)) || 0) >= 2);
   // 1. reserve a seat for the best qualifying story in every category
   const bestByCat = new Map();
   for (const s of ranked) if (!bestByCat.has(boardCat(s)) && qualifies(s, now)) bestByCat.set(boardCat(s), s);
-  for (const s of bestByCat.values()) if (picked.size < limit) take(s);
+  for (const s of bestByCat.values()) if (picked.size < limit && !sgFull(s)) take(s);
   // 2. fill by rank within quotas, qualifying stories first, then anything within quota
   for (const pass of [true, false]) {
     for (const s of ranked) {
       if (picked.size >= limit) break;
-      if (picked.has(s) || (counts[boardCat(s)] || 0) >= quota(boardCat(s))) continue;
+      if (picked.has(s) || sgFull(s) || (counts[boardCat(s)] || 0) >= quota(boardCat(s))) continue;
       if (pass && !qualifies(s, now)) continue;
       take(s);
     }
   }
   // 3. not enough candidates: relax the quotas
-  for (const s of ranked) { if (picked.size >= limit) break; if (!picked.has(s)) take(s); }
+  for (const s of ranked) { if (picked.size >= limit) break; if (!picked.has(s) && !sgFull(s)) take(s); }
   const order = new Map(ranked.map((s, i) => [s, i]));
   const board = [...picked].sort((a, b) => order.get(a) - order.get(b));
-  return orderTop(board, 6, 4, (s) => qualifies(s, now) && topWorthy(s, enrich), (s) => qualifies(s, now));
+  // sports / games never lead the newscast
+  const lead = board.find((s) => !isSG(s) && qualifies(s, now) && topWorthy(s, enrich)) || board.find((s) => !isSG(s));
+  const rest = lead ? [lead, ...board.filter((s) => s !== lead)] : board;
+  return orderTop(rest, 6, 4, (s) => qualifies(s, now) && topWorthy(s, enrich), (s) => qualifies(s, now));
 }
 
 // #1 stays the strongest story. The rest of the top `n` is the best story of each other category (in rank
@@ -559,17 +571,23 @@ export const DESKS = [
   { id: 'world', title: 'WORLD DESK', categories: ['geopolitics', 'world'] },
   { id: 'culture', title: 'CULTURE DESK', categories: ['culture', 'weather'] },
   { id: 'politics', title: 'POLITICS DESK', categories: ['politics', 'courts'] },
+  // News-gated (DECISIONS 2026-11-05 news-driven PNN): only stories matched to a wire headline <= 24h, at most 6.
+  { id: 'sports', title: 'SPORTS & GAMES', categories: ['sports', 'games', 'esports'], max: 6 },
 ];
 function buildDesks(ranked, now, { max = 12, min = 2 } = {}) {
   const desks = [];
   for (const d of DESKS) {
     const fam = {};
+    const heads = {};
     const picks = [];
     for (const s of ranked) {
-      if (picks.length >= max) break;
+      if (picks.length >= (d.max ?? max)) break;
       if (!d.categories.includes(boardCat(s)) || !qualifies(s, now)) continue;
+      const h = s.news?.[0]?.title;
+      if (h && (heads[h] || 0) >= 2) continue;   // one headline, at most 2 stories per desk
       const f = familyOf(s);
       if ((fam[f] = (fam[f] || 0) + 1) > (f.startsWith('ladder:') ? 1 : 2)) continue;   // no desk of six Fed-rate brackets or two gas lines
+      if (h) heads[h] = (heads[h] || 0) + 1;
       picks.push(s);
     }
     if (picks.length >= min) desks.push({ id: d.id, title: d.title, categories: d.categories, stories: picks });
@@ -595,6 +613,47 @@ function capPick(items, limit, passes, caps = {}) {
     }
   }
   return items.filter((x) => picked.has(x));
+}
+
+// ---------- news gate (DECISIONS 2026-11-05: news-driven PNN) ----------
+// Every story that airs carries a matching headline. enrich.newsLookup(story) -> {items, outlets24, freshH, wire24}
+// (server/newsdesk.mjs). Without it (tests, SIM) nothing is gated. Stories with no headline go to `pending` (the
+// search queue) instead of airing. Sports / games need a wire headline <= 24h. Fresh, multi-outlet coverage lifts a
+// story; coverage that is only days old decays it.
+export function newsFactor(n) {
+  if (!n?.items?.length || n.freshH == null) return 1;
+  const h = n.freshH;
+  const fresh = h <= 2 ? 1.35 : h <= 6 ? 1.2 : h <= 12 ? 1.1 : h <= 24 ? 1 : h <= 48 ? 0.8 : h <= 96 ? 0.65 : 0.5;
+  return fresh * (1 + 0.1 * Math.min(4, Math.max(0, (n.outlets24 || 0) - 1)));
+}
+const NEWS_EVAL_MAX = 1500;   // lower-ranked stories never reach air; skip their lookups
+function newsGate(live, enrich, nowMs, deadIds, dropped) {
+  const fn = enrich?.newsLookup;
+  if (typeof fn !== 'function') return { ranked: live, pending: [], news: { gated: false } };
+  const t0 = Date.now();
+  const ok = [], pending = [];
+  let sgDrop = 0, none = 0;
+  live.forEach((s, i) => {
+    let n = null;
+    if (i < NEWS_EVAL_MAX || isSG(s)) { try { n = fn(s); } catch { n = null; } }
+    const items = n?.items || [];
+    if (!items.length || (isSG(s) && !n.wire24)) {
+      if (isSG(s)) sgDrop++;
+      else { none++; if (i < NEWS_EVAL_MAX && pending.length < 120 && qualifies(s, nowMs)) pending.push(s); }
+      deadIds.add(s.id);
+      return;
+    }
+    s.news = items;
+    s.newsScore = Math.round(newsFactor(n) * 100) / 100;
+    s.score = Math.round(s.score * s.newsScore * 100) / 100;
+    ok.push({ s, i });
+  });
+  if (none) dropped['news:none'] = none;
+  if (sgDrop) dropped['news:sports-games'] = sgDrop;
+  // re-rank by the news-weighted score; ties keep the diversified order
+  const v = (x) => (x.s._v ?? x.s.score) * x.s.newsScore;   // the diversified (family-damped) value, news-weighted
+  ok.sort((a, b) => v(b) - v(a) || a.i - b.i);
+  return { ranked: ok.map((x) => x.s), pending, news: { gated: true, ms: Date.now() - t0, withNews: ok.length, pending: pending.length, sgDropped: sgDrop } };
 }
 
 // ---------- main ----------
@@ -683,13 +742,15 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
   stories.sort((a, b) => b.score - a.score);
   const merged = diversify(mergeCrossSource(stories));
   const deadIds = new Set();
-  const ranked = merged.filter((s) => {
+  const live = merged.filter((s) => {
     const r = deadReason(s, nowMs);
     if (!r) return true;
     dropped[r] = (dropped[r] || 0) + 1;
     deadIds.add(s.id);
     return false;
   });
+  // News gate: stories without a matching headline do not air (they wait in `pending` for a news search).
+  const { ranked, pending, news: newsStats } = newsGate(live, enrich, nowMs, deadIds, dropped);
 
   // movers: one per event, by weighted |change1d| (faded when flat, boosted by a move in the last hour), skipping
   // decay drift and trivial moves. Then picked with caps so the ticker is not 20 election races: any one category
@@ -717,7 +778,10 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     if (moverSeen.has(m.storyId) || deadIds.has(m.storyId)) continue;
     moverSeen.add(m.storyId);
     const st = storyById.get(m.storyId);
-    uniq.push({ m, cat: st ? boardCat(st) : m.category, fam: st ? familyOf(st) : `event:${m.storyId}` });
+    if (newsStats.gated && !st?.news?.length) continue;   // a mover card carries its story's headline
+    if (SPORTS_GAMES.has(st?.category) && uniq.filter((x) => SPORTS_GAMES.has(x.st?.category)).length >= 2) continue;
+    if (st?.news?.length) m.news = st.news.slice(0, 2);
+    uniq.push({ m, st, cat: st ? boardCat(st) : m.category, fam: st ? familyOf(st) : `event:${m.storyId}` });
   }
   const strongMover = (m) => (m.volume24h || 0) >= HOT_VOLUME && (abs(m.change1d) >= 0.03 || hotNow(m));
   const movers = capPick(uniq, limMovers, [
@@ -736,7 +800,8 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     .map((x) => ({ s: x.s, cat: boardCat(x.s), fam: null }));
   // Only non-thin stories, unless there are none at all (then the thin ones, ranked, rather than nothing).
   const solid = closingRanked.filter((x) => !x.s.thin);
-  const closing = capPick(solid.length ? solid : closingRanked, limClosing, [() => 'caps', () => true], { cat: 3 }).map((x) => x.s);
+  const sgOk = (list) => { let n = 0; return list.filter((x) => !isSG(x.s) || ++n <= 2); };   // <= 2 sports / games
+  const closing = capPick(sgOk(solid.length ? solid : closingRanked), limClosing, [() => 'caps', () => true], { cat: 3 }).map((x) => x.s);
   const board = selectBoard(ranked, limStories, nowMs, enrich);
   const desks = buildDesks(ranked, nowMs, { max: L.deskStories ?? 12 });
   const aired = [...board, ...desks.flatMap((d) => d.stories)];
@@ -752,7 +817,8 @@ export function buildStories(markets, config = {}, { now = Date.now(), enrich = 
     desks,
     movers,
     closing,
-    stats: { input: (markets || []).length, kept, events: groups.size, dropped },
+    stats: { input: (markets || []).length, kept, events: groups.size, dropped, news: newsStats },
+    pending,   // stories held off air for want of a headline, best first (ingest searches news for them)
     aliases: Object.fromEntries(absorbed),   // merged-away event id -> aired story id
   };
 }

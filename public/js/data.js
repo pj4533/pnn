@@ -6,7 +6,7 @@ import { report } from './util.js';
 const params = new URLSearchParams(location.search);
 export const FIXTURE = params.has('fixture');
 
-const TIME_KEYS = new Set(['generatedAt', 'updatedAt', 'closesAt', 'lastOk', 'publishedAt', 'at']);
+const TIME_KEYS = new Set(['generatedAt', 'updatedAt', 'closesAt', 'lastOk', 'publishedAt', 'newsAt', 'at']);
 /** Shift every timestamp in the fixture so "updated 2m ago" reads right whenever it is loaded. */
 function rebase(obj, offsetMs) {
   if (Array.isArray(obj)) return obj.map((x) => rebase(x, offsetMs));

@@ -126,9 +126,9 @@ if (typeof document !== 'undefined' && document.fonts?.load) {
     .then(() => { fontsReady = true; for (const l of LABELS) l.redraw(); }).catch(() => {});
 }
 // Label: Sprite with a fixed-size canvas; text scaled to fit. opts: { w, h (canvas px), height (world units), color, glow, font, sub, subColor, subFont, align,
-//   mainY / subY (baseline-middle as a fraction of h; defaults 0.36 / 0.8 with a sub line) }
+//   mainY / subY (baseline-middle as a fraction of h; defaults 0.36 / 0.8 with a sub line), plate (default true: rounded dark backing, plateAlpha 0.55), crisp (heavier dark outline, no glow blur: for small labels over bright arcs) }
 export function makeLabel(text, opts = {}) {
-  const o = { w: 1024, h: 256, height: 1, color: '#ffffff', glow: '#ff2bd6', font: '900 150px Orbitron', sub: null, subColor: '#00f0ff', subFont: '700 64px Rajdhani', align: 'center', bright: 0.8, ...opts };
+  const o = { w: 1024, h: 256, height: 1, color: '#ffffff', glow: '#ff2bd6', font: '900 150px Orbitron', sub: null, subColor: '#00f0ff', subFont: '700 64px Rajdhani', align: 'center', bright: 0.8, plate: true, plateAlpha: 0.55, crisp: false, ...opts };
   const canvas = document.createElement('canvas');
   canvas.width = o.w; canvas.height = o.h;
   const ctx = canvas.getContext('2d');
@@ -150,6 +150,24 @@ export function makeLabel(text, opts = {}) {
     const px = Math.max(10, Math.floor(Number(m[1]) * maxW / w));
     return font.replace(/\d+px/, px + 'px');
   }
+  // dark rounded backing plate (~55% alpha) hugging the text so labels stay readable over bright scene areas (sun, sky, bloom)
+  function plate(lines) {
+    if (o.plate === false) return;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, big = 0;
+    for (const l of lines) {
+      const px = Number((l.font.match(/(\d+)px/) || [0, 40])[1]);
+      ctx.font = l.font; const w = ctx.measureText(l.str).width;
+      const lx = o.align === 'left' ? l.x : o.align === 'right' ? l.x - w : l.x - w / 2;
+      x0 = Math.min(x0, lx); x1 = Math.max(x1, lx + w); y0 = Math.min(y0, l.y - px * 0.58); y1 = Math.max(y1, l.y + px * 0.58); big = Math.max(big, px);
+    }
+    const padX = big * 0.3, padY = big * 0.14;
+    x0 = Math.max(1, x0 - padX); x1 = Math.min(o.w - 1, x1 + padX); y0 = Math.max(1, y0 - padY); y1 = Math.min(o.h - 1, y1 + padY);
+    const r = Math.min((y1 - y0) / 2, big * 0.3);
+    ctx.save(); ctx.shadowBlur = 0; ctx.fillStyle = `rgba(6,0,22,${o.plateAlpha})`;
+    ctx.beginPath();
+    ctx.moveTo(x0 + r, y0); ctx.lineTo(x1 - r, y0); ctx.arcTo(x1, y0, x1, y0 + r, r); ctx.lineTo(x1, y1 - r); ctx.arcTo(x1, y1, x1 - r, y1, r);
+    ctx.lineTo(x0 + r, y1); ctx.arcTo(x0, y1, x0, y1 - r, r); ctx.lineTo(x0, y0 + r); ctx.arcTo(x0, y0, x0 + r, y0, r); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
   function redraw() {
     ctx.clearRect(0, 0, o.w, o.h);
     const hasSub = cur.sub != null && cur.sub !== '';
@@ -157,19 +175,24 @@ export function makeLabel(text, opts = {}) {
     const x = o.align === 'left' ? pad : o.align === 'right' ? o.w - pad : o.w / 2;
     ctx.textAlign = o.align; ctx.textBaseline = 'middle';
     const mainY = o.h * (hasSub ? (o.mainY ?? 0.36) : 0.5);
-    ctx.font = fitFont(o.font, cur.text, o.w - pad * 2);
+    const subY = o.h * (o.subY ?? 0.8);
+    const mainFont = fitFont(o.font, cur.text, o.w - pad * 2);
+    const subFont = hasSub ? fitFont(o.subFont, cur.sub, o.w - pad * 2) : null;
+    plate([{ str: cur.text, font: mainFont, x, y: mainY }, ...(hasSub ? [{ str: cur.sub, font: subFont, x, y: subY }] : [])]);
+    ctx.textAlign = o.align; ctx.textBaseline = 'middle';
+    ctx.font = mainFont;
     // legibility first: a dark outline under the letters, then a small tight glow (was a wide double glow)
-    ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(6,0,22,0.88)'; ctx.lineWidth = o.h * 0.05;
+    ctx.lineJoin = 'round'; ctx.strokeStyle = o.crisp ? 'rgba(6,0,22,0.98)' : 'rgba(6,0,22,0.88)'; ctx.lineWidth = o.h * (o.crisp ? 0.09 : 0.05);
     ctx.shadowBlur = 0; ctx.strokeText(cur.text, x, mainY);
-    ctx.shadowColor = cur.glow; ctx.shadowBlur = o.h * 0.035;
+    ctx.shadowColor = cur.glow; ctx.shadowBlur = o.crisp ? 0 : o.h * 0.035;
     ctx.fillStyle = cur.color;
     ctx.fillText(cur.text, x, mainY);
     if (hasSub) {
-      ctx.font = fitFont(o.subFont, cur.sub, o.w - pad * 2);
-      ctx.shadowBlur = 0; ctx.lineWidth = o.h * 0.035; ctx.strokeText(cur.sub, x, o.h * (o.subY ?? 0.8));
+      ctx.font = subFont;
+      ctx.shadowBlur = 0; ctx.lineWidth = o.h * 0.035; ctx.strokeText(cur.sub, x, subY);
       ctx.shadowColor = o.subColor || cur.glow; ctx.shadowBlur = o.h * 0.02;
       ctx.fillStyle = o.subColor;
-      ctx.fillText(cur.sub, x, o.h * (o.subY ?? 0.8));
+      ctx.fillText(cur.sub, x, subY);
     }
     tex.needsUpdate = true;
   }

@@ -60,6 +60,7 @@ body[data-desk="economy"] .cy-tag.desk { background: linear-gradient(90deg, #12b
 body[data-desk="tech"] .cy-tag.desk { background: linear-gradient(90deg, #00b8d4, var(--cyan)); color: #1a0533; text-shadow: none; }
 body[data-desk="world"] .cy-tag.desk { background: linear-gradient(90deg, #6a4dff, var(--violet)); }
 body[data-desk="culture"] .cy-tag.desk { background: linear-gradient(90deg, var(--magenta), var(--pink)); }
+body[data-desk="sports"] .cy-tag.desk { background: linear-gradient(90deg, #8fd11f, #c6ff3d); color: #1a0533; text-shadow: none; }
 body[data-desk="politics"] .cy-tag.desk { background: var(--amber); color: #1a0533; text-shadow: none; }
 /* ALSO MOVING / COMING UP: the lower third carries something new while a full-screen card is up (watchability #5) */
 .cy-tag.alt { background: linear-gradient(90deg, #3dffb0, var(--cyan)); color: #1a0533; text-shadow: none; }

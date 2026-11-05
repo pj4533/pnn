@@ -122,8 +122,11 @@ export function compileFilters(cfg) {
   return Object.entries(f).map(([name, list]) => ({ name, list: (list || []).map((r) => (r instanceof RegExp ? r : new RegExp(String(r), 'i'))) }));
 }
 /** Returns the filter group name that rejects this text ('sensitive', 'sports', ...) or null. */
-export function rejectReason(text, compiled) {
-  for (const g of compiled) for (const r of g.list) if (r.test(text)) return g.name;
+export function rejectReason(text, compiled, skip = null) {
+  for (const g of compiled) {
+    if (skip && skip.includes(g.name)) continue;   // feed.skipFilters: e.g. sports/gaming feeds skip the 'sports' group
+    for (const r of g.list) if (r.test(text)) return g.name;
+  }
   return null;
 }
 
@@ -142,7 +145,7 @@ export function normalizeItems(feed, raw, cfg, compiledFilters, now = Date.now()
     }
     if (!title || r.ts == null) { if (stats) stats.undated++; continue; }
     if (now - r.ts > maxAge || r.ts - now > maxFuture) { if (stats) stats.old++; continue; }
-    const why = rejectReason(`${title} ${feed.kind === 'nws' ? '' : r.desc || ''}`, compiledFilters);
+    const why = rejectReason(`${title} ${feed.kind === 'nws' ? '' : r.desc || ''}`, compiledFilters, feed.skipFilters);
     if (why) { if (stats) stats.filtered[why] = (stats.filtered[why] || 0) + 1; continue; }
     const marker = cfg.markers ? cfg.markers.test(title) || cfg.markers.test((r.desc || '').slice(0, 40)) : false;
     let official = false;

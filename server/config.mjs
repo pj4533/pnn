@@ -39,6 +39,25 @@ export default {
         'pop-culture', 'movies', 'music', 'awards', 'oscars', 'celebrities', 'tv', 'video-games',
         'weather', 'climate', 'earthquakes', 'pandemics', 'courts', 'scotus', 'epstein', 'world', 'geopolitics',
         'tariffs', 'elon-musk', 'global-rates', 'macro-indicators', 'box-office', 'spotify', 'gta-vi',
+        // Sports and games (2026-11-05): futures, championships, awards, coach/manager moves, release dates only. Slugs that
+        // are mostly per-game events (nba, nfl, epl...) get a tiny limit: the champion/MVP futures are the top by 24h volume
+        // and per-game events are discarded at parse time (sportsGaming.preDrop).
+        'nba-finals', 'nfl-team-futures', 'super-bowl', 'stanley-cup', 'ballon-dor', 'world-cup', 'champions-league', 'serie-a',
+        'mvp', 'rookie', 'mlb', 'cfb-awards', 'college-football', 'golf', 'game-awards', 'lol', 'cs2',
+        { slug: 'nba', limit: 8 }, { slug: 'nfl', limit: 8 }, { slug: 'nhl', limit: 6 }, { slug: 'soccer', limit: 8 },
+        { slug: 'epl', limit: 6 }, { slug: 'la-liga', limit: 6 }, { slug: 'bundesliga', limit: 6 }, { slug: 'ncaa-basketball', limit: 6 },
+      ],
+    },
+    kalshi: {
+      // Kalshi's sports category is ~4,000 mostly per-game series, so the generic sweep skips it. These futures, award and
+      // release series are fetched by series_ticker instead (verified open 2026-11-05). Entries are a ticker or
+      // [ticker, tag]; the tag ('video games') marks non-sports series so filter.mjs files them under 'games'.
+      sportsSec: 900,
+      sportsPaceMs: 450,
+      sportsSeries: [
+        'KXNBA', 'KXNBAMVP', 'KXNFLMVP', 'KXNFLNFCCHAMP', 'KXNFLAFCCHAMP', 'KXSB', 'KXNHL', 'KXMLBNLMVP', 'KXMLBALMVP',
+        'KXPREMIERLEAGUE', 'KXUCL', 'KXLALIGA', 'KXBUNDESLIGA', 'KXSERIEA', 'KXHEISMAN', 'KXBALLONDOR', 'KXNFLNEXTCOACHOUT',
+        ['KXGAMEAWARDS', 'video games'], ['KXGTA6', 'video games'], ['KXPS6', 'video games'], ['KXGAMERELEASE', 'video games'],
       ],
     },
   },
@@ -92,9 +111,9 @@ export default {
       'tesla': 'tech', 'meta': 'tech', 'microsoft': 'tech', 'spacex': 'science', 'nasa': 'science',
       // 'climate & science' is Polymarket's catch-all (IPOs, pandemics, moon landings): left unmapped on purpose.
       'global temp': 'weather', 'natural disasters': 'weather', 'pandemics': 'health',
-      'earthquakes': 'weather', 'video games': 'culture', 'video-games': 'culture', 'gaming': 'culture', 'gta vi': 'culture',
-      'gta 6': 'culture', 'spotify': 'culture', 'billboard': 'culture', 'box office': 'culture', 'grammys': 'culture',
-      'emmys': 'culture', 'golden globes': 'culture', 'the game awards': 'culture', 'netflix': 'culture', 'youtube': 'culture',
+      'earthquakes': 'weather', 'video games': 'games', 'video-games': 'games', 'gaming': 'games', 'gta vi': 'games',
+      'gta 6': 'games', 'game awards': 'games', 'game-awards': 'games', 'golden joystick awards': 'games', 'spotify': 'culture', 'billboard': 'culture', 'box office': 'culture', 'grammys': 'culture',
+      'emmys': 'culture', 'golden globes': 'culture', 'the game awards': 'games', 'netflix': 'culture', 'youtube': 'culture',
       'taylor swift': 'culture', 'religion': 'culture', 'pope': 'culture', 'time person of the year': 'culture',
       'measles': 'health', 'fda': 'health', 'rfk jr': 'health', 'bird flu': 'health', 'medicine': 'health',
       'epstein': 'courts', 'crime': 'courts', 'trials': 'courts', 'justice': 'courts', 'doj': 'courts',
@@ -106,9 +125,12 @@ export default {
       'golf': 'sports', 'ufc': 'sports', 'mma': 'sports', 'boxing': 'sports', 'f1': 'sports', 'formula 1': 'sports',
       'cricket': 'sports', 'ncaa': 'sports', 'cfb': 'sports', 'college football': 'sports', 'cbb': 'sports',
       'champions league': 'sports', 'ucl': 'sports', 'epl': 'sports', 'premier league': 'sports', 'la liga': 'sports',
-      'olympics': 'sports', 'games': 'sports', 'chess': 'games',
+      'olympics': 'sports', 'games': 'sports', 'chess': 'novelty',
       'esports': 'esports', 'league of legends': 'esports', 'counter-strike': 'esports', 'cs2': 'esports',
-      'dota 2': 'esports', 'valorant': 'esports',
+      'dota 2': 'esports', 'valorant': 'esports', 'lol': 'esports', 'dota-2': 'esports', 'counter-strike 2': 'esports',
+      'mvp': 'sports', 'rookie': 'sports', 'ballon d\'or': 'sports', 'ballon-dor': 'sports', 'super bowl': 'sports', 'stanley cup': 'sports',
+      'nba finals': 'sports', 'world cup': 'sports', 'heisman': 'sports', 'cfb awards': 'sports', 'serie a': 'sports', 'bundesliga': 'sports',
+      'mls': 'sports', 'ligue 1': 'sports', 'pro football': 'sports', 'pro basketball': 'sports', 'atp': 'sports', 'wta': 'sports',
       'crypto': 'crypto', 'crypto prices': 'crypto', 'bitcoin': 'crypto', 'ethereum': 'crypto', 'solana': 'crypto',
       'xrp': 'crypto', 'memecoins': 'crypto', 'up or down': 'crypto', 'hit price': 'crypto',
       'mentions': 'mentions', 'mention markets': 'mentions', 'tweet markets': 'mentions', 'elon tweets': 'mentions',
@@ -190,6 +212,45 @@ export default {
     // Ladders that are data-vendor trivia rather than news (card-spend and point-of-sale indexes) stay off.
     ladderExcludePatterns: [
       re('\\b(credit card spend|point of sale|array index|sector trends?|card spend|foot traffic)\\b'),
+    ],
+  },
+
+  // SPORTS AND VIDEO GAMES (2026-11-05, news-driven PNN). Sports/gaming air only as news-driven futures: championships,
+  // MVP/awards, coach/manager moves, retirements/transfers, release dates, Game of the Year, esports majors. The filter
+  // files kept markets under category 'sports' or 'games' (esports -> 'games') and adds `kind`, so rank.mjs/newsdesk.mjs
+  // can gate them on a matching headline. Set enabled:false to restore the old blanket exclusion.
+  sportsGaming: {
+    enabled: true,
+    // Dropped at Gamma parse time (never held in memory): per-game events carry 230-300 markets each.
+    preDrop: [
+      re('^.+ vs\\.? .+'), re('\\(BO\\d\\)'), re('Exact Score|More Markets'), re('^(LoL|Dota 2|Counter-Strike|Valorant|CS2):'),
+    ],
+    // Micro markets that never air: spreads, totals, props, per-game / per-map / live in-game bets, per-player stat lines.
+    drop: [
+      re('^.+ vs\\.? .+$'), re('\\(BO\\d\\)'), re('\\bvs\\.?\\s'),
+      re('Exact Score|More Markets|Both Teams|BTTS|Spread|Over\\s?/?\\s?Under|\\bO/U\\b|Total (Goals|Points|Maps|Games|Sets|Runs|Kills)'),
+      re('\\b(moneyline|parlay|anytime|first (goal|basket|touchdown|blood|team)|(1st|2nd|3rd|4th|first|second) (half|quarter|period|inning)|halftime show|half-?time)\\b'),
+      re('Regular Season (Passing|Rushing|Receiving)'), re('\\d[\\d,]*\\+ (Receiving|Rushing|Passing)'), re('\\d[\\d,]*\\+ (Points|ATP Points)'),
+      re('Players? to Record|Per Game|Fantasy|Most (Kills|Banned|Clean Sheets|Assists)|Top (Scorer|Goalscorer)|Points Per'),
+      re('Win Total|Team to Finish|Exact Matchup|Day Winner|Who Will .* Fight Next|Wins? on \\d{4}-\\d{2}-\\d{2}'),
+      re('\\b(beats?|defeats?)\\b.{0,30}\\b(on|in) (game|round|set|map)\\b'),
+      re('Streamer Awards|Sports Illustrated|run an ad|Album|Radio|Steam Weekly|valuation|Songs on|Featured on|First Week Sales'),
+      re('^(LoL|Dota 2|Counter-Strike|Valorant|CS2):'), re('Make Grand Finals|Western team|Roster Change|Tier 1 event|Group [A-Z] Winner|\\b(2nd|3rd|4th) Place\\b'),
+      re('Playoffs?: Team to|Team to (Make|Qualify|Advance|Reach)|Teams? relegated|Top \\d Finishers|Qualify for'),
+    ],
+    // Kalshi ticker families that are micro markets (tested on the event ticker).
+    dropTickers: re('(1H|2H|1Q|2Q|3Q|4Q|SPREAD|TOTAL|BTTS|FTTS|H2H|MAP|GAMES?|TEAMTOTAL|CORNERS|FIRSTGOAL|SCORE|SET\\d?|PTS|BLK|FFPTS|RSHYDS\\w*|RECYDS\\w*|PODIUM|TOP5|VIEWER)(-|$)|^KS:(KXLOL(DRAGON|TOWERS|FBLOOD|FBARON|FDRAGON|MBC|PENTA|SHORTGAME|TOTAL)|KXCS2(GAME|MAP|SPREAD|TOTALMAPS)|KXTWITCH|KXSTREAM|KXMRBEAST|KXNATHANS|KX4MINMILE)'),
+    // Polymarket tags that mark prop / fantasy / weekly events (unless the event is also under nfl-team-futures).
+    dropTags: ['props', 'season-stats', 'fantasy-football', 'nfl-weekly', 'nfl-gameday'],
+    keepTags: ['nfl-team-futures'],
+    // Allowed kinds, tested on "event • market • outcome" after the drop list. First match names the kind.
+    keep: [
+      { kind: 'coach', re: re('\\bout as .{0,50}\\b(manager|coach)\\b|\\bnext (head )?(coach|manager)\\b|\\b(coach|manager) (out|fired|sacked|hired|exit)|\\bcoach out\\b|\\bhead coach\\b.{0,40}\\b(2026|2027)\\b') },
+      { kind: 'transfer', re: re('\\b(retire|retirement|retires|transfer|traded?|signs? with|shutdown|shut down)\\b.{0,60}\\b(2026|2027)\\b') },
+      { kind: 'award', re: re('game of the year|\\bmvp\\b|most valuable player|rookie of the year|cy young|heisman|ballon d.?or|\\b\\w+ of the year\\b|sports personality|golden (boot|ball|glove)|\\b(hart|vezina|norris|calder|lady byng|art ross|rocket richard) (memorial )?trophy|most improved|sixth man') },
+      { kind: 'release', re: re('\\bgta (6|vi)\\b|grand theft auto|\\bps6\\b|playstation 6|\\bswitch 2\\b|metacritic|\\bvideo games? released\\b') },
+      { kind: 'esports', re: re('(worlds 20\\d\\d|\\bmsi\\b|\\biem\\b|\\bpgl\\b|\\bblast\\b|esl pro league|the international|\\bmajor\\b|esports world cup|\\bvct\\b).{0,40}\\b(winner|champion|finals mvp|winning region)\\b') },
+      { kind: 'championship', re: re('\\b(champion|champions|championship|national champion|conference champion|division winner)\\b|(super bowl|world series|stanley cup|nba finals|world cup|ryder cup|pennant).{0,40}\\b(winner|champion|mvp)\\b|(2026|2027|2026-27).{0,30}\\bwinner\\b|\\bwinner\\b.{0,30}\\b(2026|2027)\\b|league phase winner|\\b(masters|us open|open championship|pga championship|grand prix|grand slam|wimbledon|australian open|french open|roland garros|ncaa tournament|march madness)\\b.{0,30}\\bwinner\\b') },
     ],
   },
 

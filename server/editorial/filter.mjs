@@ -22,6 +22,14 @@
 //   config.filter.expiredGraceHours  number    drop quiet, pinned (<=5% or >=95%) markets whose closesAt passed more
 //                                              than this long ago (default 48)
 //
+//   config.sportsGaming              {enabled, drop[], dropTickers, dropTags[], keepTags[], keep:[{kind, re}]}  (2026-11-05)
+//                                    Sports/esports/video-game markets air only as news-driven futures. A market is in
+//                                    this domain when a tag maps to sports/esports/games or its title hits a sports noise
+//                                    pattern or a video-game cue. Its category becomes 'sports' or 'games' (esports ->
+//                                    'games'); it is kept only when it passes the drop list and matches a keep kind, and
+//                                    classify() then also returns `kind` (futures/award/coach/transfer/release/esports...).
+//                                    rank.mjs/newsdesk.mjs gate these categories on a matching headline.
+//
 // Notes / deliberate calls:
 //   - Promo tags ("Earn 3.25%", "Rewards 20, 4.5, 50", "Hide From New") decorate real events such as the
 //     Balance of Power market, so they are IGNORED for categorization instead of excluding the market.
@@ -92,6 +100,22 @@ function tagMapEntries(config) {
   return Object.entries(tm);
 }
 
+// Sports / video games (config.sportsGaming). Raw categories the tag map gives sports-like tags; all file under
+// 'sports' or 'games' on air.
+const SG_RAW = new Set(['sports', 'esports', 'games']);
+// Video-game cues for markets whose tags do not say so (Kalshi Entertainment series).
+const GAME_CUE = /\b(game awards|gta (6|vi)|grand theft auto|ps6|playstation 6|nintendo|switch 2|metacritic|golden joystick)\b/i;
+function compileSg(sg) {
+  if (!sg?.enabled) return null;
+  return {
+    drop: (sg.drop || []).map(toRe),
+    dropTickers: sg.dropTickers ? toRe(sg.dropTickers) : null,
+    dropTags: new Set((sg.dropTags || []).map(normTag)),
+    keepTags: new Set((sg.keepTags || []).map(normTag)),
+    keep: (sg.keep || []).map((k) => ({ kind: k.kind, re: toRe(k.re) })),
+  };
+}
+
 // Memoize the compiled config per config object (classify runs on every market every poll).
 const compiled = new WeakMap();
 function compile(config) {
@@ -124,6 +148,7 @@ function compile(config) {
     dropLadders: config?.filter?.dropLadders ?? false,
     ladderNoise: (config?.filter?.ladderExcludePatterns || []).map(toRe),
     expiredGraceMs: (config?.filter?.expiredGraceHours ?? 48) * 3_600_000,
+    sg: compileSg(config?.sportsGaming),
   };
   compiled.set(key, c);
   return c;
@@ -145,16 +170,21 @@ export function classify(market, config = {}, { now = Date.now() } = {}) {
   const text = [m.title, m.eventTitle, m.outcome].filter(Boolean).join(' • ');
   const tags = (m.tags || []).map(normTag).filter((t) => t && !PROMO_TAG.test(t));
 
-  // 1. Tags: first mapped tag (in tag order) gives the category; any excluded mapping excludes.
-  let category = null;
+  // 1. Tags: first mapped tag (in tag order) gives the category; any excluded mapping excludes. With sportsGaming on,
+  // sports/esports/games tags do not exclude: they mark the market as sports/gaming and the sports gate (3d) decides.
+  const sg = c.sg;
+  let category = null, isSg = false, gamesCat = false;
   for (const t of tags) {
     const cat = lookupTag(c, t);
     if (!cat) continue;
+    if (sg && SG_RAW.has(cat)) { isSg = true; if (cat !== 'sports') gamesCat = true; continue; }
     if (c.exclude.has(cat)) return { keep: false, category: cat, reason: `excluded:${cat}` };
     if (!category) category = cat;
   }
+  if (sg && GAME_CUE.test(text)) { isSg = true; gamesCat = true; }   // also overrides Polymarket's umbrella 'games' tag (-> sports)
   // 2. Title fallback.
-  if (!category) category = inferCategoryFromText(text, c.fallback);
+  if (isSg) category = gamesCat ? 'games' : 'sports';
+  else if (!category) category = inferCategoryFromText(text, c.fallback);
   else for (const [cat, re, from] of TITLE_OVERRIDES) if (from.includes(category) && re.test(text)) { category = cat; break; }
 
   // 2b. Kalshi combo tickers (KXMEGATSUNAMICOMBO-..., KX...COMBO-...).
@@ -162,8 +192,13 @@ export function classify(market, config = {}, { now = Date.now() } = {}) {
 
   // 3. Title noise patterns (sports/esports/crypto brackets/mentions/promo).
   for (const p of c.noise) {
-    if (p.re.test(text)) return { keep: false, category: p.category, reason: `title:${p.category}` };
+    if (!p.re.test(text)) continue;
+    // Sports-like title noise no longer drops outright when sportsGaming is on: it marks the market as sports/gaming so the
+    // gate in 3d (drop list, then allowed kinds) decides. Everything else (crypto, mentions, promo, novelty) still drops.
+    if (sg && (p.category === 'sports' || p.category === 'esports')) { isSg = true; if (p.category === 'esports') gamesCat = true; continue; }
+    return { keep: false, category: p.category, reason: `title:${p.category}` };
   }
+  if (isSg) category = gamesCat ? 'games' : 'sports';
 
   // 3b. Structural noise from source tags: short-cycle recurring series (daily temperature, daily oil close,
   // hourly approval...) whose 'previous price' is just the listing price, and cumulative strike ladders.
@@ -180,6 +215,17 @@ export function classify(market, config = {}, { now = Date.now() } = {}) {
   }
   if (category === 'weather' && DAILY_WEATHER.test(text) && vol < c.dailyWeatherMinVolume) {
     return { keep: false, category, reason: 'daily-weather' };
+  }
+
+  // 3d. Sports / video games: futures, championships, awards, coach/transfer moves, release dates and esports majors only.
+  let kind = null;
+  if (isSg) {
+    const idu = `${m.eventId || ''} ${m.id || ''}`.toUpperCase();
+    if (sg.dropTickers?.test(idu)) return { keep: false, category, reason: 'sports:micro' };
+    if (tags.some((t) => sg.dropTags.has(t)) && !tags.some((t) => sg.keepTags.has(t))) return { keep: false, category, reason: 'sports:props' };
+    if (sg.drop.some((re) => re.test(text))) return { keep: false, category, reason: 'sports:micro' };
+    kind = sg.keep.find((k) => k.re.test(text))?.kind || null;
+    if (!kind) return { keep: false, category, reason: 'sports:not-allowed' };
   }
 
   // 4. Sensitive (DECISIONS D4).
@@ -207,6 +253,7 @@ export function classify(market, config = {}, { now = Date.now() } = {}) {
   if (Number.isFinite(closes) && nowMs - closes > c.expiredGraceMs && quiet && pinned) return { keep: false, category, reason: 'expired' };
 
   // 6. Category allow-list.
+  if (isSg) return { keep: true, category, reason: 'ok', kind };
   if (c.exclude.has(category)) return { keep: false, category, reason: `excluded:${category}` };
   if (c.include.length && !c.include.includes(category)) return { keep: false, category, reason: `not-included:${category}` };
 

@@ -10,7 +10,7 @@ exchanges ──► server/sources/*  ──► Market[] (normalized)
            server/store history ──► server/editorial/rank  ──► Story[]
                                        │            └─ copy.mjs (headline/dek/lines)
                                        ├─ breaking.mjs ──► Alert[]
-                                       └─ sources/news (headlines per top story)
+                                       └─ newsdesk (wire archive 48h + Google News search: a news item for every on-air story)
                                        │
                 server/store  ──SSE──►  public/ (broadcast UI)
 ```
@@ -70,7 +70,7 @@ exchanges ──► server/sources/*  ──► Market[] (normalized)
   ladderKind?: 'strike'|'date',   // 'strike': lead is the rung nearest 50% (the line)
   rungs?: [{id, label, yesPrice, change1d, lead}],   // strike ladders: the line and its neighbor rungs, low to high
   history: [{t: epochSec, p: 0..1}] | null,   // lead market price history for sparkline
-  news: [{title, source, url, publishedAt}],  // 0–2 matching headlines ("why it moved")
+  news: [{title, source, outlet, url, publishedAt, via: 'wire'|'search', score}],  // 1–3 matching headlines; news[0] is the accompanying item (every on-air story has one, see newsdesk)
   visual: {                 // hint for the 3D scene, set by rank.mjs
     type: 'outcomes' | 'dial' | 'ribbon' | 'globe' | 'countdown',
     region: {name, lat, lon} | null,   // inferred from keywords (country/state/city) when there is one
@@ -125,6 +125,7 @@ exchanges ──► server/sources/*  ──► Market[] (normalized)
 | `server/editorial/rank.mjs` | `buildStories(markets, config, {now})` → `{stories, movers, closing, stats, aliases}` (filters with `classify`, groups by event, scores, merges the same race across exchanges, damps repeated story families, fills headline/dek via copy). `aliases` maps a merged-away event id to the aired story id. Movers carry `storyId`, `line`, `thin` |
 | `server/editorial/breaking.mjs` | `detectBreaking(markets, historyStore, config, {now})` → `Alert[]` (uses PNN's own observed price samples, dedupes per market per cooldown) |
 | `server/store.mjs` | `createStore()` → `{getState(), setState(partial), recordPrices(markets), history(marketId), motion(marketId, nowSec) → {change1h, change15m, flatMin}, addAlerts(alerts), addFlash(flash) → flash\|null, subscribe(res), feeds}` |
+| `server/newsdesk.mjs` | `createNewsdesk({getArchive, getMarkets})` → `{lookup(story), newsFor(story), setSearch(id, items), searchTargets(pending, aired), stats()}`: which headline goes with which story (matchStoryNews, strict) |
 | `server/newsroom.mjs` | `startNewsroom(store, config, {sim, getMarkets, getAliases, rebuild})` → `{applyBoosts(stories, markets, extraPools), newsFor(story, news), stats(), stop()}`. Runs the wire, wire → match → flash → `store.addFlash`, boosts, `state.wire`, `feeds.wire`; SIM uses a canned wire |
 | `server/ingest.mjs` | `startIngest(store, config, {sim})`: the schedules, SIM replay and news attach |
 | `public/js/scene/index.js` | `createScene(canvas, {stageRect}?)` → `{showStory(story, segmentName), showAlert(alert), clearAlert(), setTicker(markets), resize(w,h), setStageRect({x0,x1,y0,y1}), dispose()}`. `showStory(null, 'movers')` draws the movers field from `setTicker` data. It owns the WebGL canvas only and draws no text that the 2D overlays already show |
@@ -146,7 +147,7 @@ exchanges ──► server/sources/*  ──► Market[] (normalized)
 - **Polling cadence** (`config.poll`, each source jittered ±15% with exponential backoff up to 30 min):
   - Polymarket every 300s (top 300 every 300s plus events 300–800 every ~15 min events by volume), plus a per-tag sweep every ~15 min (`config.sources.polymarket.tagSlugs`, 41 tags × 100 events, 350ms apart) whose cached result merges into each poll.
   - Kalshi every 180s. It is a hot-set refresh (the 40 busiest events, one per poll). A full sweep (up to 150 pages, 400ms apart) runs at most every 20 minutes. The first Kalshi data takes about 50s after a cold start.
-  - News every 600s for the top 10 stories (2 headlines each, Google News RSS).
+  - News for every on-air story (`server/newsdesk.mjs`): wire archive first (48h), else a strict Google News search (up to 6 per 90s, 8 while the board is short, 1.5s apart, backoff on 429/5xx). Stories with no match wait in a pending pool (120) and retry after 20 min; they never air. Sports/games need a sports/gaming wire headline <= 24h old. Health: `newsCoverage` ({onAir, withNews, pct, pending, viaWire, viaSearch, medianNewsAgeH, sportsGames}).
   - Price history every 600s for the top 8 leads. When the lineup changes, news and history for new top stories are fetched right away, at most once every 2 minutes.
   - A rebuild (filter, rank, copy) runs after every poll. Over about 39k markets it takes about 160ms.
 - **SSE:** `/api/events` sends `state` (full snapshot on each update), `alert` (per new alert), `flash` (per new NEWS MEETS MARKETS flash) and `ping` (every 20s). The browser watchdog counts `ping` and reconnects after 3 minutes of silence. Browsers never call the exchanges.

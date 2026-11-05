@@ -104,7 +104,7 @@ const cases = [
   [mk('Will Ukraine recapture Crimean territory by...?', ['world', 'geopolitics']), false],
   [mk('Israel x Iran ceasefire continues through December 31?', ['geopolitics']), false],
   [mk('Elon Musk # tweets November 2 - November 9, 2026?', ['pop culture', 'elon tweets']), false],
-  [mk('NBA: 2026-27 MVP', ['sports', 'nba', 'awards']), false],
+  [mk('NBA: 2026-27 MVP', ['sports', 'nba', 'awards']), true, 'sports'],   // sports futures air now (news-gated downstream)
   // pool widening: the low daily floor ($200) for non-election markets with a big lifetime volume or liquidity
   [mk('Will OpenAI release GPT-6 in 2026?', ['ai', 'tech'], { volume24h: 300, volumeTotal: 400_000 }), true, 'tech'],
   [mk('Will OpenAI release GPT-6 in 2026?', ['ai', 'tech'], { volume24h: 300, volumeTotal: 4_000 }), false],
@@ -128,6 +128,71 @@ for (const [m, keep, cat] of cases) {
   check(r.keep === keep && (!cat || r.category === cat), `classify "${m.title}" -> ${JSON.stringify(r)} (want keep=${keep}${cat ? ' ' + cat : ''})`);
 }
 console.log(' filter cases:', cases.length);
+
+// Sports / video games (2026-11-05): futures, awards, coach/transfer moves, release dates and esports majors air as
+// category 'sports' / 'games'; per-game, props, per-map and live in-game markets, crypto/mentions/promo and sensitive stay off.
+{
+  const sg = (title, tags, keep, category, kind, extra = {}) => ({ m: mk(title, tags, extra), keep, category, kind });
+  const T = ['sports', 'games', 'nba'];
+  const sgCases = [
+    // kept
+    sg('NBA: 2027 Champion', T, true, 'sports', 'championship'),
+    sg('UEFA Champions League: 2027 Champion', ['sports', 'soccer', 'champions-league'], true, 'sports', 'championship'),
+    sg('Pro Football: 2027 Champion', ['sports', 'nfl', 'super-bowl', 'nfl-team-futures'], true, 'sports', 'championship'),
+    sg('NBA: 2026-27 MVP', ['sports', 'nba', 'mvp'], true, 'sports', 'award'),
+    sg('MLB: NL Rookie of the Year', ['sports', 'mlb', 'rookie'], true, 'sports', 'award'),
+    sg('NCAA Football: 2026 Heisman Award Winner', ['sports', 'cfb-awards'], true, 'sports', 'award'),
+    sg("Ballon d'Or Winner 2027", ['sports', 'soccer', 'ballon-dor'], true, 'sports', 'award'),
+    sg('Michael Carrick out as Manchester United manager by...?', ['sports', 'soccer', 'epl'], true, 'sports', 'coach'),
+    sg('Will Cristiano Ronaldo announce his retirement in 2026?', ['sports', 'soccer'], true, 'sports', 'transfer'),
+    sg('Will LIV Golf announce shutdown in 2026?', ['sports', 'golf'], true, 'sports', 'transfer'),
+    sg('Worlds 2026: Winner', ['esports', 'lol', 'games'], true, 'games', 'esports'),
+    sg('IEM Beijing 2026: Winner', ['esports', 'cs2'], true, 'games', 'esports'),
+    sg('The Game Awards: Game of the Year', ['video-games', 'game-awards'], true, 'games', 'award'),
+    sg('GTA 6 launch postponed again?', ['video-games', 'gta-vi'], true, 'games', 'release'),
+    sg('GTA VI released by...?', ['gta-vi'], true, 'games', 'release'),
+    sg('Grand Theft Auto VI: Release date', ['entertainment', 'video games'], true, 'games', 'release', { id: 'ks:GTA6-26', eventId: 'ks:GTA6' }),
+    sg('NFL: 2026 regular season passing yards leader', ['sports', 'nfl', 'nfl-team-futures'], false),
+    // dropped micro markets
+    sg('Heat vs. Warriors', T, false), sg('Jaguars vs. Ravens - Spread: Jaguars (-3.5)', ['sports', 'nfl'], false),
+    sg('Heat vs. Warriors: O/U 220.5', T, false), sg('Arsenal FC vs. Hull City AFC - Exact Score', ['sports', 'epl'], false),
+    sg('Dota 2: CyberHero vs HULIGANI (BO3)', ['esports', 'dota-2'], false), sg('LoL: Dplus KIA vs Bilibili Gaming (BO5)', ['esports', 'lol'], false),
+    sg('Will Josh Allen have 3,500+ Passing Yards in the 2026 season?', ['sports', 'nfl'], false),
+    sg('Regular Season Passing Yards Leader', ['sports', 'nfl'], false), sg('NCAA Football: Nebraska 2026 Win Total', ['sports', 'ncaa-football'], false),
+    sg('Most Kills at Worlds 2026', ['esports', 'lol'], false), sg('Worlds 2026: Team to Make Grand Finals', ['esports', 'lol'], false),
+    sg('Top Goalscorer: Premier League 2026-27', ['sports', 'epl'], false), sg('Chennai Open: Sinner vs Alcaraz', ['sports', 'atp'], false),
+    sg("GTA VI: The Album First Week Sales?", ['video-games', 'gta-vi'], false), sg("Epic Games' valuation hit $50B?", ['video-games'], false),
+    sg('The Game Awards: Best Multiplayer', ['video-games', 'game-awards'], false),
+    sg('Will the Lakers win the 2027 NBA title? Props', ['sports', 'nba', 'props'], false),
+    sg('Fantasy Football: Most Points', ['sports', 'nfl', 'fantasy-football'], false),
+    sg('Will the Lakers beat the Celtics on 2026-11-06?', ['sports', 'nba'], false),
+    sg('Pro Basketball 1H Spread', ['sports'], false, null, null, { id: 'ks:KXNBA1HSPREAD-26NOV06-LAL', eventId: 'ks:KXNBA1HSPREAD-26NOV06' }),
+    // thin / not-an-allowed-kind
+    sg('Will Tiger Woods play in a PGA Tournament in 2026?', ['sports', 'golf'], false),
+    sg('Will Taylor Swift attend the Super Bowl?', ['sports', 'nfl', 'super-bowl'], false),
+    sg('Stanley Cup Final Winner 2026-27', ['sports', 'nhl'], true, 'sports', 'championship'),
+    // other exclusions still hold for sports-tagged markets
+    sg('Will an NFL player be killed in 2026?', ['sports', 'nfl'], false),
+    sg('Bitcoin price above $120,000 for Super Bowl Sunday?', ['sports', 'crypto'], false),
+  ];
+  for (const { m, keep, category, kind } of sgCases) {
+    const r = classify(m, config);
+    check(r.keep === keep && (!category || r.category === category) && (!kind || r.kind === kind), `sports/gaming "${m.title}" -> ${JSON.stringify(r)} (want keep=${keep}${category ? ' ' + category : ''}${kind ? ' ' + kind : ''})`);
+  }
+  // blanket toggle: with sportsGaming.enabled=false the old exclusion returns
+  const off = { ...config, sportsGaming: { ...config.sportsGaming, enabled: false } };
+  check(classify(mk('NBA: 2027 Champion', ['sports', 'nba']), off).keep === false, 'sportsGaming.enabled=false excludes sports again');
+  check(classify(mk('NBA: 2027 Champion', ['sports', 'nba']), config).kind === 'championship', 'sports kind present');
+  // Gamma parse drops per-game events before they take memory (one NBA game event carries 230+ markets)
+  const ev = (title, tags = ['sports']) => ({ id: title, title, slug: 'x', active: true, closed: false, tags: tags.map((t) => ({ label: t, slug: t })),
+    markets: [{ id: title + '1', question: title, outcomePrices: '["0.5","0.5"]', volume24hr: 5000, active: true, closed: false }] });
+  const parsed = pm.parsePolymarketEvents([ev('Heat vs. Warriors'), ev('NBA: 2027 Champion'), ev('Props night', ['sports', 'props']), ev('Dota 2: A vs B (BO3)', ['esports']), ev('The Game Awards: Game of the Year', ['video-games'])], new Date());
+  check(parsed.length === 2 && parsed.every((m) => /Champion|Game Awards/.test(m.title)), `pm parse pre-drops per-game events (${parsed.map((m) => m.title).join('; ')})`);
+  // Kalshi sports series parse + hint tag
+  const ksSports = ks.parseKalshiMarkets({ events: [{ event_ticker: 'GTA6', series_ticker: 'KXGTA6', title: 'Grand Theft Auto VI: Release date', category: 'Entertainment', _tag: 'video games',
+    mutually_exclusive: true, markets: [{ ticker: 'GTA6-26', title: 'Will GTA VI release before Jan 2027?', yes_sub_title: 'Before 2027', status: 'active', last_price_dollars: '0.3', previous_price_dollars: '0.2', volume_24h_fp: '5000', open_time: '2026-01-01T00:00:00Z' }] }] }, {}, new Date());
+  check(ksSports[0].tags.includes('video games') && classify(ksSports[0], config).category === 'games', 'kalshi series hint tag -> games');
+}
 
 // The source floor drops markets the filter could never keep; the deep slice is a pure add-on.
 {

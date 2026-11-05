@@ -1,5 +1,5 @@
 // HTML builders for the segment panels. Pure functions of (data, now) → HTML string.
-import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume } from './util.js';
+import { esc, pct, pctNum, moveText, moveShort, moveCls, money, exchangeName, ago, until, marketLabel, categoryName, OUTCOME_COLORS, storyVolume, newsOf, newsLineHtml, newsOutlet, newsMeta } from './util.js';
 
 const KIND = { mover: 'ON THE MOVE', favorite: 'THE FAVORITE', closing: 'RESOLVING SOON', news: 'IN THE NEWS' };
 
@@ -59,12 +59,9 @@ export function sparkline(story, now, attrs = '') {
     </svg></div>`;
 }
 
-export function newsBlock(story, now, { max = 2 } = {}) {
-  const n = (story.news || []).slice(0, max);
-  if (!n.length) return '';
-  return `<div class="news" data-drop="5"><div class="sec-h">IN THE NEWS</div>${n.map((x, i) => `<div class="news-i" ${i ? 'data-drop="1"' : ''}>
-      <div class="news-t fit" data-fit-h>${esc(x.title)}</div>
-      <div class="news-s fit">${esc(x.source || 'News')}${x.publishedAt ? ` · ${esc(ago(x.publishedAt, now))}` : ''}</div></div>`).join('')}</div>`;
+/** The standard IN THE NEWS block (shared markup with the full-screen cards); '' when the story has no news item. */
+export function newsBlock(story, now, { drop = 5 } = {}) {
+  return newsLineHtml(newsOf(story), now, `data-drop="${drop}"`);
 }
 
 function kicker(story, extra = '', { withEvent = true } = {}) {
@@ -76,21 +73,22 @@ export function leadCard(story, now) {
   return `<section class="card lead-card" data-story="${esc(story.id)}">
     ${kicker(story)}
     <h1 class="headline fit" data-fit-h>${esc(story.short || story.headline)}</h1>
+    ${newsBlock(story, now, { drop: 6 })}
     ${story.dek ? `<p class="dek fit" data-fit-h data-drop="4">${esc(story.dek)}</p>` : ''}
     ${bigNumber(story)}
     ${outcomeBars(story)}
     ${sparkline(story, now, 'data-drop="2"')}
-    ${newsBlock(story, now)}
     ${metaLine(story, now)}
   </section>`;
 }
 
 /** TOP STORIES: secondary card (bottom strip). */
 export function miniCard(story, now, rank) {
-  const m = story.lead;
+  const m = story.lead, nw = newsOf(story);
   return `<article class="mini" data-story="${esc(story.id)}" style="--i:${rank}">
     <div class="mini-top"><span class="mini-rk">${story.boardRank || rank + 1}</span><span class="mini-cat fit">${esc(categoryName(story.category).toUpperCase())}</span><span class="mini-v">${esc(pct(m.yesPrice))}</span></div>
     <div class="mini-h fit" data-fit-h>${esc(story.short || story.headline)}</div>
+    ${nw ? `<div class="mini-nw" data-opt-parent><b>${esc(newsOutlet(nw).toUpperCase())}</b><span data-opt> · ${esc(nw.title)}</span><i>${nw.publishedAt ? ` · ${esc(ago(nw.publishedAt, now))}` : ''}</i></div>` : ''}
     <div class="mini-meta"><span class="mini-mv ${moveCls(m.change1d)}">${esc(moveShort(m.change1d))}</span><span class="fit"><b>${esc(exchangeName(m.source))}</b> · ${esc(ago(m.updatedAt, now))} · ${esc(money(m.volume24h))}/24h</span>${story.thin ? '<span class="thin sm">THIN</span>' : ''}</div>
   </article>`;
 }
@@ -100,10 +98,10 @@ export function focusCard(story, now, i, n) {
   return `<section class="card focus-card">
     ${kicker(story, `<span class="kick-n">${i + 1} OF ${n}</span>`, { withEvent: false })}
     <h1 class="headline sm fit" data-fit-h>${esc(story.short || story.headline)}</h1>
+    ${newsBlock(story, now, { drop: 6 })}
     ${bigNumber(story, 'sm')}
     ${outcomeBars(story, { max: 4, dropFrom: 3 })}
     ${story.dek ? `<p class="dek fit" data-fit-h data-drop="2">${esc(story.dek)}</p>` : ''}
-    ${newsBlock(story, now, { max: 1 })}
     ${metaLine(story, now)}
   </section>`;
 }
@@ -144,6 +142,7 @@ export function weekBoard(closing, now, updatedAt) {
 
 const DESK_SUB = {
   economy: 'Rates, prices and money: the odds right now',
+  sports: 'Games and gaming in the headlines: the odds right now',
   tech: 'AI, space and science: the odds right now',
   world: 'Leaders and elections abroad: the odds right now',
   culture: 'Awards, charts, screens and skies: the odds right now',

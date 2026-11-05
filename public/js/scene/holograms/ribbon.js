@@ -127,8 +127,8 @@ export function createRibbon(ctx, story, opts = {}) {
     r.position.copy(last); r.userData.phase = i / 2; root.add(r); rings.push(r);
   }
   const delta = (lead.change1d || 0);
-  const lblNow = holo.label(pctText(lead.yesPrice ?? last.y), { w: 768, h: 256, height: 2.9, font: '900 160px Orbitron', color: '#ffffff', glow: pal.hexA, sub: ptsText(delta), subColor: delta >= 0 ? '#3dff8a' : '#ff2e55', subFont: '800 84px Rajdhani', mainY: 0.34, subY: 0.8 });
-  lblNow.sprite.position.set(last.x - 2.5, Math.min(Y0 + H + 3.0, last.y + 3.4), 0.5); lblNow.yFrac = 0.96;
+  const lblNow = holo.label(pctText(lead.yesPrice ?? last.y), { w: 900, h: 300, height: 3.5, font: '900 150px Orbitron', color: '#ffffff', glow: pal.hexA, sub: ptsText(delta), subColor: delta >= 0 ? '#3dff8a' : '#ff2e55', subFont: '800 118px Rajdhani', mainY: 0.3, subY: 0.77 });
+  lblNow.sprite.position.set(last.x - 2.5, Math.min(Y0 + H + 3.2, last.y + 3.8), 0.5); lblNow.yFrac = 0.96;
   const lblStart = holo.label(pctText(hist[0].p), { w: 512, h: 256, height: 1.6, font: '700 120px Orbitron', color: '#dfe8ff', glow: pal.hexB, sub: spanLabel(span), subColor: pal.hexB, subFont: '600 76px Rajdhani' });
   lblStart.sprite.position.set(first.x + 1.6, first.y + 2.3, 0.5); lblStart.yFrac = 0.04;
   // what is measured: the lead outcome (or the question) as a chip over the top-left of the chart

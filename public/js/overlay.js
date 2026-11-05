@@ -139,7 +139,7 @@ export function createOverlay(root) {
         html = sotdCard(seg.sotd, state, now);
         label = seg.story?.eventTitle || seg.sotd?.title || ''; sub = seg.sotd?.credit || '';
       } else if (seg.id === 'countdown') {
-        html = countdownCard(state?.countdown, now);
+        html = countdownCard(state?.countdown, now, (id) => [...(state.stories || []), ...(state.closing || []), ...(state.desks || []).flatMap((d) => d.stories || [])].find((x) => x.id === id)?.news);
         label = seg.story?.eventTitle || 'Next big decisions'; sub = 'Next scheduled decisions';
       } else if (seg.id === 'desk') {
         html = segmentCard(seg, now);

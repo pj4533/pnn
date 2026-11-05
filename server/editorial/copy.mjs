@@ -101,6 +101,10 @@ export function eventPhrase(eventTitle) {
   if ((m = t.match(/^Largest IPO by market cap(?: in (\d{4}))?$/i))) return { phrase: 'the race for largest IPO by market cap', prep: 'in' };
   if ((m = t.match(/^(.+?) by-election winner$/i))) return { phrase: `the ${m[1]} by-election`, prep: 'in' };
   if ((m = t.match(/^Grammy winner:\s*(.+)$/i))) return { phrase: `${m[1]} at the Grammys`, prep: 'for' };
+  // sports futures ("NBA: 2027 Champion", "IEM Beijing 2026: Winner"): never paste the colon after "in"
+  if ((m = t.match(/^(.+?):\s*(\d{4})\s+Champion$/i))) return { phrase: `the ${m[2]} ${m[1]} title race`, prep: 'in' };
+  if ((m = t.match(/^(.+?):\s*(\d{4}(?:-\d{2,4})?)\s+(MVP|Rookie of the Year|[A-Z][\w' ]{2,30} (?:Award|Trophy))$/))) return { phrase: `the ${m[2]} ${m[1]} ${m[3]} race`, prep: 'in' };
+  if ((m = t.match(/^(.+?):\s*(?:Winner|Champion)$/i))) return { phrase: `the ${m[1].replace(/^the /i, '')} race`, prep: 'in' };
   if ((m = t.match(/^(.+?) winner$/i)) && !/^(who|which|what)\b/i.test(m[1]) && m[1].split(/\s+/).length <= 7) return { phrase: `the ${m[1].replace(/^the /i, '')} race`, prep: 'in' };
   if ((m = t.match(/^(\d{4}) (Democratic|Republican) VP nominee$/i))) return { phrase: `the ${m[1]} ${cap(m[2])} VP pick`, prep: 'for' };
   if ((m = t.match(/^(?:(\d+)(?:st|nd|rd|th) )?Largest Company end of (\w+)(?: (\d{4}))?$/i))) {

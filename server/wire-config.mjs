@@ -5,7 +5,9 @@
 //   id        unique feed id (also the item `source`)
 //   outlet    display name; items from feeds with the same outlet are ONE outlet for corroboration
 //   url, kind 'rss' (RSS 2.0 / RDF / Atom, auto-detected) | 'nws' (api.weather.gov GeoJSON)
-//   category  PNN-ish desk hint: general | politics | world | economy | markets | tech | science | health | culture | weather
+//   category  PNN-ish desk hint: general | politics | world | economy | markets | tech | science | health | culture | weather | sports | games
+//   skipFilters  string[] of filter group names (below) this feed bypasses; sports and gaming feeds skip 'sports'
+//                (sensitive, crime, gossip and noise still apply)
 //   everySec  poll interval (jittered +/- jitter, first poll staggered across the interval)
 //   aggregator true: re-lists other outlets (Google News). Never counts as independent corroboration
 //   official  true: a government source. Items matching officialPattern fire on their own (still need a market match)
@@ -94,6 +96,24 @@ export default {
     { id: 'stat', outlet: 'STAT', url: 'https://www.statnews.com/feed/', category: 'health', everySec: 600 },
     { id: 'variety', outlet: 'Variety', url: 'https://variety.com/feed/', category: 'culture', everySec: 300 },
     { id: 'deadline', outlet: 'Deadline', url: 'https://deadline.com/feed/', category: 'culture', everySec: 300 },
+    // sports (2026-11-05 news-driven PNN: sports headlines drive futures/awards/coach markets; verified by curl).
+    // They skip the blanket 'sports' filter; sensitive/crime/gossip/noise still apply. Only the matcher decides whether
+    // a headline ever reaches air (it needs a kept sports market).
+    { id: 'espn-top', outlet: 'ESPN', url: 'https://www.espn.com/espn/rss/news', category: 'sports', everySec: 120, skipFilters: ['sports'] },
+    { id: 'espn-nfl', outlet: 'ESPN', url: 'https://www.espn.com/espn/rss/nfl/news', category: 'sports', everySec: 180, skipFilters: ['sports'] },
+    { id: 'bbc-sport', outlet: 'BBC', url: 'https://feeds.bbci.co.uk/sport/rss.xml', category: 'sports', everySec: 120, skipFilters: ['sports'] },
+    { id: 'bbc-football', outlet: 'BBC', url: 'https://feeds.bbci.co.uk/sport/football/rss.xml', category: 'sports', everySec: 180, skipFilters: ['sports'] },
+    { id: 'cbs-sports', outlet: 'CBS Sports', url: 'https://www.cbssports.com/rss/headlines/', category: 'sports', everySec: 180, skipFilters: ['sports'] },
+    { id: 'yahoo-sports', outlet: 'Yahoo Sports', url: 'https://sports.yahoo.com/rss/', category: 'sports', everySec: 120, skipFilters: ['sports'] },
+    { id: 'guardian-sport', outlet: 'The Guardian', url: 'https://www.theguardian.com/sport/rss', category: 'sports', everySec: 180, skipFilters: ['sports'] },
+    { id: 'sky-sports', outlet: 'Sky Sports', url: 'https://www.skysports.com/rss/12040', category: 'sports', everySec: 180, skipFilters: ['sports'] },
+    // video games and esports (300s+; pcgamer's feed is 1.6MB, so 600s). Dead/blocked: Kotaku (stale), Dot Esports (Cloudflare).
+    { id: 'ign', outlet: 'IGN', url: 'https://www.ign.com/rss/v2/articles/feed', category: 'games', everySec: 300, skipFilters: ['sports'] },
+    { id: 'gamespot', outlet: 'GameSpot', url: 'https://www.gamespot.com/feeds/mashup/', category: 'games', everySec: 300, skipFilters: ['sports'] },
+    { id: 'polygon', outlet: 'Polygon', url: 'https://www.polygon.com/feed/', category: 'games', everySec: 300, skipFilters: ['sports'] },
+    { id: 'vgc', outlet: 'Video Games Chronicle', url: 'https://www.videogameschronicle.com/feed/', category: 'games', everySec: 300, skipFilters: ['sports'] },
+    { id: 'pcgamer', outlet: 'PC Gamer', url: 'https://www.pcgamer.com/rss/', category: 'games', everySec: 600, skipFilters: ['sports'] },
+    { id: 'hltv', outlet: 'HLTV', url: 'https://www.hltv.org/rss/news', category: 'games', everySec: 300, skipFilters: ['sports'] },
     // weather (official; only Extreme alerts of these event types are high signal on their own)
     { id: 'nws', outlet: 'National Weather Service', url: 'https://api.weather.gov/alerts/active?severity=Extreme,Severe&status=actual', kind: 'nws',
       category: 'weather', everySec: 120, official: true },
