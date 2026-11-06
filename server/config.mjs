@@ -378,13 +378,13 @@ export default {
   },
 
   limits: {
-    stories: 30,
+    stories: 2000,          // no capacity cap (2026-11-05, user): every story that passes the news gate and filters airs; the director's shuffle bags rotate them all
     movers: 20,
     closing: 12,
     closingDays: 7,
     marketsPerStory: 5,
     alerts: 10,
-    deskStories: 16,        // stories per desk (was 12; the plan's >= 110 on air needs 30 + 5x16 + 8)
+    deskStories: 2000,      // no cap (was 16)
     // News gate (PLAN-news-gate.md, 2026-11-05).
     newsPool: 400,          // pending (search queue) cap; was a hard-coded 120
     sgBoard: 4,             // sports & games on the 30-story board (was 3)
