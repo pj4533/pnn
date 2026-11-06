@@ -115,7 +115,8 @@ export function sharedCount(a, b) {
 // never on-air copy: drop it. Short ones ("(D)", "(AZ-02)") stay. An unclosed "(defined as: ..." cut upstream is dropped too.
 const RULES_PAREN = /\s*\((?:[^()]*\b(?:defined as|as defined|i\.e\.|e\.g\.|including|includes|excluding|see rules|for the purposes? of|refers? to|means)\b[^()]*|[^()]{48,})\)/gi;
 export function stripRulesText(s) {
-  let out = String(s ?? '');
+  // Kalshi's person templates say "X announces their departure"; drop the pronoun rather than guess one.
+  let out = String(s ?? '').replace(/\b(announces?|announced|confirms?|confirmed) their (departure|retirement|resignation|exit)\b/gi, '$1 $2');
   if (!out.includes('(')) return out;
   out = out.replace(RULES_PAREN, '').replace(/\s*\((?:defined as|as defined|i\.e\.|e\.g\.|including)\b[^)]*$/i, '');
   return out.replace(/\s+([?,.!:;])/g, '$1').replace(/\s{2,}/g, ' ').trim();

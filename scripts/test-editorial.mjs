@@ -723,6 +723,7 @@ console.log('\n== rules text in subjects ==');
   const RULES = 'Any member of the Cabinet (defined as: the Vice President, Secretary of State, Secretary of the Treasury, Secretary of Defense, Attorney General)';
   eq(stripRulesText(RULES), 'Any member of the Cabinet', 'strip defined-as parenthetical');
   eq(stripRulesText('Will any member of the Cabinet (defined as: the Vice President, Secretary of State) be impeached?'), 'Will any member of the Cabinet be impeached?', 'strip mid-question');
+  eq(stripRulesText('Marco Rubio announces their departure as Secretary of State before Apr 1, 2027'), 'Marco Rubio announces departure as Secretary of State before Apr 1, 2027', 'no guessed pronoun in departure titles');
   eq(stripRulesText('Scott Colom (D)'), 'Scott Colom (D)', 'short party parenthetical stays');
   eq(stripRulesText('Any member of the Cabinet (defined as: the Vice President, Secretary of State, ...'), 'Any member of the Cabinet', 'unclosed rules parenthetical dropped');
   const evs = [{ event_ticker: 'KXIMPEACH', series_ticker: 'KXIMPEACH', title: 'Who will be impeached before 2027?', mutually_exclusive: false,
