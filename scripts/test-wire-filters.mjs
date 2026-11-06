@@ -5,6 +5,7 @@
 // exception, the 72h age cap, feed list hygiene (unique ids, https, politeness, dead list kept out).
 import cfg from '../server/wire-config.mjs';
 import { compileFilters, rejectReason, normalizeItems } from '../server/sources/wire.mjs';
+import { badNewsSource } from '../server/sources/news.mjs';
 
 const f = compileFilters(cfg);
 let fails = 0;
@@ -22,6 +23,16 @@ for (const t of ['Pop Stars podcast: Harry Shum on the new season', 'Raise the R
 for (const t of ['Netflix announces new podcast network', 'Hollywood Reporter interview: Oscar winner named to Academy board', 'Brosnan endorses Callum Turner as next Bond',
   'Fed holds rates steady and signals a December hike', 'Apple ranked world\'s most valuable company again', 'Talarico wins Texas Senate seat'])
   check(`kept: ${t}`, why(t) === null);
+// 2026-11-05 news unlock audit: war-adjacent Hormuz wording (D4); labor strikes and an ordinary ship fire stay
+for (const t of ['Iran says tankers, tugboat catch fire in Strait of Hormuz', 'U.S. Strikes Iranian Targets Along Strait of Hormuz', 'Internet disruptions hit Iran amid prospect of renewed US strikes'])
+  check(`sensitive: ${t}`, why(t) === 'sensitive');
+for (const t of ['Writers strike targets studios over AI rules', 'Union strikes deal with automakers']) check(`kept: ${t}`, why(t) === null);
+// independence: crypto-exchange news desks and bookmaker odds stories are never the news item
+check('KuCoin via Google News is an exchange outlet', badNewsSource({ title: 'Anthropic Rumored to Test Claude Mythos 5.5 Ahead of IPO', outlet: 'KuCoin via Google News' }) === 'exchange');
+check('CoinMarketCap is an exchange outlet', badNewsSource({ title: 'US CPI preview: inflation seen at 3.1%', outlet: 'CoinMarketCap' }) === 'exchange');
+check('VegasOdds is an exchange outlet', badNewsSource({ title: 'Time Person of the Year 2026 picks', outlet: 'VegasOdds.com' }) === 'exchange');
+check('"Odds Shift" headline is promo', badNewsSource({ title: 'Jack Lowden James Bond Casting Hopes Face a New Challenge as 007 Actor Odds Shift', outlet: 'Comic Book Resources' }) === 'promo');
+check('Gold Derby award race headline stays', badNewsSource({ title: 'Oscar Predictions: Best Actress race heats up', outlet: 'Gold Derby' }) === null);
 // description does not trigger title-only groups
 check('description mentioning "review" does not drop a headline', rejectReason('Court rules on tariffs a review of the case', f, null, 'Court rules on tariffs') === null);
 
@@ -35,7 +46,12 @@ check('72h parse window keeps 1h, 60h, 71h and drops 73h', out.length === 3 && !
 // feed list hygiene
 const ids = cfg.feeds.map((x) => x.id);
 check('feed ids unique', new Set(ids).size === ids.length);
-check('85+ feeds', cfg.feeds.length >= 80);
+check('110 feeds', cfg.feeds.length >= 110);
+// 2026-11-05 news unlock: Google News searches are aggregators and poll slowly (~1.5 requests/min to the host in total)
+const gn = cfg.feeds.filter((x) => /news\.google\.com\/rss\/search/.test(x.url));
+check('news unlock GN searches are aggregators polled >= 900s', gn.length >= 24 && gn.every((x) => x.aggregator && x.everySec >= 900 && x.outlet === 'Google News'));
+check('news.google.com total poll rate <= 2/min', cfg.feeds.filter((x) => /news\.google\.com/.test(x.url)).reduce((a, x) => a + 60 / x.everySec, 0) <= 2);
+check('macrumors present', ids.includes('macrumors'));
 check('every feed https and >= 60s', cfg.feeds.every((x) => x.url.startsWith('https://') && x.everySec >= 60));
 const underHost = {};
 for (const x of cfg.feeds.filter((y) => y.id !== 'nws' && y.everySec < 180)) { const h = new URL(x.url).host; underHost[h] = (underHost[h] || 0) + 1; }

@@ -24,19 +24,20 @@ const tag = (xml, t) => { const m = xml.match(new RegExp(`<${t}(?:\\s[^>]*)?>([\
 // English broadcast: an outlet or headline in a non-Latin script ("Судово-юридична газета") never airs as the news item.
 export const nonLatin = (s) => /[Ͱ-ϿЀ-ԯ֐-ۿऀ-෿฀-໿぀-鿿가-힯]/.test(String(s || ''));
 
-// Independence (CLAUDE.md "Stay independent", user 2026-11-05): PNN reports what markets price, so a prediction-market
+// Independence (CLAUDE.md "Stay independent", user 2026-11-05; crypto-exchange news desks and odds sites added in the
+// 2026-11-05 news unlock audit: KuCoin / CoinMarketCap supplied AI and CPI headlines, VegasOdds Person of the Year): PNN reports what markets price, so a prediction-market
 // operator's own "news" (Kalshi News, Polymarket, Robinhood prediction markets, sportsbook odds pages) is never the
 // independent news item. Social posts, hyperlocal rewrites and scraper farms are not broadcast sources either.
-const EXCHANGE_OUTLET = /\b(kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|bet365|caesars|prizepicks|underdog fantasy|novig|manifold|metaculus|predictit|crypto\.com|coinbase|public\.com|action network|oddsshark|vegasinsider|sportsbook ?review|covers\.com|bookies\.com|sportsbook|prediction markets?)\b/i;
+const EXCHANGE_OUTLET = /\b(kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|bet365|caesars|prizepicks|underdog fantasy|novig|manifold|metaculus|predictit|crypto\.com|coinbase|public\.com|action network|oddsshark|vegasinsider|sportsbook ?review|covers\.com|bookies\.com|sportsbook|prediction markets?|vegasodds|vegas odds|oddschecker|odds ?checker|sportsline|kucoin|binance|bybit|okx|bitget|mexc|gate\.io|htx|coinmarketcap)\b/i;
 const SOCIAL_OUTLET = /^(facebook|instagram|x|twitter|x \(formerly twitter\)|tiktok|reddit|youtube|threads|linkedin|pinterest|quora|telegram|bluesky|mastodon|medium|substack|tumblr|truth social)$|\b(facebook|instagram|tiktok|reddit)\b/i;
 const SCRAPER_OUTLET = /\b(just jared|tmz|radar ?online|ok! magazine|okmagazine|perez hilton|hollywoodlife|daily star|rotten tomatoes|wikipedia|metacritic|box office mojo|newztodays?|newscord|newsbreak|dailyhunt|devdiscourse|opoyi|bignewsnetwork|indexbox|patch|breaking ?news ?today|latestly|newsx|menafn|bharat express)\b/i;
 // Retail / listing outlets (2026-11-05 news-gate build): a record store's product page ("Blood Records") or a ticket seller
 // is a listing, not news. "records" is plural-only so newspapers called "Record" are not caught.
 const RETAIL_OUTLET = /\b(records|vinyl|store|shop|merch|outlet|amazon|walmart|target|best buy|ebay|etsy|ticketmaster|stubhub|fandango|shopify|aliexpress|temu)\b|\brecord (store|shop)\b/i;
 const RETAIL_DOMAINS = /(^|\.)(amazon\.[a-z.]+|walmart\.com|target\.com|bestbuy\.com|ebay\.[a-z.]+|etsy\.com|ticketmaster\.[a-z.]+|stubhub\.[a-z.]+|fandango\.com|shopify\.com|aliexpress\.com|temu\.com|bandcamp\.com|discogs\.com)$/i;
-const BLOCK_DOMAINS = /(^|\.)(kalshi\.com|polymarket\.com|robinhood\.com|draftkings\.com|fanduel\.com|betmgm\.com|prizepicks\.com|predictit\.org|manifold\.markets|metaculus\.com|facebook\.com|fb\.com|fb\.watch|instagram\.com|x\.com|twitter\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|threads\.net|linkedin\.com|pinterest\.com|quora\.com|t\.me|bsky\.app|medium\.com|substack\.com|newztodays\.com|newscord\.com|newsbreak\.com|patch\.com|actionnetwork\.com|oddsshark\.com|vegasinsider\.com|covers\.com|bookies\.com)$/i;
+const BLOCK_DOMAINS = /(^|\.)(kalshi\.com|polymarket\.com|robinhood\.com|draftkings\.com|fanduel\.com|betmgm\.com|prizepicks\.com|predictit\.org|manifold\.markets|metaculus\.com|facebook\.com|fb\.com|fb\.watch|instagram\.com|x\.com|twitter\.com|tiktok\.com|reddit\.com|youtube\.com|youtu\.be|threads\.net|linkedin\.com|pinterest\.com|quora\.com|t\.me|bsky\.app|medium\.com|substack\.com|newztodays\.com|newscord\.com|newsbreak\.com|patch\.com|actionnetwork\.com|oddsshark\.com|vegasinsider\.com|covers\.com|bookies\.com|vegasodds\.com|oddschecker\.com|kucoin\.com|binance\.com|bybit\.com|okx\.com|bitget\.com|mexc\.com|coinmarketcap\.com)$/i;
 // Promo / betting-odds / exchange-coverage headlines: the news item must not be about the markets themselves.
-const PROMO_TITLE = /\((photos?|pics|video|slideshow)\)|\|\s*(rotten tomatoes|imdb|wikipedia|metacritic)$|\b(kalshi|polymarket|predictit|prediction markets?|betting (odds|sites?|apps?|promos?|markets?)|bettors|punters|gamblers|wagers?|odds (&|and) predictions|sportsbooks?|promo codes?|bonus bets?|sign-?up bonus|best bets?|parlays?|odds (boost|today)|dfs|draftkings|fanduel|betmgm)\b/i;
+const PROMO_TITLE = /\((photos?|pics|video|slideshow)\)|\|\s*(rotten tomatoes|imdb|wikipedia|metacritic)$|\b(kalshi|polymarket|predictit|prediction markets?|betting (odds|sites?|apps?|promos?|markets?)|bettors|punters|gamblers|wagers?|odds (&|and) predictions|sportsbooks?|promo codes?|bonus bets?|sign-?up bonus|best bets?|parlays?|odds (boost|today)|dfs|draftkings|fanduel|betmgm|odds (shift|shifts|swing|swings|surge|surges|slash\w*|shorten\w*|lengthen\w*|move|moves|tumble|tumbles)|bookmakers?|bookies)\b/i;
 // Sensitive (CLAUDE.md, DECISIONS D4): the news item next to a market never carries graphic death / violence wording.
 // Every attached headline (wire, search, flash) passes the same war / violence / death patterns as the markets and the wire
 // parse (config.sensitive.excludePatterns + wire-config filters.sensitive), so "Putin, Rezaei meet as Turkey probes deadly
@@ -105,7 +106,7 @@ export function badNewsSource(it) {
   if (outlets.some((o) => RETAIL_OUTLET.test(o))) return 'retail';
   const d = domainOf(it.sourceUrl) || (/news\.google\.com/.test(String(it.url || '')) ? '' : domainOf(it.url));
   if (d && RETAIL_DOMAINS.test(d)) return 'retail';
-  if (d && BLOCK_DOMAINS.test(d)) return /kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|prizepicks|predictit|manifold|metaculus|actionnetwork|oddsshark|vegasinsider|covers|bookies/.test(d) ? 'exchange' : 'social';
+  if (d && BLOCK_DOMAINS.test(d)) return /kalshi|polymarket|robinhood|draftkings|fanduel|betmgm|prizepicks|predictit|manifold|metaculus|actionnetwork|oddsshark|vegasinsider|vegasodds|oddschecker|covers|bookies|kucoin|binance|bybit|okx|bitget|mexc|coinmarketcap/.test(d) ? 'exchange' : 'social';
   if (PROMO_TITLE.test(String(it.title || ''))) return 'promo';
   const ev = evergreen(it);
   if (ev) return ev;

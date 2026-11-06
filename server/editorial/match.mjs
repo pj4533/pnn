@@ -36,13 +36,31 @@ const SENSITIVE_HEAD = [...(wireConfig?.filters?.sensitive || []), ...(pnnConfig
   .map((r) => (r instanceof RegExp ? r : new RegExp(r, 'i')));
 // A site's own page title from a search hit ("Federal Reserve Board - Home", "Calendar") is not a headline.
 const SITE_TITLE = /^(home|home ?page|calendar|news|newsroom|latest news|press releases?|login|sign in|contact( us)?|about( us)?|search|sitemap|untitled|welcome|page not found|access denied)$|\s[-|–—:]\s*(home|home ?page|official (web)?site|welcome|calendar|newsroom)$/i;
-/** Why a headline may never be attached to a story or flash ('sensitive' | 'site-title' | null). */
+// Non-news items (2026-11-05 news unlock audit): a careers-page job title ("Procurement Operations Manager - OpenAI"), a
+// deal ad ("Get GPT, Claude, Gemini ... for $39.99 for life", "Project Professional 2024 drops to $40") or a quote page
+// ("Gold Dec 26 (GC=F) stock price, news, quote and history", "USOIL|WTI|Price:89.865|Chg%:+1.824") is not a headline.
+const JOB_ROLE = '(manager|engineer|lead|director|specialist|analyst|coordinator|intern|internship|recruiter|scientist|researcher|designer|counsel|architect|representative|associate|administrator|strategist|partner|technician)';
+const JOB_TITLE = new RegExp(`^(?:(?:[A-Z][\\w&/+.'-]*|&),?\\s+){0,6}${JOB_ROLE}(?:,\\s*[A-Z][\\w&/ +.'-]{0,40})?(?:\\s+[-\u2013\u2014|@]\\s+[A-Z][\\w&. ]{1,40})?$`, 'i');
+const JOB_NEWS_VERB = /\b(names?|named|hires?|hired|appoints?|appointed|picks?|taps?|tapped|promotes?|promoted|says?|said|joins?|joined|leaves?|left|quits?|resigns?|fires?|fired|ousts?|ousted|to|is|was|will|after|as|for|on)\b/i;
+const DEAL_AD = /\$\d[\d.,]*\b.*\bfor life\b|\bfor life\b.*\$\d|\blifetime (licen[cs]e|subscription|access|deal)\b|\blowest price (ever|yet|of the year)\b|\ball-time low price\b|\b\d{1,2}% off\b|\$\d{1,4}\.99\b|\bdeal alert\b|\bdrops? to \$\d{1,3}(\.\d\d)?(?![\d,.])|\bcoupon\b|\bpromo code\b/i;
+const QUOTE_PAGE = /\bstock price,? news,? quote\b|\bquote (and|&) history\b|\(\w{1,6}=F\)|^[A-Z0-9]{2,10}\s*\|[^|]*\|\s*price\s*:|\|\s*chg%?\s*:/i;
+/** 'job' | 'deal' | 'quote' | null: an item that is not news at all (see JOB_TITLE / DEAL_AD / QUOTE_PAGE). */
+export function nonNewsItem(title) {
+  const t = String(title || '').trim();
+  if (!t) return null;
+  if (QUOTE_PAGE.test(t)) return 'quote';
+  if (DEAL_AD.test(t)) return 'deal';
+  if (t.split(/\s+/).length <= 12 && JOB_TITLE.test(t) && !JOB_NEWS_VERB.test(t.replace(/\s[-\u2013\u2014|@]\s.*$/, ''))) return 'job';
+  return null;
+}
+/** Why a headline may never be attached to a story or flash ('sensitive' | 'site-title' | 'non-news' | null). */
 export function headlineReject(it) {
   const t = String((typeof it === 'string' ? it : it?.title) || '').trim();
   if (!t) return 'empty';
   const b = pnnConfig?.sensitive?.headlineBenign;   // "trade war", "dead heat": figures of speech, not D4 content
   const tb = b ? t.replace(new RegExp(b.source || b, 'gi'), ' ') : t;
   if (newsSrc.sensitiveHeadline?.(t) || SENSITIVE_HEAD.some((re) => re.test(tb))) return 'sensitive';
+  if (nonNewsItem(t)) return 'non-news';
   if (SITE_TITLE.test(t) || t.split(/\s+/).length < 2 || (typeof it === 'object' && newsSrc.junkTitle?.(it))) return 'site-title';
   return null;
 }
@@ -537,6 +555,35 @@ const STORY_WEAK_P = new Set(['final', 'finals', 'pro', 'group', 'inc', 'corp', 
   'another', 'any', 'other']);
 // Service pieces on sports / gaming feeds never carry a story (fantasy lineups, betting picks, listicles, how-to-watch).
 const SPORTS_FLUFF = /\b(DFS|DraftKings|FanDuel|fantasy|best bets?|prop bets?|picks?|predictions?|predicted|parlay|lineups?|how to (watch|follow|stream)|live stream|every player|ranked|ranking|quiz|deals? of the day|best deals?|on sale|discount|price drop|\d+% off)\b/i;
+// A person named in a headline (2026-11-05 news unlock audit): the full name, or the surname used as this person's surname.
+// "Thomas Massie" is not Clarence Thomas, "Robert Redford" is not Robert F. Kennedy Jr., "leave Netflix" names no Tom Homan.
+const NAME_SUFFIX = new Set(['jr', 'sr', 'ii', 'iii', 'iv']);
+function personHit(run, title, H) {
+  const toks = [...run].filter((t) => !NAME_SUFFIX.has(t) && t.length > 1);
+  if (!toks.length) return false;
+  if (toks.every((t) => H.has(t))) return true;
+  if (toks.length < 2) return false;
+  const last = toks[toks.length - 1];
+  if (!H.has(last) || COMMON_RUN.has(last)) return false;
+  const cap = last[0].toUpperCase() + last.slice(1);
+  const before = new RegExp(`\\b([A-Z][a-z]+)\\s+${cap}\\b`).exec(title);
+  const tc = isTitleCase(title);
+  if (before && !toks.includes(before[1].toLowerCase()) && !tc) return false;
+  if (!tc && new RegExp(`\\b${cap}\\s+[A-Z][a-z]+`).test(title)) return false;
+  return true;
+}
+/** true when `t` (a word of the name run `r`) appears in the headline only as another person's first name ("Thomas Massie"). */
+function namesake(t, r, title) {
+  if (isTitleCase(title)) return false;
+  const cap = t[0].toUpperCase() + t.slice(1);
+  const re = new RegExp(`\\b(?:${cap}|${t.toUpperCase()})\\s+([A-Z][a-z][\\w'’-]*)`, 'g');
+  let m, any = false;
+  while ((m = re.exec(title))) {
+    any = true;
+    if (r.has(m[1].toLowerCase())) return false;
+  }
+  return any && !new RegExp(`\\b(?:${cap}|${t}|${t.toUpperCase()})\\b(?!\\s+[A-Z])`).test(title);
+}
 const lowerWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9'’&+-]+/g, ' ').trim();
 const isTitleCase = (t) => { if (/\?$/.test(String(t || '').trim())) return false; const w = String(t || '').split(/\s+/).filter((x) => /^[A-Za-z]/.test(x) && x.length > 3); return w.length >= 3 && w.filter((x) => /^[A-Z]/.test(x)).length / w.length >= 0.7; };
 // Proper-noun tokens of a question: capitalized words after the first ("Will Samuel Alito announce..." -> samuel, alito).
@@ -552,7 +599,8 @@ function properRuns(text) {
   const start = /^(will|who|what|which|how|when|where|is|are|does|do|did|can|could|should|would|has|have|the|a|an|in|on|at|by|for|of|after|before|between|top|best|largest|biggest|highest|lowest|most|next|new|number|#\d+|\d+(st|nd|rd|th)?)$/i.test(words[0] || '') ? 1 : 0;
   for (let i = start; i < words.length; i++) {
     const w = words[i];
-    if (!/^[“"'(]?[A-Z0-9]/.test(w) || (i > 0 && /[?.!]$/.test(words[i - 1] || ''))) { flush(); continue; }
+    // a middle initial or suffix ("Robert F. Kennedy Jr.") does not end the run; a sentence end does
+    if (!/^[“"'(]?[A-Z0-9]/.test(w) || (i > 0 && /[?.!]$/.test(words[i - 1] || '') && !/^([A-Z]|jr|sr|dr|st)\.$/i.test(words[i - 1] || ''))) { flush(); continue; }
     (cur ||= []).push(w);   // tokenized as one phrase: "South Africa's" -> southafrica, not south + africa
   }
   flush();
@@ -603,7 +651,7 @@ const QTYPES = [
     h: /\b(rotten tomatoes|tomatometer|metacritic|reviews?|reviewed|critics?|critical(ly)?|first reactions?|reactions|panned|acclaim\w*|praised?|raves?|verdict|rated|fresh|splat\w*|scores?)\b/i },
   { key: 'box-office', q: /\b(box office|opening weekend|domestic opening|worldwide gross|gross(es)?)\b/i,
     h: /\b(box office|opening|opens|opened|debut\w*|tickets?|pre-?sales?|tracking|gross\w*|weekend|projection\w*|projected|estimates?|record|\$\d[\d.,]*\s?(m|mn|million|b|bn|billion))\b/i },
-  { key: 'best-ai', q: /\b(best|top) ai\b|\b(best|top) (ai )?model\b|\b(lmarena|text arena|chatbot arena)\b/i,
+  { key: 'best-ai', q: /\b(best|top) ai\b|\b(best|top) (ai )?model\b|\b(lmarena|text arena|chatbot arena|code arena|webdev arena|webdev)\b/i,
     h: /\b(benchmarks?|leaderboards?|lmarena|arena|rankings?|ranked|tops?|topped|beats?|outperform\w*|state[- ]of[- ]the[- ]art|smartest|most (capable|powerful|advanced|intelligent)|best (ai|model)|leading (ai|model)|ai race|frontier|new model|(ai|language|flagship|reasoning) models?|GPT-?\d[\w.]*|Gemini \d[\w.]*|Grok \d[\w.]*|Claude (Opus|Sonnet|Haiku|Fable)?\s?\d[\w.]*|Llama \d[\w.]*)\b/i },
   { key: 'release', q: /\b(releas(e|ed|es)|launch(es|ed)?|release date|ships?|go(es)? on sale)\b/i,
     h: /\b(releas\w*|launch\w*|reveal\w*|introduc\w*|new|rollout|rolls? out|rolled out|ships?|shipping|available|availability|debut\w*|unveil\w*|arriv\w*|coming|soon|date|leak\w*|delay\w*|postpon\w*|announc\w*|preview|beta|teas\w*|drops?|plans?|eyes|readies|prepar\w*|tests?|testing|ahead of|pre-?orders?|countdown)\b/i },
@@ -634,6 +682,31 @@ const QTYPES = [
   // album sales ("First Week Album Equivalent Units"): a sales / chart / debut headline, not a store listing of the record
   { key: 'album-units', q: /\b(album equivalent units|first[- ]week (sales|units)|equivalent units)\b/i,
     h: /\b(units|sales|sold|sells|selling|first[- ]week|debut\w*|billboard|charts?|charting|streams?|streaming|copies|tracking|projected|projections?|forecast\w*|no\. ?1|number one|#1)\b/i },
+  // ---- 2026-11-05 news unlock audit: generic words and a company name are not the question ----
+  // macro indicators: "core CPI above 2.9%" never takes "Cloudflare reports Q3 revenue up 39% YoY" or a Claude Code "core team" story
+  { key: 'cpi', q: /\b(cpi|pce|consumer price index)\b/i, h: /\b(cpi|pce|inflation\w*|consumer prices?|price index|price pressures?)\b/i },
+  { key: 'jobs', q: /\b(unemployment|nonfarm payrolls?|jobs report|jobless)\b/i,
+    h: /\b(unemploy\w*|jobless\w*|jobs?|payrolls?|labou?r (market|force|department|data)|hiring|layoffs?|employment|bls)\b/i },
+  { key: 'productivity', q: /\bproductivity\b/i, h: /\bproductivity\b/i },
+  // a ticker close ("Amazon (AMZN) closes above $270"): a stock / market headline, not "The Amazon is no longer a carbon sink"
+  // or a deal post. Case-sensitive ticker in parentheses.
+  { key: 'stock-close', q: /\([A-Z]{2,5}\)\s*(close|closes|closing)\b/,
+    h: /\b(stocks?|shares?|market (cap|value)\w*|valuation|trad(e|es|ed|ing)|clos(e|es|ed|ing)|rall\w*|slump\w*|surg\w*|plung\w*|tumbl\w*|soar\w*|jump\w*|slid\w*|fell|falls?|ris(e|es|ing)|rose|gain\w*|earnings|revenue|profits?|guidance|outlook|investors?|wall street|nasdaq|s&p|dow|analysts?|price targets?|downgrad\w*|upgrad\w*|sell-?off|selloff|record high|all-time high|trillion)\b/i },
+  { key: 'earnings', q: /\bbeat (quarterly )?earnings\b/i, h: /\b(earnings|results|revenue|quarter\w*|q[1-4]|eps|profits?|guidance|reports?|forecast)\b/i },
+  // "federal government take a stake in Nvidia" never takes "RTX 5090 now 262% above MSRP"
+  { key: 'stake', q: /\btake a stake\b|\bequity stake\b|\bstake of\b/i, h: /\b(stakes?|equity|ownership|shares?|invest\w*|golden share)\b/i },
+  // "Anthropic highest private valuation" never takes "ban employees from wearing badges"
+  { key: 'valuation', q: /\bvaluation\b|\blargest private company\b/i,
+    h: /\b(valu\w*|worth|funding|rais(e|es|ed|ing)|round|investors?|tender|secondary|ipo|\$\d[\d.,]*\s?(b|bn|billion|t|tn|trillion))\b/i },
+  { key: 'agi', q: /\bAGI\b|\bartificial general intelligence\b/i, h: /\bAGI\b|\bartificial general intelligence\b|\bsuperintelligen\w*/i },
+  // "Goldman lead-left on Anthropic's IPO" never takes "Price Cuts on Claude"
+  { key: 'underwriter', q: /\bunderwrit\w*|\blead-left\b|\blead bank\b/i,
+    h: /\b(ipos?|underwrit\w*|banks?|bankers?|wall street|listing|go(ing)? public|offering|s-1|filing)\b/i },
+  // "US Government removes public access to another Anthropic AI model" never takes any Anthropic research post
+  { key: 'gov-access', q: /\bgovernment removes\b|\bremoves? public access\b/i,
+    h: /\b(government|federal|pentagon|administration|white house|ban\w*|restrict\w*|access|remov\w*|block\w*|pull(s|ed)?|supply[- ]chain risk|regulat\w*|national security|commerce department|executive order)\b/i },
+  // "Louisiana enacts data center moratorium" never takes a Louisiana data-center story with no pause in it
+  { key: 'moratorium', q: /\bmoratori\w*/i, h: /\b(moratori\w*|pause\w*|ban\w*|halt\w*|freeze|block\w*|limits?)\b/i },
   // a sports award race on a team / conference outcome ("ACC" for the Heisman) needs the award named: "ACC POY Awards" is not it
   { key: 'award', q: /\b(Heisman|Cy Young|Ballon d'?Or|Golden Boot|Hart Trophy|Vezina|Norris Trophy)\b/i, h: null },
 ];
@@ -672,6 +745,15 @@ function leadAsset(title) {
 // "who will attend" / "which movie" / "best actor nominee" events, where it is about someone else
 const RACE_EVENT = /\b(election|elections|race|primary|runoff|nominee|nomination|next (prime minister|president|chancellor|speaker|leader|pm)|prime minister|leader|majority|control of|seats?|governor|senate|house|mayor|winner)\b/i;
 const RACE_CATS = new Set(['elections', 'politics', 'world', 'geopolitics']);
+// Numbered products / flights: the market's own number must be in the headline ("iPhone 18", "Gemini 4", "Starship Flight 15").
+const MODEL_NUM = /\b(iphone|ipad|pixel|galaxy s|gemini|gpt|grok|llama|deepseek|kimi|claude (?:opus|sonnet|haiku)|starship flight(?: test)?)\s?-?\s?v?(\d+)(?![\d.]*\+)\b/i;
+function modelRe(text) {
+  const m = MODEL_NUM.exec(text);
+  if (!m) return null;
+  const head = m[1].toLowerCase().startsWith('starship') ? '(?:starship\\s+)?flight(?:\\s+test)?' : m[1].replace(/\s+/g, '\\s+');
+  const next = m[1].toLowerCase() === 'iphone' ? '|\\bnext(-generation| generation)? iphone' : '';
+  return new RegExp(`\\b${head}\\s?-?\\s?v?${m[2]}(?!\\d)${next}`, 'i');
+}
 const RETRO_HEAD = /\btimeline\b.*\b(from|beginning|origins?|history|where (things|it) (now )?stand\w*)\b|\b(a )?(brief |short |full |complete )?history of\b|\blook(ing)? back\b/i;
 // ---------- 2026-11-05 news-gate build (option 3 + fifth lever) ----------
 // Race-result lever: a margin / vote-share / turnout bracket on one race is answered by the race result ("Democrat Amy
@@ -693,6 +775,8 @@ const POLICY_HEAD = /\b(fomc|monetary policy|interest rates?|rate (decision|hike
 function questionMiss(T, title, ageH, leadHit) {
   // a history / recap piece is not news about a market's open question (unless the question itself is about history)
   if (RETRO_HEAD.test(title) && !RETRO_HEAD.test(T.storyText)) return 'retrospective';
+  // a numbered product (2026-11-05 news unlock audit): "iPhone 18" never takes iPhone Duo / iOS beta / jailbreak news
+  if (T.model && !T.model.test(title)) return 'model';
   for (const q of T.qtypes) {
     if (q.key === 'award') { const m = AWARD_RE.exec(T.storyText); if (m && !new RegExp(m[1].replace(/'/g, "'?"), 'i').test(title) && !(leadHit && T.leadOut?.toks.length >= 2)) return 'award'; continue; }
     if (!q.h.test(title)) return q.key;
@@ -782,11 +866,12 @@ function storyTerms(story, idx) {
   const Fall = new Set(tokens(evTitle).filter((t) => !oTok.has(t) && !CONTEXT.test(t) && !/\d/.test(t)));
   const qText = `${evTitle} ${lead.title || ''}`;
   const qtypes = QTYPES.filter((q) => q.q.test(qText));
+  const model = modelRe(qText);
   const asset = storyAsset(qText);
   const race = RACE_CATS.has(String(story.category || lead.category || '').toLowerCase()) && RACE_EVENT.test(evTitle);
   // a place outcome ('UAE') is named by its cities too ('Abu Dhabi talks')
   const leadGeo = multi && lead.outcome ? geoNames(lead.outcome) : new Set();
-  return { multi, qtypes, asset, race, leadGeo, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`),
+  return { multi, qtypes, model, asset, race, leadGeo, E, P, F, Fall, outcomes, topics, oTok, runs, entOutcomes, leadOut, rawP, frame, storyText, first, levelQ: !multi && (numeric(lead.outcome) || /\b(above|below|between|at least)\b/i.test(lead.title || '')) && /\b(prices?|rates?|yields?|index|close|barrel|ounce)\b/i.test(storyText), leaveQ: LEAVE_Q.test(storyText), districts: districtRes(`${evTitle} ${lead.title || ''}`),
     resultQ: !multi && race && RESULT_Q.test(storyText), offices: officesIn(`${evTitle} ${lead.title || ''}`), raceGeo: geoNames(`${evTitle} ${lead.title || ''}`, true),
     // every distinctive word of the event's frame (not an outcome, not a weak or generic word): what "about the event" means
     // ("No Bond chosen" is an outcome, but "Bond" is still the event's frame: only named outcomes are taken out)
@@ -835,7 +920,9 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     for (const t of T.E) if (hasStem(H, t)) { e++; if (T.oTok.has(t)) eOut++; if (!T.P.has(t)) eNonP++; }
     // a multi-word run ("Red Rocks", "Pete Hegseth") hits on a word of its own that is not an ordinary word, or as a whole:
     // "Raise the Red Lantern" never names "Red Rocks" (2026-11-05 news-gate build)
-    const runHit = (r) => (r.size === 1 ? hasStem(H, [...r][0]) : [...r].some((t) => !COMMON_RUN.has(t) && hasStem(H, t)) || [...r].every((t) => hasStem(H, t)));
+    // ... and a word of a name used as someone else's first name is no hit: "Thomas Massie" never names Clarence Thomas, "Tom Hanks"
+    // never names Tom Homan (2026-11-05 news unlock audit)
+    const runHit = (r) => (r.size === 1 ? hasStem(H, [...r][0]) : [...r].every((t) => hasStem(H, t)) || [...r].some((t) => !COMMON_RUN.has(t) && hasStem(H, t) && !namesake(t, r, h.it.title)));
     const pRuns = T.runs.filter(runHit).length;
     for (const t of T.P) if (hasStem(H, t) && (!COMMON_RUN.has(t) || T.runs.some((r) => r.has(t) && (r.size === 1 || runHit(r))) || !T.runs.some((r) => r.has(t)))) p++;
     const topic = T.topics.some((t) => h.news.topics.includes(t));
@@ -871,7 +958,7 @@ export function matchStoryNews(story, hIndex, marketIndex = [], { now = Date.now
     if (ok && T.levelQ && !LEVEL_HEAD.test(h.it.title)) ok = false;
     // a price-level market ("Gold above $4,128", "Brent above $98"): a headline naming the asset and its price is the story
     if (!ok && T.levelQ && p >= 1 && LEVEL_HEAD.test(h.it.title)) ok = true;
-    if (!ok && !T.multi && T.leaveQ && pRuns >= 1 && LEAVE_HEAD.test(h.it.title)) ok = true;
+    if (!ok && !T.multi && T.leaveQ && T.runs.some((r) => personHit(r, h.it.title, H)) && LEAVE_HEAD.test(h.it.title)) ok = true;
     // single question: the headline must name the question's own subject (the first proper noun) unless a strong topic is shared
     // ("Sarah Paulson ... Rotten Tomatoes score" is not "The Cat in the Hat Rotten Tomatoes score")
     // race-result lever: a margin / vote-share / turnout bracket takes the race result itself ("Democrat Amy Acton wins Ohio's

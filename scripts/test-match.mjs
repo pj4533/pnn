@@ -97,6 +97,19 @@ const MARKETS = [
   ["pm:560317","pm:31195","Putin out as President of Russia by...?","Putin out as President of Russia by December 31, 2026?","December 31, 2026",0.0195,"geopolitics",0],
   ["pm:2744695","pm:212877","Will Samuel Alito announce his retirement by...?","Will Samuel Alito announce his retirement by June 30, 2027?","June 30, 2027",0.195,"politics",0],
   ["pm:1388704","pm:212877","Will Samuel Alito announce his retirement by...?","Will Samuel Alito announce his retirement by December 31, 2026?","December 31",0.0345,"politics",0],
+  // 2026-11-05 news unlock audit (matcherIssues): a generic word or a company name is not the question
+  ["ks:KXCPIYOY-26NOV-T3.7","ks:KXCPIYOY-26NOV","CPI YoY in November","Will the rate of CPI inflation be above 3.7% for the year ending in November 2026?","Above 3.7%",0.4,"economy",1],
+  ["ks:KXCPICOREYOY-26DEC-T2.9","ks:KXCPICOREYOY-26DEC","Core CPI YoY in December","Will the rate of core CPI inflation be above 2.9% for the year ending in December 2026?","Above 2.9%",0.5,"economy",1],
+  ["ks:KXAMZN-26NOV06-T270","ks:KXAMZN-26NOV06","Amazon (AMZN) closes above ___ on November 6?","Will Amazon (AMZN) close above $270 on November 6?","Above $270",0.5,"economy",1],
+  ["pm:9000001","pm:9000001","Will any part of the United States federal government take a stake of above 0% in Nvidia?","Will any part of the United States federal government take a stake of above 0% in Nvidia?",null,0.2,"economy",0],
+  ["pm:9000002","pm:9000002","Will Anthropic have the highest private market valuation at the end of November?","Will Anthropic have the highest private market valuation at the end of November?",null,0.3,"tech",0],
+  ["pm:9000003","pm:9000003","Which bank will lead Anthropic's IPO?","Will Goldman Sachs serve as lead-left underwriter on Anthropic's IPO?",null,0.4,"economy",0],
+  ["pm:9000004","pm:9000004","US Government removes public access to another Anthropic AI model in 2026?","US Government removes public access to another Anthropic AI model in 2026?",null,0.1,"tech",0],
+  ["pm:9000005","pm:9000005","Will OpenAI announce the creation of AGI?","Will OpenAI announce the creation of AGI?",null,0.05,"tech",0],
+  ["pm:9000006","pm:9000006","Will Apple Inc. release iPhone 18 before Feb 1, 2027?","Will Apple Inc. release iPhone 18 before Feb 1, 2027?",null,0.3,"economy",0],
+  ["pm:9000007","pm:9000007","Will Clarence Thomas resign during Trump's term?","Will Clarence Thomas resign during Trump's term?",null,0.1,"politics",0],
+  ["pm:9000008","pm:9000008","Will Tom Homan leave White House Border Czar before 2027?","Will Tom Homan leave White House Border Czar before 2027?",null,0.2,"politics",0],
+  ["pm:9000009","pm:9000009","Will Robert F. Kennedy Jr. leave HHS Secretary before 2027?","Will Robert F. Kennedy Jr. leave HHS Secretary before 2027?",null,0.2,"politics",0],
 ];
 // event-level document frequency of every token above, over the full 5698-event index (Polymarket + Kalshi, 2026-11-05)
 const N_EVENTS = 5698;
@@ -120,6 +133,8 @@ const DF = {
   "republican":409,"retirement":3,"rock":20,"rotten":23,"russia":30,"s35":4,"saar":1,"samuel":9,"sauer":1,"score":56,"scotus":33,"search":12,
   "season":56,"senate":372,"shum":7,"star":25,"sunrise":3,"talarico":33,"target":13,"ted":8,"texas":91,"theo":2,"time":56,"tom":31,
   "tomatoe":23,"tracking":25,"turner":6,"unit":19,"us":498,"victory":371,"win":583,"winner":351,"yair":6,"zendaya":3,
+  // news unlock audit fixtures (approximate counts over the same index)
+  "kennedy":9,"robert":21,"hhs":6,"secretary":64,"homan":4,"clarence":3,"thomas":11,
 };
 
 // ---- index: the case markets plus background events that reproduce DF exactly
@@ -211,6 +226,48 @@ for (const [ev, lead, item] of REJECT) {
   const r = match(ev, lead, [item]);
   check(r.length === 0, `${ev}${lead ? ` / ${lead}` : ''} x "${item.title.slice(0, 90)}" => ${show(r)}`);
 }
+
+// ---- 2026-11-05 news unlock audit: question types (macro, ticker close, stake, valuation, AGI, underwriter, government
+// access), numbered products, and a person named by their own surname
+console.log('\n=== NEWS UNLOCK AUDIT');
+const AUDIT_REJECT = [
+  ['ks:KXCPIYOY-26NOV', null, hl('Cloudflare reports Q3 revenue up 39% YoY as AI demand surges', 'CNBC')],
+  ['ks:KXCPICOREYOY-26DEC', null, hl('Claude Code Product Lead Jumps to Rival, the Fourth Core Team Member to Leave in December', 'The Information')],
+  ['ks:KXAMZN-26NOV06', null, hl('The Amazon is no longer a carbon sink, study finds', 'The Guardian')],
+  ['ks:KXAMZN-26NOV06', null, hl('Amazon cuts ASUS ROG Tessen to $64.99 ahead of November 6', 'The Verge')],
+  ['pm:9000001', null, hl('Nvidia RTX 5090 now 262% above MSRP as the federal government weighs export rules', 'Tom\u2019s Hardware')],
+  ['pm:9000002', null, hl('Anthropic to ban employees from wearing badges outside its offices at the end of November', 'Business Insider')],
+  ['pm:9000003', null, hl('Anthropic announces price cuts on Claude for Goldman Sachs and other enterprise customers', 'TechCrunch')],
+  ['pm:9000004', null, hl('Anthropic AI model study finds task horizon doubling every seven months', 'Ars Technica')],
+  ['pm:9000005', null, hl('OpenAI Images 2.6 Brings GIF Creation to ChatGPT', 'Engadget')],
+  ['pm:9000006', null, hl('Apple iPhone Duo foldable enters production before Feb 2027 launch', 'MacRumors')],
+  ['pm:9000007', null, hl('Thomas Massie says Hegseth should resign during impeachment push against Trump picks', 'The Hill')],
+  ['pm:9000008', null, hl('40 movies to watch before they leave Netflix this month, from Tom Hanks to Homeland', 'Vulture')],
+  ['pm:9000009', null, hl('Robert Redford refused to leave Sundance before 2027, friends say', 'Variety')],
+];
+for (const [ev, lead, item] of AUDIT_REJECT) {
+  const r = match(ev, lead, [item]);
+  check(r.length === 0, `${ev} x "${item.title.slice(0, 90)}" => ${show(r)}`);
+}
+const AUDIT_MUST = [
+  ['ks:KXAMZN-26NOV06', null, hl('Amazon (AMZN) shares jump to a record close after AWS earnings beat', 'CNBC')],
+  ['pm:9000003', null, hl('SpaceX, Anthropic IPOs highlight growing clout of retail investors, say Goldman Sachs, Morgan Stanley', 'Reuters')],
+  ['pm:9000006', null, hl('Apple iPhone 18 release on track for 2027 as suppliers begin production', 'MacRumors')],
+  ['pm:9000007', null, hl('Clarence Thomas tells allies he will not resign during Trump\u2019s term', 'Politico')],
+];
+for (const [ev, lead, item] of AUDIT_MUST) {
+  const r = match(ev, lead, [item]);
+  check(r.length === 1, `${ev} <- "${item.title.slice(0, 90)}" => ${show(r)}`);
+}
+// non-news items (job titles, deal ads, quote pages) never attach; real headlines with the same words do
+for (const t of ['Procurement Operations Manager - OpenAI', 'Content & Solutions Marketing Lead, Ads', 'Get GPT, Claude, Gemini, and 50+ more AI models for $39.99 for life',
+  'Microsoft Project Professional 2024 drops to $40', 'Gold Dec 26 (GC=F) stock price, news, quote and history', 'USOIL|WTI|Price:89.865|Chg%:+1.824'])
+  check(headlineReject(t) === 'non-news', `non-news: ${t}`);
+for (const t of ['Trump Picks New Fed Director', 'OpenAI names new research lead', 'Bitcoin drops to $40,000 as crypto slides', 'Apple hits $5 trillion market cap as Nvidia lead shrinks', 'Banned for life: FIFA official'])
+  check(headlineReject(t) === null, `clean: ${t}`);
+// war-adjacent wording (D4)
+for (const t of ['Iran says tankers, tugboat catch fire in Strait of Hormuz', 'U.S. Strikes Iranian Targets Along Strait of Hormuz', 'Internet disruptions hit Iran amid prospect of renewed US strikes'])
+  check(headlineReject(t) === 'sensitive', `sensitive: ${t}`);
 
 // ---- ordering: an exact hit outranks an event-level one of similar age; a podcast item yields to a clean one
 console.log('\n=== ORDER');

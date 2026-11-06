@@ -169,6 +169,38 @@ export default {
     { id: 'france24', outlet: 'France 24', url: 'https://www.france24.com/en/rss', category: 'world', everySec: 300 },
     { id: 'kff', outlet: 'KFF Health News', url: 'https://kffhealthnews.org/feed/', category: 'health', everySec: 600 },
     { id: 'nyt-health', outlet: 'The New York Times', url: 'https://rss.nytimes.com/services/xml/rss/nyt/Health.xml', category: 'health', everySec: 600 },
+    // ---- added 2026-11-05 (news unlock, DECISIONS "2026-11-05: news unlock feeds"). Found by working backwards from the
+    // news-gated board with scripts/news-unlock.mjs (3 hunt rounds, ~420 candidate feeds), then audited pair by pair.
+    // Google News searches are aggregators (never corroborate a breaking cluster) on one host, so they poll slowly: 900-3600s,
+    // ~1 request/min to news.google.com in total, staggered by wire.start(); the 'when:Nd' window keeps each list fresh.
+    // Each comment names the markets the feed unlocked on 2026-11-05. Dropped after audit: Waymo/Tesla robotaxi (wrong-city
+    // pairs), OpenAI IPO/gov (KuCoin source), ChatGPT price (explainer), NYC weather and Nasdaq (no pairs once the ' - Outlet'
+    // suffix is split), Techmeme, Tom's Hardware, gadget and deal feeds (stock-close false pairs).
+    { id: 'gn-cpi-forecast', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=gold+futures+OR+November+CPI+forecast+OR+core+inflation+expectations+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 1200, aggregator: true },   // CPI / core-CPI ladders, Fed Jan/Apr 2027
+    { id: 'gn-bigtech-cap', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Nvidia+market+cap+OR+%22AI+bubble%22+OR+Apple+MacBook+touchscreen+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'tech', everySec: 1200, aggregator: true },   // Nvidia 2nd/3rd largest company, touchscreen MacBook
+    { id: 'gn-ai-models', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Gemini+OR+GPT+OR+Grok+OR+Kimi+OR+DeepSeek+model+release+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'tech', everySec: 900, aggregator: true },   // best AI model, next Gemini Flash / DeepSeek / Claude Opus releases
+    { id: 'gn-ai-benchmarks', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=new+AI+model+released+benchmark+leaderboard+score+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'tech', everySec: 1200, aggregator: true },   // GPT Astra debut-score markets
+    { id: 'macrumors', outlet: 'MacRumors', url: 'https://feeds.macrumors.com/MacRumors-All', category: 'tech', everySec: 600 },   // Apple product-line / touchscreen Mac markets (direct feed)
+    { id: 'gn-spacex-ipo', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=SpaceX+IPO+when%3A5d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 1200, aggregator: true },   // Anthropic IPO lead-underwriter markets
+    { id: 'gn-spacex-shares', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=SpaceX+IPO+kids+shares+OR+Trump+accounts+SpaceX+when%3A14d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 3600, aggregator: true },   // 1M kids get SpaceX shares
+    { id: 'gn-starship', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Starship+flight+12+OR+flight+15+when%3A5d&hl=en-US&gl=US&ceid=US:en', category: 'science', everySec: 1200, aggregator: true },   // Starship Flight 15 launch-by markets
+    { id: 'gn-uap', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=aliens+OR+UAP+disclosure+OR+Pentagon+UFO+files+when%3A10d&hl=en-US&gl=US&ceid=US:en', category: 'science', everySec: 1800, aggregator: true },   // UFO files declassified
+    { id: 'gn-hottest', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=hottest+year+on+record+OR+Copernicus+OR+global+temperature+record+when%3A7d&hl=en-US&gl=US&ceid=US:en', category: 'science', everySec: 1800, aggregator: true },   // hottest-year climate markets
+    { id: 'gn-earthquake', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=earthquake+magnitude+USGS+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'science', everySec: 1200, aggregator: true },   // California M8 earthquake market
+    { id: 'gn-outbreaks', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=measles+OR+hantavirus+OR+Ebola+OR+screwworm+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'health', everySec: 1200, aggregator: true },   // measles case count, US Ebola case
+    { id: 'gn-oil', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=WTI%20crude%20OR%20diesel%20prices%20OR%20oil%20forecast%20when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 1200, aggregator: true },   // WTI max/min, Brent close
+    { id: 'gn-central-banks', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=ECB%20rate%20decision%20OR%20RBNZ%20OR%20Bank%20of%20England%20OR%20Bank%20of%20Japan%20when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 1200, aggregator: true },   // BoJ / ECB / BoE / RBNZ rate markets
+    { id: 'gn-musk-worth', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Musk+net+worth+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'economy', everySec: 1800, aggregator: true },   // Musk net-worth ladders
+    { id: 'gn-venezuela', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Delcy+Rodriguez+OR+Venezuela+Israel+OR+Venezuela+elections+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'world', everySec: 1200, aggregator: true },   // Delcy / Maduro leader, Venezuela recognize Israel
+    { id: 'gn-taipei', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Chiang+Wan-an+OR+Taipei+mayor+election+OR+Taiwan+local+elections+when%3A7d&hl=en-US&gl=US&ceid=US:en', category: 'world', everySec: 1800, aggregator: true },   // Taipei mayor
+    { id: 'gn-nz-election', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=New+Zealand+election+2026+National+Party+OR+Luxon+OR+Labour+Hipkins+poll+when%3A5d&hl=en-US&gl=US&ceid=US:en', category: 'world', everySec: 1800, aggregator: true },   // NZ election seats / popular vote
+    { id: 'gn-trump-25th', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Trump+resign+OR+25th+Amendment+OR+impeachment+articles+OR+Trump+health+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'politics', everySec: 1200, aggregator: true },   // Cabinet impeachment markets
+    { id: 'gn-senate-results', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Senate+seats+2026+midterm+results+OR+House+popular+vote+margin+OR+Democrats+win+House+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'politics', everySec: 1800, aggregator: true },   // midterm result / turnout brackets (time-limited)
+    { id: 'gn-oscars', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Academy%20Awards%2099th%20nominations%20OR%20Oscar%20race%20OR%20best%20actress%20when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'culture', everySec: 1800, aggregator: true },   // Oscar acting / casting races
+    { id: 'gn-dwts', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Dancing%20with%20the%20Stars%20eliminated%20OR%20semifinals%20OR%20finale%20when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'culture', everySec: 1800, aggregator: true },   // DWTS elimination / finale
+    { id: 'gn-bond-nobel', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Nobel+OR+%22Millennium+Prize%22+OR+AGI+OR+%22Bond%22+casting+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'culture', everySec: 1800, aggregator: true },   // next James Bond
+    { id: 'gn-billboard', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Billboard+Hot+100+OR+%22Spotify+Wrapped%22+OR+Drake+OR+%22Taylor+Swift%22+when%3A3d&hl=en-US&gl=US&ceid=US:en', category: 'culture', everySec: 1800, aggregator: true },   // Hot 100 #1 weeks
+    { id: 'gn-stranger-things', outlet: 'Google News', url: 'https://news.google.com/rss/search?q=Stranger+Things+season+5+finale+OR+Stranger+Things+release+when%3A5d&hl=en-US&gl=US&ceid=US:en', category: 'culture', everySec: 1800, aggregator: true },   // Stranger Things new episode
     // weather (official; only Extreme alerts of these event types are high signal on their own)
     { id: 'nws', outlet: 'National Weather Service', url: 'https://api.weather.gov/alerts/active?severity=Extreme,Severe&status=actual', kind: 'nws',
       category: 'weather', everySec: 120, official: true },
@@ -203,6 +235,9 @@ export default {
       re('\\bannex(es|ed|ation)?\\b'), re('\\boccup(y|ies|ied|ation)\\b'), re('\\barmed conflict\\b'), re('\\brecaptur'),
       re('\\b(gaza|hamas|hezbollah|houthis?|idf|west bank)\\b'),
       // parity with news.mjs SENSITIVE_TITLE (every attached headline must pass the D4 patterns), plus border-violence wording
+      // 2026-11-05 news unlock audit: 'U.S. Strikes Iranian Targets', 'tankers, tugboat catch fire in Strait of Hormuz', 'renewed US strikes'
+      re('\\bstrikes (on |against )?(\\w+ ){0,2}targets?\\b'), re('\\b(us|u\\.s\\.|american|israeli|renewed|retaliatory|fresh) strikes\\b'),
+      re('\\b(catch|catches|caught) fire\\b'), re('\\btankers?\\b.{0,40}\\bfires?\\b'),
       re('\\b(corpses?|beheaded|beheading|slain|slaying|shot dead)\\b'), re('\\b(border|cross-?border) (fire|clashes|skirmish\\w*|shelling)\\b'), re('\\bfirefight'),
     ],
     sports: [
