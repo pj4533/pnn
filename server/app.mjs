@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { log } from './log.mjs';
+import * as egress from './egress.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -56,8 +57,14 @@ function serveStatic(req, res, pathname) {
       'Content-Length': st.size,
       'Cache-Control': NO_CACHE.has(ext) && !file.includes(`${path.sep}vendor${path.sep}`) ? 'no-cache' : 'max-age=3600',
     };
+    if (ext === '.html' && egress.over()) { res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Retry-After': '3600' }); return res.end(egress.CAPACITY_HTML); }
+    let gz = null;
+    try { gz = egress.staticBody(req, file, st, () => fs.readFileSync(file)); } catch { gz = null; }
+    if (gz) { headers['Content-Encoding'] = 'gzip'; headers['Content-Length'] = gz.length; headers.Vary = 'Accept-Encoding'; }
     res.writeHead(200, headers);
     if (req.method === 'HEAD') return res.end();
+    if (gz) { egress.count(gz.length); return res.end(gz); }
+    egress.count(st.size);
     fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
   });
 }
@@ -112,6 +119,7 @@ export function health(store, config) {
     segments: (() => { const g = s.segments; return g ? Object.fromEntries(Object.entries(g).map(([k, v]) => [k, Array.isArray(v) ? v.length : 0])) : null; })(),
     weekFallback: (() => { try { return store.weekHealth?.() ?? null; } catch { return null; } })(),
     sampledMarkets: store.sampleCount?.() ?? null,
+    egress: egress.stats(),
     memory: (() => { const u = process.memoryUsage(); return { rssMB: Math.round(u.rss / 1e6), heapUsedMB: Math.round(u.heapUsed / 1e6) }; })(),
     feeds,
   };
@@ -126,7 +134,12 @@ export function createHandler(store, config) {
     if (p === '/api/events') return store.subscribe(res, req);
     if (p === '/api/state') {
       // ?client=1: the slim v2 payload the browser reads (same as the SSE 'state'); default is the full state (scripts, tools)
-      if (url.searchParams.has('client')) { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(store.getClientJson()); }
+      if (url.searchParams.has('client')) {
+        if (egress.over()) { res.writeHead(503, { 'Retry-After': '3600' }); return res.end(); }
+        const body = egress.jsonBody(req, store.getClientJson());
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...body.headers });
+        egress.count(body.buf.length); return res.end(body.buf);
+      }
       return json(res, 200, store.getState());
     }
     if (p === '/api/health') return json(res, 200, health(store, config), true);

@@ -4,6 +4,7 @@
 import config from './config.mjs';
 import { log } from './log.mjs';
 import { clientStateJson } from './clientstate.mjs';
+import * as egress from './egress.mjs';
 
 const DEBOUNCE_MS = 1000;
 const HEARTBEAT_MS = 20_000;
@@ -206,7 +207,7 @@ export function createStore() {
   const perIp = new Map();
   function subscribe(res, req) {
     const ip = String(req?.headers?.['fly-client-ip'] || req?.socket?.remoteAddress || '');
-    if ((MAX_SSE && clients.size >= MAX_SSE) || (MAX_SSE_IP && (perIp.get(ip) || 0) >= MAX_SSE_IP)) {
+    if (egress.over() || (MAX_SSE && clients.size >= MAX_SSE) || (MAX_SSE_IP && (perIp.get(ip) || 0) >= MAX_SSE_IP)) {
       res.writeHead(503, { 'Retry-After': '30', 'Content-Type': 'text/plain' });
       return res.end('busy');
     }
@@ -214,21 +215,23 @@ export function createStore() {
     let released = false;
     const release = () => { if (released) return; released = true; const n = (perIp.get(ip) || 1) - 1; if (n > 0) perIp.set(ip, n); else perIp.delete(ip); };
     (req || res).on?.('close', release);
-    res.writeHead(200, {
+    const sink = egress.sseSink(req, res, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
     res.flushHeaders?.();
-    res.write('retry: 3000\n\n');
-    try { res.write(`event: state\ndata: ${getClientJson()}\n\n`); } catch (e) { log('debug', 'sse write failed', { error: String(e?.message || e) }); }
-    clients.add(res);
-    const done = () => clients.delete(res);
+    sink.write('retry: 3000\n\n');
+    try { sink.write(`event: state\ndata: ${getClientJson()}\n\n`); } catch (e) { log('debug', 'sse write failed', { error: String(e?.message || e) }); }
+    clients.add(sink);
+    const done = () => clients.delete(sink);
     (req || res).on?.('close', done);
     res.on?.('error', done);
     return done;
   }
+
+  egress.whenOver(() => { for (const c of clients) { try { c.end(); } catch { /* gone */ } } clients.clear(); });
 
   const hb = setInterval(() => {
     for (const res of clients) {
