@@ -132,6 +132,7 @@ export function createHandler(store, config) {
     if (p === '/api/health') return json(res, 200, health(store, config), true);
     if (p === '/api/client-log') {
       if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+      if (process.env.PUBLIC === '1') { req.resume(); res.writeHead(204); return res.end(); }   // public deploy: viewers' telemetry is not logged (no log spam from strangers)
       let body = '';
       let over = false;
       req.on('data', (c) => { if (body.length + c.length > 32_000) over = true; else body += c; });

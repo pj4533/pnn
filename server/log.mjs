@@ -8,7 +8,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = path.resolve(ROOT, process.env.LOG_DIR || 'logs');
 fs.mkdirSync(DIR, { recursive: true });
 export const LOG_FILE = path.join(DIR, process.env.LOG_FILE || 'pnn.log');
-const stream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+// LOG_TO_FILE=0 (the public deploy): stdout/stderr only, so an ephemeral disk never fills; debug lines are dropped.
+const toFile = process.env.LOG_TO_FILE !== '0';
+const stream = toFile ? fs.createWriteStream(LOG_FILE, { flags: 'a' }) : { write() {}, on() {} };
 stream.on('error', (e) => console.error('log stream error', e.message));
 
 export function log(level, msg, fields = {}) {

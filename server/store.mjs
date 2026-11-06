@@ -200,7 +200,20 @@ export function createStore() {
   }
 
   /** Attach an SSE response. Sends the current snapshot as 'state'; never replays old alerts or flashes as events. */
+  // Public deploy guard: cap open SSE streams overall and per IP (PUBLIC=1; MAX_SSE / MAX_SSE_PER_IP override).
+  const MAX_SSE = Number(process.env.MAX_SSE || (process.env.PUBLIC === '1' ? 300 : 0));
+  const MAX_SSE_IP = Number(process.env.MAX_SSE_PER_IP || (process.env.PUBLIC === '1' ? 6 : 0));
+  const perIp = new Map();
   function subscribe(res, req) {
+    const ip = String(req?.headers?.['fly-client-ip'] || req?.socket?.remoteAddress || '');
+    if ((MAX_SSE && clients.size >= MAX_SSE) || (MAX_SSE_IP && (perIp.get(ip) || 0) >= MAX_SSE_IP)) {
+      res.writeHead(503, { 'Retry-After': '30', 'Content-Type': 'text/plain' });
+      return res.end('busy');
+    }
+    perIp.set(ip, (perIp.get(ip) || 0) + 1);
+    let released = false;
+    const release = () => { if (released) return; released = true; const n = (perIp.get(ip) || 1) - 1; if (n > 0) perIp.set(ip, n); else perIp.delete(ip); };
+    (req || res).on?.('close', release);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
